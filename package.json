@@ -1,0 +1,23 @@
+{
+  "name": "class-village",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,client -c green,cyan \"npm:server\" \"npm:client\"",
+    "server": "node --watch-path=server --watch-path=shared server/index.js",
+    "client": "vite client --host",
+    "bots": "node tools/bots.js",
+    "build": "vite build client"
+  },
+  "dependencies": {
+    "@colyseus/core": "0.16.26",
+    "@colyseus/schema": "3.0.76",
+    "@colyseus/ws-transport": "0.16.5",
+    "colyseus.js": "0.16.22",
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.5",
+    "vite": "7.1.12"
+  }
+}

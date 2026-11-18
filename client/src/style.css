@@ -1,0 +1,93 @@
+:root {
+  --bg: #bfe6ff;
+  --card: #fffaf0;
+  --ink: #4a3b2a;
+  --muted: #8a7a66;
+  --accent: #7cc46a;
+  --accent-dark: #5aa04a;
+  --shadow: 0 6px 0 rgba(74, 59, 42, 0.15);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  /* 확대·당겨서 새로고침·글자 선택 막기 */
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+.hidden { display: none !important; }
+
+#hud {
+  position: fixed; top: max(12px, env(safe-area-inset-top)); left: 12px; right: 12px;
+  display: flex; justify-content: space-between; pointer-events: none;
+}
+.pill {
+  background: rgba(255, 250, 240, 0.9); padding: 6px 14px; border-radius: 999px;
+  font-weight: 700; font-size: 15px; box-shadow: var(--shadow);
+}
+
+#joy-base {
+  position: fixed; width: 130px; height: 130px; margin: -65px 0 0 -65px;
+  border-radius: 50%; background: rgba(255, 255, 255, 0.35);
+  border: 3px solid rgba(255, 255, 255, 0.8); pointer-events: none;
+}
+#joy-knob {
+  position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+  border-radius: 50%; background: rgba(255, 250, 240, 0.95); box-shadow: var(--shadow);
+}
+
+#action {
+  position: fixed; right: max(24px, env(safe-area-inset-right)); bottom: max(28px, env(safe-area-inset-bottom));
+  width: 96px; height: 96px; border-radius: 50%; border: none;
+  background: var(--card); box-shadow: var(--shadow); font-size: 36px; line-height: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  color: var(--ink); touch-action: none;
+}
+#action span { font-size: 14px; font-weight: 800; }
+#action:active { transform: translateY(3px); box-shadow: 0 3px 0 rgba(74, 59, 42, 0.15); }
+
+#hint {
+  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
+  font-size: 13px; color: rgba(74, 59, 42, 0.75); pointer-events: none; text-align: center;
+  padding: 0 130px;
+}
+@media (pointer: coarse) { #hint { display: none; } }
+
+#join, #reconnect {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(191, 230, 255, 0.55); backdrop-filter: blur(3px);
+}
+.card {
+  background: var(--card); border-radius: 24px; padding: 28px; box-shadow: var(--shadow);
+  width: min(380px, 100%); font-weight: 700;
+}
+#join h1 { margin: 0 0 4px; font-size: 28px; }
+.sub { margin: 0 0 20px; color: var(--muted); font-weight: 500; }
+#join label { display: block; margin: 14px 0 8px; font-size: 15px; }
+#name {
+  width: 100%; font-size: 18px; padding: 12px 14px; border-radius: 14px;
+  border: 2px solid #e6dcc8; background: #fff; color: var(--ink); user-select: text; -webkit-user-select: text;
+}
+#name:focus { outline: none; border-color: var(--accent); }
+#colors { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+.swatch { aspect-ratio: 1; border-radius: 50%; border: 3px solid transparent; padding: 0; cursor: pointer; }
+.swatch.on { border-color: var(--ink); }
+#join-btn {
+  margin-top: 22px; width: 100%; font-size: 18px; font-weight: 800; padding: 14px;
+  border: none; border-radius: 16px; background: var(--accent); color: #fff; box-shadow: 0 5px 0 var(--accent-dark);
+  cursor: pointer;
+}
+#join-btn:disabled { opacity: 0.6; }
+.error { color: #d0543c; min-height: 1.2em; margin: 10px 0 0; font-size: 14px; }
