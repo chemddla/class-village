@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>캐릭터 쇼룸</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe9f7; font-family: 'Malgun Gothic', system-ui, sans-serif; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #ui { position: fixed; left: 16px; top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+    #ui button { border: none; border-radius: 999px; padding: 10px 16px; font-size: 15px; font-weight: 700;
+      background: #fffaf0; color: #4a3b2a; box-shadow: 0 4px 0 rgba(74,59,42,.15); cursor: pointer; }
+    #ui button.on { background: #7cc46a; color: #fff; }
+    #info { position: fixed; right: 16px; bottom: 12px; font-size: 13px; color: #4a3b2a; opacity: .7; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <button data-preset="boy" class="on">소년</button>
+    <button data-preset="girl">소녀</button>
+    <button id="pose">자세: 손 흔들기</button>
+    <button id="spin">자동 회전</button>
+  </div>
+  <div id="info">드래그로 돌려 보기 · 휠로 확대</div>
+  <script type="module" src="/src/character-view.js"></script>
+</body>
+</html>

@@ -116,6 +116,25 @@ def tube_bm(r1, r2, depth, loc=(0, 0, 0), segs=24):
     return bm
 
 
+def rcyl(r1, r2, depth, loc=(0, 0, 0), bevel=0.02, segs=32, sy=1.0, top=True, bottom=True):
+    """모서리를 둥글린 원통 (풍선처럼 부풀지 않게). r1=아래 반지름, r2=위 반지름"""
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segs, radius1=r1, radius2=r2, depth=depth)
+    h = depth / 2
+    edges = []
+    for e in bm.edges:
+        zs = [v.co.z for v in e.verts]
+        if (top and all(abs(z - h) < 1e-5 for z in zs)) or (bottom and all(abs(z + h) < 1e-5 for z in zs)):
+            edges.append(e)
+    if edges and bevel > 0:
+        bmesh.ops.bevel(bm, geom=edges, offset=bevel, offset_type="OFFSET", profile_type="SUPERELLIPSE",
+                        segments=4, profile=0.5, affect="EDGES")
+    if sy != 1.0:
+        bmesh.ops.scale(bm, vec=Vector((1, sy, 1)), verts=bm.verts)
+    bmesh.ops.translate(bm, vec=Vector(loc), verts=bm.verts)
+    return bm
+
+
 def add(name, bm, hexcol, parent, subsurf=0, emit=False, solid=0.0, rim=0.16):
     me = bpy.data.meshes.new(PREFIX + name)
     bm.to_mesh(me)
@@ -136,7 +155,7 @@ def add(name, bm, hexcol, parent, subsurf=0, emit=False, solid=0.0, rim=0.16):
     return ob
 
 
-HEAD_SCALE = (1.0, 0.96, 0.98)
+HEAD_SCALE = (1.06, 0.96, 1.0)  # 옆으로 살짝 넓은 머리 (참고 비율)
 
 
 def on_face(r, hz, x, z, out=0.0):
@@ -232,82 +251,88 @@ def hair_cap(r, hz, hs, spec, parent):
 
 # ───────────── 캐릭터 한 명 ─────────────
 def build_char(spec, x):
+    """참고 비율: 머리(머리카락 포함) ≈ 키의 48%, 몸통 ≈ 25%, 다리+신발 ≈ 27%"""
     root = bpy.data.objects.new(f"{PREFIX}{spec['key']}", None)
     bpy.context.scene.collection.objects.link(root)
-    hs = 1.0
-    leg_h = 0.3
-    hip_z = leg_h + 0.04
-    torso_h = 0.3
-    torso_top = hip_z + torso_h
-    r = 0.4
-    hz = torso_top + r * 0.82
+    r = 0.32                 # 머리 반지름 (세로로 살짝 긴 타원)
+    f = r / 0.4              # 얼굴 부품 크기 비율
+    leg_h = 0.36             # 땅 ~ 엉덩이
+    torso_h = 0.41           # 엉덩이 ~ 어깨
+    torso_top = leg_h + torso_h
+    neck_h = 0.06
+    hz = torso_top + neck_h + r * HEAD_SCALE[2] * 0.86  # 짧은 목 위에 얹힘
 
-    # 신발 (운동화: 색 + 흰 밑창)
+    # 신발 (크고 둥근 운동화 + 흰 밑창)
     for s in (-1, 1):
-        add("신발", sphere_bm(0.075, (s * 0.085, -0.03, 0.055), (1.0, 1.5, 0.75)), spec["shoes"], root)
-        add("밑창", sphere_bm(0.078, (s * 0.085, -0.03, 0.03), (1.02, 1.52, 0.35)), "#f5efe6", root)
-        # 다리 (피부)
-        add("다리", sphere_bm(0.055, (s * 0.085, 0, 0.2), (1, 1, 2.6)), SKIN, root)
+        add("신발", sphere_bm(0.068, (s * 0.07, -0.03, 0.05), (1.0, 1.55, 0.72)), spec["shoes"], root)
+        add("밑창", sphere_bm(0.07, (s * 0.07, -0.03, 0.026), (1.03, 1.58, 0.33)), "#f5efe6", root)
+        # 가는 다리 (곧은 원통)
+        add("다리", rcyl(0.03, 0.033, 0.28, (s * 0.07, 0, 0.2), bevel=0.01, segs=16), SKIN, root)
 
     # 하의
     if spec["bottom"] == "shorts":
-        add("반바지", sphere_bm(0.17, (0, 0, hip_z), (1.05, 0.9, 0.7)), spec["bottom_col"], root)
+        add("반바지", rcyl(0.13, 0.125, 0.09, (0, 0, leg_h + 0.025), bevel=0.03, sy=0.78), spec["bottom_col"], root)
         for s in (-1, 1):
-            add("바짓단", sphere_bm(0.075, (s * 0.085, 0, hip_z - 0.1), (1, 1, 1.25)), spec["bottom_col"], root)
+            add("바짓단", rcyl(0.066, 0.062, 0.13, (s * 0.068, 0, leg_h - 0.06), bevel=0.012, segs=24, top=False),
+                spec["bottom_col"], root)
     else:
-        add("치마", tube_bm(0.25, 0.15, 0.24, (0, 0, hip_z - 0.04), segs=48), spec["bottom_col"], root,
-            solid=0.02, subsurf=1)
-        add("허리", sphere_bm(0.155, (0, 0, hip_z + 0.06), (1.0, 0.85, 0.6)), spec["bottom_col"], root)
+        # 치마 윗부분은 티셔츠 안으로 들어가게 (앞뒤로 납작하게 맞춤)
+        sk = tube_bm(0.2, 0.11, 0.22, (0, 0, leg_h - 0.01), segs=48)
+        bmesh.ops.scale(sk, vec=Vector((1, 0.82, 1)), verts=sk.verts)
+        add("치마", sk, spec["bottom_col"], root, solid=0.02, subsurf=1)
 
-    # 상의 (둥근 몸통 + 반팔 소매)
-    add("상의", sphere_bm(0.19, (0, 0, hip_z + torso_h * 0.55), (1.0, 0.78, 1.05)), spec["top"], root)
+    # 상의: 반팔 티셔츠 (아래가 살짝 넓은 원통, 어깨는 둥글게)
+    add("상의", rcyl(0.15, 0.13, torso_h - 0.02, (0, 0, leg_h + 0.02 + (torso_h - 0.02) / 2), bevel=0.045, sy=0.74),
+        spec["top"], root)
+    # 목
+    add("목", rcyl(0.042, 0.042, neck_h + 0.05, (0, 0, torso_top + neck_h / 2), bevel=0.0, segs=20), SKIN, root)
     for s in (-1, 1):
-        sl = sphere_bm(0.075, (0, 0, 0), (1, 1, 1.15))
-        bmesh.ops.transform(sl, matrix=Matrix.Rotation(-s * 0.7, 4, "Y"), verts=sl.verts)
-        bmesh.ops.translate(sl, vec=Vector((s * 0.2, 0, torso_top - 0.06)), verts=sl.verts)
+        rot_s = Matrix.Rotation(-s * 0.42, 4, "Y")
+        sl = rcyl(0.058, 0.05, 0.1, (0, 0, -0.04), bevel=0.012, segs=24, top=True, bottom=True)
+        bmesh.ops.transform(sl, matrix=rot_s, verts=sl.verts)
+        bmesh.ops.translate(sl, vec=Vector((s * 0.15, 0, torso_top - 0.045)), verts=sl.verts)
         add("소매", sl, spec["top"], root)
-        # 팔과 큰 주먹손
-        rot = Matrix.Rotation(-s * 0.5, 4, "Y")
-        sh = Vector((s * 0.21, 0, torso_top - 0.07))
-        arm = sphere_bm(0.045, (0, 0, -0.11), (1, 1, 2.4), segs=16, rings=10)
+        # 가는 팔이 허리 아래까지 + 큰 주먹손
+        rot = Matrix.Rotation(-s * 0.3, 4, "Y")
+        sh = Vector((s * 0.165, 0, torso_top - 0.07))
+        arm = rcyl(0.028, 0.032, 0.25, (0, 0, -0.13), bevel=0.0, segs=16)
         bmesh.ops.transform(arm, matrix=rot, verts=arm.verts)
         bmesh.ops.translate(arm, vec=sh, verts=arm.verts)
         add("팔", arm, SKIN, root)
-        add("손", sphere_bm(0.068, sh + rot.to_3x3() @ Vector((0, 0, -0.24))), SKIN, root)
-    # 목
-    add("목", sphere_bm(0.06, (0, 0, torso_top + 0.01), (1, 1, 1)), SKIN, root)
+        add("손", sphere_bm(0.062, sh + rot.to_3x3() @ Vector((0, 0, -0.29))), SKIN, root)
 
     # 머리와 귀
     add("머리", sphere_bm(r, (0, 0, hz), HEAD_SCALE, segs=64, rings=36), SKIN, root)
     for s in (-1, 1):
-        add("귀", sphere_bm(0.07, (s * r * 0.97, 0.02, hz - 0.06), (0.5, 0.75, 1.0)), SKIN, root)
+        add("귀", sphere_bm(0.07 * f, (s * r * 0.97, 0.02, hz - 0.07 * f), (0.5, 0.75, 1.0)), SKIN, root)
 
-    # 눈: 흰자 + 눈동자 + 동공 + 반짝임
-    ex, ez = 0.165, hz - 0.03
+    # 눈: 크고 머리 가운데보다 살짝 아래
+    ex, ez = 0.17 * f, hz - 0.05 * f
     for s in (-1, 1):
         cx = s * ex
-        add("흰자", sphere_bm(0.1, on_face(r, hz, cx, ez, out=-0.016), (0.82, 0.3, 1.0)), "#fffaf2", root, emit=True)
-        add("눈동자", sphere_bm(0.074, on_face(r, hz, cx - s * 0.008, ez - 0.006, out=-0.003), (0.82, 0.3, 1.0)),
-            spec["iris"], root, emit=True)
-        add("동공", sphere_bm(0.042, on_face(r, hz, cx - s * 0.008, ez - 0.006, out=0.014), (0.82, 0.3, 1.0)),
-            "#1f1714", root, emit=True)
-        add("반짝", sphere_bm(0.022, on_face(r, hz, cx + 0.022, ez + 0.03, out=0.026), (1, 0.4, 1)),
-            "#ffffff", root, emit=True)
+        add("흰자", sphere_bm(0.105 * f, on_face(r, hz, cx, ez, out=-0.016 * f), (0.82, 0.3, 1.0)),
+            "#fffaf2", root, emit=True)
+        add("눈동자", sphere_bm(0.078 * f, on_face(r, hz, cx - s * 0.008 * f, ez - 0.006 * f, out=-0.003 * f),
+            (0.82, 0.3, 1.0)), spec["iris"], root, emit=True)
+        add("동공", sphere_bm(0.044 * f, on_face(r, hz, cx - s * 0.008 * f, ez - 0.006 * f, out=0.014 * f),
+            (0.82, 0.3, 1.0)), "#1f1714", root, emit=True)
+        add("반짝", sphere_bm(0.023 * f, on_face(r, hz, cx + 0.022 * f, ez + 0.032 * f, out=0.026 * f),
+            (1, 0.4, 1)), "#ffffff", root, emit=True)
         if spec.get("lash"):
-            lp = on_face(r, hz, cx + s * 0.072, ez + 0.05, out=-0.004)
-            b = sphere_bm(0.024, (0, 0, 0), (1.5, 0.4, 0.5))
+            lp = on_face(r, hz, cx + s * 0.075 * f, ez + 0.055 * f, out=-0.004 * f)
+            b = sphere_bm(0.025 * f, (0, 0, 0), (1.5, 0.4, 0.5))
             bmesh.ops.transform(b, matrix=Matrix.Rotation(-s * 0.55, 4, "Y"), verts=b.verts)
             bmesh.ops.translate(b, vec=lp, verts=b.verts)
             add("속눈썹", b, "#2b1d18", root, emit=True)
-        # 볼
-        add("볼", sphere_bm(0.075, on_face(r, hz, s * 0.235, hz - 0.13, out=-0.022), (1.15, 0.3, 0.8)),
+        add("볼", sphere_bm(0.075 * f, on_face(r, hz, s * 0.24 * f, hz - 0.15 * f, out=-0.022 * f), (1.15, 0.3, 0.8)),
             "#ff9f90", root, emit=True)
 
     # 코와 입
-    add("코", sphere_bm(0.036, on_face(r, hz, 0, hz - 0.1, out=0.008), (1.15, 0.85, 0.95)), "#ff9a78", root)
-    smile(r, hz, hs, root)
+    add("코", sphere_bm(0.036 * f, on_face(r, hz, 0, hz - 0.12 * f, out=0.008 * f), (1.15, 0.85, 0.95)),
+        "#ff9a78", root)
+    smile(r, hz - 0.02 * f, f, root)
 
-    hair_cap(r, hz, hs, spec, root)
+    hair_cap(r, hz, f, spec, root)
 
     root.location.x = x
     return root
@@ -365,7 +390,7 @@ def setup_scene():
 
     cd = bpy.data.cameras.new(PREFIX + "카메라")
     cd.type = "ORTHO"
-    cd.ortho_scale = 1.95
+    cd.ortho_scale = 1.9
     cam = bpy.data.objects.new(PREFIX + "카메라", cd)
     sc.collection.objects.link(cam)
     sc.camera = cam
@@ -373,7 +398,7 @@ def setup_scene():
 
 
 def aim(cam, x):
-    target = Vector((x, 0, 0.74))
+    target = Vector((x, 0, 0.79))
     cam.location = target + Vector((0, -10, 2.4))
     cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
 
