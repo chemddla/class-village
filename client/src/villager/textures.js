@@ -111,66 +111,82 @@ export function faceTexture(skin) {
     // 턱 밑(목과 닿는 곳) 어둡게
     const grad = g.createLinearGradient(0, H * 0.78, 0, H);
     grad.addColorStop(0, 'rgba(150,70,50,0)');
-    grad.addColorStop(1, 'rgba(150,70,50,0.45)');
+    grad.addColorStop(1, 'rgba(150,70,50,0.22)');
     g.fillStyle = grad;
     g.fillRect(0, H * 0.78, W, H * 0.22);
   });
 }
 
-// ── 눈: 세로로 긴 타원 (흰자 조금, 홍채·동공·반짝임·윗속눈썹) ──
+// ── 눈: 세로 1.25배 타원. 홍채가 위아래를 꽉 채워 흰자는 좌우에만 살짝 보임 ──
+// 눈 조각은 실제 크기가 정사각형이므로, 여기서 그린 비율이 그대로 보인다.
 export function eyeTexture(iris, lash = false) {
-  return canvasTexture(`eye:${iris}:${lash}`, 512, 640, (g, W, H) => {
+  return canvasTexture(`eye3:${iris}:${lash}`, 512, 512, (g, W, H) => {
     const cx = W / 2;
-    const cy = H * 0.53;
-    const ell = (x, y, rx, ry) => {
+    const cy = H * 0.52;
+    const rx = W * 0.3;
+    const ry = rx * 1.25; // 세로로 1.25배
+    const ell = (x, y, a, b) => {
       g.beginPath();
-      g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+      g.ellipse(x, y, a, b, 0, 0, Math.PI * 2);
     };
-    // 흰자 (얇게)
+    // 흰자
     g.fillStyle = '#fffdf8';
-    ell(cx, cy, W * 0.38, H * 0.43);
+    ell(cx, cy, rx, ry);
     g.fill();
-    // 홍채: 흰자 대부분을 채움, 가운데가 밝은 방사형
-    const ir = g.createRadialGradient(cx, cy + H * 0.07, 10, cx, cy + H * 0.02, W * 0.36);
-    ir.addColorStop(0, shade(css(iris), 1.45));
-    ir.addColorStop(0.55, css(iris));
-    ir.addColorStop(1, shade(css(iris), 0.45));
+    // 흰자 모양 안에서만 홍채·동공을 그림
+    g.save();
+    ell(cx, cy, rx, ry);
+    g.clip();
+    // 홍채: 위아래는 흰자 끝까지, 좌우는 조금 좁게
+    const icx = cx - W * 0.01;
+    const icy = cy + H * 0.015;
+    const irx = rx * 0.8;
+    const iry = ry * 1.02;
+    const ir = g.createRadialGradient(icx, icy + iry * 0.3, 8, icx, icy, iry);
+    ir.addColorStop(0, shade(css(iris), 1.5));
+    ir.addColorStop(0.5, css(iris));
+    ir.addColorStop(1, shade(css(iris), 0.42));
     g.fillStyle = ir;
-    ell(cx - W * 0.015, cy + H * 0.03, W * 0.32, H * 0.37);
+    ell(icx, icy, irx, iry);
     g.fill();
-    // 홍채 테두리
-    g.lineWidth = 8;
-    g.strokeStyle = shade(css(iris), 0.35);
+    g.lineWidth = 7;
+    g.strokeStyle = shade(css(iris), 0.32);
     g.stroke();
-    // 동공
+    // 큰 동공
     g.fillStyle = '#1b120f';
-    ell(cx - W * 0.015, cy + H * 0.05, W * 0.17, H * 0.21);
+    ell(icx, icy + H * 0.02, irx * 0.62, iry * 0.6);
     g.fill();
+    // 위쪽 그늘 (눈꺼풀 그림자)
+    const lid = g.createLinearGradient(0, cy - ry, 0, cy - ry * 0.4);
+    lid.addColorStop(0, 'rgba(40,20,10,0.45)');
+    lid.addColorStop(1, 'rgba(40,20,10,0)');
+    g.fillStyle = lid;
+    g.fillRect(0, 0, W, cy);
+    g.restore();
     // 반짝임 (큰 것 + 작은 것)
-    g.fillStyle = '#ffffff';
-    ell(cx + W * 0.1, cy - H * 0.12, W * 0.085, H * 0.075);
+    // 위쪽에 작은 반짝임 하나 + 아래쪽에 아주 옅은 반사광
+    g.fillStyle = 'rgba(255,255,255,0.92)';
+    ell(icx + irx * 0.28, icy - iry * 0.42, irx * 0.17, iry * 0.13);
     g.fill();
-    g.globalAlpha = 0.85;
-    ell(cx - W * 0.12, cy + H * 0.2, W * 0.04, H * 0.035);
+    g.fillStyle = 'rgba(255,255,255,0.35)';
+    ell(icx - irx * 0.3, icy + iry * 0.5, irx * 0.09, iry * 0.05);
     g.fill();
-    g.globalAlpha = 1;
-    // 윗속눈썹 라인 (굵은 곡선)
+    // 윗속눈썹 라인
     g.strokeStyle = '#24160f';
     g.lineCap = 'round';
-    g.lineWidth = 30;
+    g.lineWidth = 26;
     g.beginPath();
-    g.ellipse(cx, cy + 4, W * 0.385, H * 0.44, 0, Math.PI * 1.08, Math.PI * 1.92);
+    g.ellipse(cx, cy + 4, rx * 1.03, ry * 1.02, 0, Math.PI * 1.1, Math.PI * 1.9);
     g.stroke();
     if (lash) {
-      // 바깥쪽으로 올라간 속눈썹
-      g.lineWidth = 22;
+      g.lineWidth = 20;
       g.beginPath();
-      g.moveTo(cx + W * 0.33, cy - H * 0.22);
-      g.quadraticCurveTo(cx + W * 0.44, cy - H * 0.27, cx + W * 0.47, cy - H * 0.36);
+      g.moveTo(cx + rx * 0.85, cy - ry * 0.55);
+      g.quadraticCurveTo(cx + rx * 1.15, cy - ry * 0.65, cx + rx * 1.28, cy - ry * 0.88);
       g.stroke();
       g.beginPath();
-      g.moveTo(cx + W * 0.36, cy - H * 0.12);
-      g.quadraticCurveTo(cx + W * 0.46, cy - H * 0.14, cx + W * 0.49, cy - H * 0.2);
+      g.moveTo(cx + rx * 0.97, cy - ry * 0.3);
+      g.quadraticCurveTo(cx + rx * 1.22, cy - ry * 0.34, cx + rx * 1.34, cy - ry * 0.5);
       g.stroke();
     }
   });

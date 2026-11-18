@@ -109,10 +109,12 @@ for (const b of document.querySelectorAll('[data-preset]')) {
   };
 }
 const poseBtn = document.getElementById('pose');
+const POSES = { wave: '손 흔들기', walk: '걷기', idle: '차렷' };
 poseBtn.onclick = () => {
-  pose = pose === 'wave' ? 'idle' : 'wave';
+  const keys = Object.keys(POSES);
+  pose = keys[(keys.indexOf(pose) + 1) % keys.length];
   villager.state.pose = pose;
-  poseBtn.textContent = `자세: ${pose === 'wave' ? '손 흔들기' : '차렷'}`;
+  poseBtn.textContent = `자세: ${POSES[pose]}`;
 };
 const spinBtn = document.getElementById('spin');
 spinBtn.onclick = () => {
