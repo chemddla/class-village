@@ -5,23 +5,79 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>캐릭터 쇼룸</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe9f7; font-family: 'Malgun Gothic', system-ui, sans-serif; }
+    :root { --ink: #4a3b2a; --paper: #fffaf0; --on: #7cc46a; --panel-w: 300px; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe9f7; font-family: 'Malgun Gothic', system-ui, sans-serif; color: var(--ink); }
     canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-    #ui { position: fixed; left: 16px; top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
-    #ui button { border: none; border-radius: 999px; padding: 10px 16px; font-size: 15px; font-weight: 700;
-      background: #fffaf0; color: #4a3b2a; box-shadow: 0 4px 0 rgba(74,59,42,.15); cursor: pointer; }
-    #ui button.on { background: #7cc46a; color: #fff; }
-    #info { position: fixed; right: 16px; bottom: 12px; font-size: 13px; color: #4a3b2a; opacity: .7; }
+    button { font: inherit; border: none; cursor: pointer; color: var(--ink); }
+    button:focus-visible { outline: 3px solid #3d6fc4; outline-offset: 2px; }
+
+    #top { position: fixed; left: 16px; top: 16px; right: calc(var(--panel-w) + 32px); display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { border-radius: 999px; padding: 9px 15px; font-size: 14px; font-weight: 700; background: var(--paper);
+      box-shadow: 0 3px 0 rgba(74,59,42,.15); }
+    .pill.on { background: var(--on); color: #fff; }
+    .sep { width: 1px; background: rgba(74,59,42,.2); margin: 4px 2px; }
+
+    #panel { position: fixed; top: 16px; right: 16px; bottom: 16px; width: var(--panel-w); box-sizing: border-box;
+      overflow-y: auto; padding: 14px 16px; background: rgba(255,250,240,.94); border-radius: 18px;
+      box-shadow: 0 8px 24px rgba(74,59,42,.15); }
+    #panel h3 { margin: 12px 0 7px; font-size: 13px; letter-spacing: .02em; opacity: .75; }
+    #panel h3:first-child { margin-top: 0; }
+    .row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .row .pill { padding: 7px 11px; font-size: 13px; box-shadow: 0 2px 0 rgba(74,59,42,.12); background: #fff; }
+    .row .pill.on { background: var(--on); color: #fff; }
+    .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sw { width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(0,0,0,.12); }
+    .sw.on { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--on); }
+
+    .tabs { position: sticky; top: -14px; z-index: 1; display: flex; gap: 4px; margin: -14px -16px 6px; padding: 10px 12px 8px;
+      background: rgba(255,250,240,.98); border-radius: 18px 18px 0 0; border-bottom: 1px solid rgba(74,59,42,.1); }
+    .tab { flex: 1; padding: 9px 6px; border-radius: 12px; font-size: 14px; font-weight: 700; background: transparent; }
+    .tab[aria-selected="true"] { background: var(--on); color: #fff; }
+    #toast { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px;
+      background: rgba(74,59,42,.85); color: #fff; font-weight: 700; font-size: 14px; pointer-events: none; opacity: 0; transition: opacity .25s; }
+    #toast.show { opacity: 1; }
+    #info { position: fixed; left: 16px; bottom: 12px; font-size: 13px; opacity: .7; }
+
+    /* 좁은 화면: 패널을 아래쪽 시트로 */
+    @media (max-width: 760px) {
+      #top { right: 16px; }
+      #panel { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: 42vh; border-radius: 18px 18px 0 0; }
+      #info { display: none; }
+    }
   </style>
 </head>
 <body>
   <canvas id="c"></canvas>
-  <div id="ui">
-    <button data-preset="boy" class="on">소년</button>
-    <button data-preset="girl">소녀</button>
-    <button id="pose">자세: 손 흔들기</button>
-    <button id="spin">자동 회전</button>
+  <div id="top">
+    <button class="pill" data-preset="boy">소년</button>
+    <button class="pill" data-preset="girl">소녀</button>
+    <span class="sep"></span>
+    <button class="pill" id="bg">배경: 잔디</button>
+    <button class="pill" id="spin">자동 회전</button>
+    <button class="pill" id="glb">GLB 내보내기</button>
   </div>
+  <aside id="panel" aria-label="캐릭터 설정">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-look" aria-controls="pane-look" aria-selected="true">외형 꾸미기</button>
+      <button class="tab" role="tab" id="tab-play" aria-controls="pane-play" aria-selected="false">생활 · 전투 액션</button>
+    </div>
+    <section class="pane" id="pane-look" role="tabpanel" aria-labelledby="tab-look">
+      <h3>헤어스타일</h3><div class="row" id="hair"></div>
+      <h3>피부색</h3><div class="swatches" id="skin"></div>
+      <h3>머리색</h3><div class="swatches" id="hairColor"></div>
+      <h3>상의 색</h3><div class="swatches" id="top-color"></div>
+      <h3>하의 색</h3><div class="swatches" id="bottomColor"></div>
+      <h3>액세서리</h3><div class="row" id="acc"></div>
+    </section>
+    <section class="pane" id="pane-play" role="tabpanel" aria-labelledby="tab-play" hidden>
+      <h3>표정</h3><div class="row" id="expression"></div>
+      <h3>기본 액션</h3><div class="row" id="action"></div>
+      <h3>생활 액션</h3><div class="row" id="life-action"></div>
+      <h3>사냥 액션</h3><div class="row" id="combat-action"></div>
+      <h3>장착 도구 / 무기</h3><div class="row" id="equipment"></div>
+    </section>
+  </aside>
+  <div id="toast" role="status" aria-live="polite"></div>
   <div id="info">드래그로 돌려 보기 · 휠로 확대</div>
   <script type="module" src="/src/character-view.js"></script>
 </body>

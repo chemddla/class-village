@@ -1,7 +1,9 @@
 // 캐릭터 쇼룸: 부드러운 3점 조명 + 반구광으로 고품질 렌더링 확인
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { createVillager, PRESETS } from './villager/villager.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES } from './villager/villager.js';
+import { EQUIPMENT } from './villager/equipment.js';
 import { contactShadow, canvasTexture } from './villager/textures.js';
 
 const canvas = document.getElementById('c');
@@ -81,50 +83,164 @@ const contact = new THREE.Mesh(
 contact.position.y = 0.002;
 scene.add(contact);
 
+// 흰 배경일 때만 보이는 그림자 받이 (바닥 없이 그림자만)
+const shadowCatcher = new THREE.Mesh(
+  new THREE.PlaneGeometry(6, 6).rotateX(-Math.PI / 2),
+  new THREE.ShadowMaterial({ opacity: 0.12 }),
+);
+shadowCatcher.receiveShadow = true;
+shadowCatcher.visible = false;
+scene.add(shadowCatcher);
+
 // ── 캐릭터 ──
-let villager = null;
-let preset = 'boy';
-let pose = 'wave';
+const villager = createVillager(PRESETS.boy);
+villager.root.rotation.y = -0.25;
+scene.add(villager.root);
 let spin = false;
 
-function spawn() {
-  if (villager) {
-    scene.remove(villager.root);
-    villager.root.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+// ── 패널 데이터: 버튼 목록은 전부 여기서 만든다 ──
+const ACTION_LABELS = { idle: '대기', walk: '걷기', run: '달리기', jump: '점프', wave: '인사', cheer: '환호' };
+const LIFE_ACTIONS = { gather: '채집', chop: '벌목', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
+const COMBAT_ACTIONS = {
+  slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
+  castSpell: '마법 시전', hit: '피격', faint: '기절',
+};
+// 타격 시점 콜백을 눈으로 확인할 수 있도록 잠깐 띄우는 문구
+const HIT_TEXT = {
+  gather: '줍기!', chop: '쿵!', fishCast: '퐁당', fish: '월척!', fishCatch: '월척!', slash1: '슥!', slash2: '슥슥!',
+  smash: '쾅!', bowShot: '슝!', castSpell: '반짝!',
+};
+const SKINS = [
+  { skin: '#ffe2cc', nose: '#ff9a78' },
+  { skin: '#ffd3b4', nose: '#ff8a62' },
+  { skin: '#e3ad84', nose: '#d4785a' },
+  { skin: '#a8714f', nose: '#86492f' },
+];
+const HAIR_COLORS = ['#3a2a22', '#a65a2e', '#e4b660', '#d9604a', '#6b8fd6', '#f2a5c0'];
+const TOP_COLORS = ['#f3efe6', '#f28aa0', '#8cc7f0', '#9ad48a', '#f7d36b', '#b59af0'];
+const BOTTOM_COLORS = ['#3f5f8f', '#fff3dc', '#4a4a52', '#c96b5a', '#7fb9a8', '#e7c39b'];
+const ACCESSORIES = { crown: '꽃 화관', glasses: '둥근 안경', backpack: '백팩' };
+
+const $ = (id) => document.getElementById(id);
+const syncers = [];
+// 버튼 하나 만들기: isOn()으로 켜짐 표시를 갱신
+function button(parent, { label, color, onClick, isOn }) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  if (color) {
+    b.className = 'sw';
+    b.style.background = color;
+    b.setAttribute('aria-label', label);
+    b.title = label;
+  } else {
+    b.className = 'pill';
+    b.textContent = label;
   }
-  villager = createVillager(PRESETS[preset]);
-  villager.state.pose = pose;
-  villager.root.rotation.y = -0.25;
-  scene.add(villager.root);
+  b.onclick = () => { onClick(); sync(); };
+  parent.appendChild(b);
+  syncers.push(() => {
+    const on = isOn();
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+  });
 }
+function sync() { for (const f of syncers) f(); }
 
-spawn();
+const o = villager.options;
+for (const [k, e] of Object.entries(EXPRESSIONS)) {
+  if (e.hidden) continue;
+  button($('expression'), { label: e.label, onClick: () => villager.setExpression(k), isOn: () => villager.state.expression === k });
+}
+let toastTimer = 0;
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 700);
+}
+const onHit = (name) => toast(HIT_TEXT[name] ?? '탁!');
+for (const [id, list] of [['action', ACTION_LABELS], ['life-action', LIFE_ACTIONS], ['combat-action', COMBAT_ACTIONS]]) {
+  for (const [k, label] of Object.entries(list)) {
+    button($(id), { label, onClick: () => villager.setAction(k, onHit), isOn: () => villager.state.action === k });
+  }
+}
+for (const [k, e] of Object.entries(EQUIPMENT)) {
+  button($('equipment'), { label: e.label, onClick: () => villager.equip(k), isOn: () => villager.state.equipment === k });
+}
+// 액션이 끝나 대기로 돌아가거나 장비가 자동으로 바뀌면 버튼 표시도 갱신
+villager.onChange = () => sync();
 
-// ── 버튼 ──
-for (const b of document.querySelectorAll('[data-preset]')) {
-  b.onclick = () => {
-    preset = b.dataset.preset;
-    document.querySelectorAll('[data-preset]').forEach((x) => x.classList.toggle('on', x === b));
-    spawn();
+// 탭: 외형 꾸미기 / 생활 · 전투 액션
+for (const tab of document.querySelectorAll('.tab')) {
+  tab.onclick = () => {
+    for (const t of document.querySelectorAll('.tab')) {
+      const on = t === tab;
+      t.setAttribute('aria-selected', on);
+      $(t.getAttribute('aria-controls')).hidden = !on;
+    }
   };
 }
-const poseBtn = document.getElementById('pose');
-const POSES = { wave: '손 흔들기', walk: '걷기', idle: '차렷' };
-poseBtn.onclick = () => {
-  const keys = Object.keys(POSES);
-  pose = keys[(keys.indexOf(pose) + 1) % keys.length];
-  villager.state.pose = pose;
-  poseBtn.textContent = `자세: ${POSES[pose]}`;
-};
-const spinBtn = document.getElementById('spin');
-spinBtn.onclick = () => {
-  spin = !spin;
-  spinBtn.classList.toggle('on', spin);
-};
+for (const [k, h] of Object.entries(HAIRSTYLES)) {
+  button($('hair'), { label: h.label, onClick: () => villager.set({ hair: k }), isOn: () => o.hair === k });
+}
+SKINS.forEach((s, i) => button($('skin'), { label: `피부색 ${i + 1}`, color: s.skin, onClick: () => villager.set(s), isOn: () => o.skin === s.skin }));
+for (const [id, key, list] of [['hairColor', 'hairColor', HAIR_COLORS], ['top-color', 'top', TOP_COLORS], ['bottomColor', 'bottomColor', BOTTOM_COLORS]]) {
+  list.forEach((c) => button($(id), { label: c, color: c, onClick: () => villager.set({ [key]: c }), isOn: () => o[key] === c }));
+}
+for (const [k, label] of Object.entries(ACCESSORIES)) {
+  button($('acc'), { label, onClick: () => villager.set({ [k]: !o[k] }), isOn: () => !!o[k] });
+}
+for (const b of document.querySelectorAll('[data-preset]')) {
+  const p = PRESETS[b.dataset.preset];
+  syncers.push(() => b.classList.toggle('on', Object.keys(p).every((k) => o[k] === p[k])));
+  b.onclick = () => { villager.set(p); sync(); };
+}
 
+// ── 상단 바 ──
+const sky = scene.background;
+let white = false;
+$('bg').onclick = () => {
+  white = !white;
+  scene.background = white ? new THREE.Color('#ffffff') : sky;
+  ground.visible = !white;
+  shadowCatcher.visible = white;
+  $('bg').textContent = white ? '배경: 순백색' : '배경: 잔디';
+};
+$('spin').onclick = () => {
+  spin = !spin;
+  $('spin').classList.toggle('on', spin);
+};
+$('glb').onclick = async () => {
+  const btn = $('glb');
+  btn.disabled = true;
+  btn.textContent = '내보내는 중…';
+  try {
+    const glb = await new GLTFExporter().parseAsync(villager.root, { binary: true });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+    a.download = `villager-${o.hair}.glb`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (err) {
+    console.error(err);
+    alert('GLB 내보내기에 실패했어요. 콘솔을 확인해 주세요.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'GLB 내보내기';
+  }
+};
+sync();
+
+// 패널에 가려지지 않게 화면 중심을 패널 반대쪽으로 옮김
 function resize() {
-  renderer.setSize(innerWidth, innerHeight, false);
-  camera.aspect = innerWidth / innerHeight;
+  const w = innerWidth;
+  const h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  const panel = $('panel').getBoundingClientRect();
+  if (w > 760) camera.setViewOffset(w, h, (panel.width + 16) / 2, 0, w, h);
+  else camera.setViewOffset(w, h, 0, panel.height / 2, w, h);
   camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize);
@@ -136,9 +252,39 @@ renderer.setAnimationLoop(() => {
   const t = clock.elapsedTime;
   if (spin) villager.root.rotation.y += dt * 0.6;
   villager.update(t, dt);
+  // 뛰어오르면 발밑 그림자가 작고 옅어짐
+  const k = 1 - Math.min(0.6, villager.root.position.y * 2.5);
+  contact.scale.setScalar(k);
+  contact.material.opacity = k;
   controls.update();
   renderer.render(scene, camera);
 });
 
+// ── 외부 게임 로직에서 캐릭터를 다루는 전역 컨트롤러 ──
+// CharacterApp.setAction('chop', () => 나무체력--, () => console.log('끝'))
+window.CharacterApp = {
+  villager,
+  actions: { ...ACTION_LABELS, ...LIFE_ACTIONS, ...COMBAT_ACTIONS },
+  equipment: Object.keys(EQUIPMENT),
+  setAction(name, onHitCallback, onCompleteCallback) {
+    villager.setAction(name, onHitCallback, onCompleteCallback);
+  },
+  setExpression(name) {
+    if (!EXPRESSIONS[name]) throw new Error(`없는 표정: ${name}`);
+    villager.setExpression(name);
+  },
+  equip(itemId) {
+    if (!EQUIPMENT[itemId]) throw new Error(`없는 장비: ${itemId}`);
+    villager.equip(itemId);
+  },
+  // 'boy' | 'girl' 같은 프리셋 이름, 또는 바꿀 값만 담은 객체 ({ hair: 'pony', glasses: true })
+  setPreset(config) {
+    const patch = typeof config === 'string' ? PRESETS[config] : config;
+    if (!patch) throw new Error(`없는 프리셋: ${config}`);
+    villager.set(patch);
+    sync();
+  },
+};
+
 // 개발 중 점검용
-window.__show = { renderer, scene, camera, get villager() { return villager; } };
+window.__show = { renderer, scene, camera, villager };
