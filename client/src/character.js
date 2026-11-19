@@ -4,9 +4,11 @@ import { ANIM, COLORS } from '../../shared/world.js';
 import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
+import { syncToon } from './villager/toon.js';
 
 // 주민 모델은 키 약 1.0 → 예전 캐릭터(약 1.7)와 같은 크기로
 const SCALE = 1.7;
+const OUTLINE_SCALE = 0.65;
 const LABEL_Y = 2.0;
 const HAIR_COLORS = ['#3a2a22', '#a65a2e', '#e4b660', '#6b4a32', '#2f2622', '#d9604a', '#5a3d2b', '#c99a5b'];
 const LOOKS = [
@@ -46,6 +48,8 @@ export class Character {
     // 여러 명이 함께 보이므로 표정 텍스처는 1/4 해상도, 머리 곡면도 가볍게
     this.villager = createVillager(lookFor(colorIndex), { texScale: 0.25, hairSegs: 240 });
     this.villager.root.scale.setScalar(SCALE);
+    // 마을 그림체에 맞춘 툰 명암 + 쇼룸보다 35% 얇은 외곽선 (멀리서 내려다봐도 뭉개지지 않게)
+    syncToon(this.villager.root, true, OUTLINE_SCALE);
     this.root.add(this.villager.root);
 
     const shadow = new THREE.Mesh(blobGeometry, shadowMat);

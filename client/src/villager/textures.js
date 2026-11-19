@@ -117,9 +117,12 @@ function faceBase(skin, W, H) {
 export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
   const c = tex.image;
   const g = c.getContext('2d');
-  const W = c.width;
-  const H = c.height;
-  g.drawImage(faceBase(skin, W, H), 0, 0);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(faceBase(skin, c.width, c.height), 0, 0);
+  // 캔버스 실제 크기와 상관없이 2048×1024 기준으로 그린다 (해상도를 낮춰도 입·볼 크기가 그대로)
+  const W = 2048;
+  const H = 1024;
+  g.setTransform(c.width / W, 0, 0, c.height / H, 0, 0);
   const at = (phi, th) => [(phi / (Math.PI * 2) + 0.5) * W, (th / Math.PI) * H];
 
   // 볼 터치: 경계 없는 방사형 그라데이션 (표정에 따라 진하기)

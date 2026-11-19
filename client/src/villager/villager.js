@@ -280,7 +280,8 @@ function buildHair(head, o, { hairSegs = 720 } = {}) {
       return surf(phi, th, s + (SKIN_HUG - s) * smooth(tm - PI * 0.1, tm, th) ** 1.3);
     });
   }
-  mesh(thetaUV(g), mat, hair, '머리');
+  // 머리 외곽선은 절반 두께: 단발 뒷머리 외곽선이 턱 아래 목선 쪽으로 비치지 않게
+  mesh(thetaUV(g), mat, hair, '머리').userData.outlineWidth = 0.006;
   if (style === 'pony') buildPonytail(hair, mat, o);
   return hair;
 }
@@ -321,7 +322,7 @@ function buildPonytail(hair, mat, o) {
     gp.setZ(k, gp.getZ(k) - 0.18 * y * y);
   }
   g.computeVertexNormals();
-  mesh(g, mat, tail, '꼬리');
+  mesh(g, mat, tail, '꼬리').userData.outlineWidth = 0.006;
 }
 
 // ───────────── 얼굴 ─────────────
