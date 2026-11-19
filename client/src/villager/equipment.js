@@ -2,6 +2,7 @@
 // 도구 공간: 쥐는 곳이 원점, 손잡이→머리 방향이 +Y. grip()으로 감싸면 +Y가 손의 +Z(팔을 내렸을 때 앞쪽)가 된다.
 // 날(도끼·검)은 휘두르는 방향인 도구 +Z 쪽을 향한다.
 import * as THREE from 'three';
+import { resolveArmCollision } from './collision.js';
 
 const PI = Math.PI;
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -265,21 +266,67 @@ function twoHandGrip(rig, y, w) {
   const sock = rig.rightSocket;
   const handQ = sock.getWorldQuaternion(new THREE.Quaternion()).multiply(qA.copy(sock.quaternion).invert());
   const gR = sock.getWorldPosition(V());
-  const gL = sock.localToWorld(V(0, 0, y));
-  const mid = torso.worldToLocal(gR.clone().add(gL).multiplyScalar(0.5));
-  const shift = torso.localToWorld(V(-mid.x, 0, 0)).sub(torso.getWorldPosition(V()));
-  // 팔이 안 닿으면 가슴 앞쪽으로 조금씩 당긴다 (팔 길이 0.218의 90%까지)
-  const pull = torso.localToWorld(V(0, rig.shoulderL.position.y - 0.06, 0.07)).sub(torso.localToWorld(mid.setX(0)));
-  const reach = 0.196 * rig.shoulderL.getWorldScale(V()).x;
+  const scale = rig.shoulderL.getWorldScale(V()).x;
+  const T = torso.getWorldPosition(V());
+  const reach = 0.196 * scale;
   const SR = rig.shoulderR.getWorldPosition(V()), SL = rig.shoulderL.getWorldPosition(V());
-  const base = shift.clone();
-  for (let i = 0; i <= 10; i++) {
-    shift.copy(base).addScaledVector(pull, i / 10);
-    if (SR.distanceTo(gR.clone().add(shift)) <= reach && SL.distanceTo(gL.clone().add(shift)) <= reach) break;
+  // 왼손이 자루의 gy 지점을 쥘 때: 두 손 사이가 몸 한가운데 오게 옆으로 옮기고,
+  // 팔이 안 닿으면 가슴 앞(겉면보다 바깥)으로 조금씩 당긴다 (팔 길이 0.218의 90%까지)
+  // (애니메이션 자세의 소켓 기준: 아래에서 후보를 시험하며 오른팔이 움직여도 같은 자리가 나오게)
+  const sockM = sock.matrixWorld.clone();
+  const place = (gy) => {
+    const gL = V(0, 0, gy).applyMatrix4(sockM);
+    const mid = torso.worldToLocal(gR.clone().add(gL).multiplyScalar(0.5));
+    const base = torso.localToWorld(V(-mid.x, 0, 0)).sub(T);
+    const pull = torso.localToWorld(V(0, rig.shoulderL.position.y - 0.04, 0.13)).sub(torso.localToWorld(mid.setX(0)));
+    const shift = base.clone();
+    for (let i = 0; i <= 10; i++) {
+      shift.copy(base).addScaledVector(pull, i / 10);
+      if (SR.distanceTo(gR.clone().add(shift)) <= reach && SL.distanceTo(gL.clone().add(shift)) <= reach) break;
+    }
+    return { gL, shift };
+  };
+  const joints = ARM_JOINTS.map((k) => rig[k]);
+  const saved = joints.map((j) => j.quaternion.clone());
+  // 도구를 shift(세계)만큼 옮긴 자리를 두 손으로 쥐어 보고, 몸에 박힌 깊이(두 팔 합)를 돌려준다.
+  // 도구는 오른손에 붙어 있으므로 왼손은 오른손이 실제로 간 곳의 자루를 쥔다 (오른손이 덜 닿아도 도구에서 안 떨어짐)
+  const grip = (gy, gL, shift) => {
+    joints.forEach((j, k) => j.quaternion.copy(saved[k]));
+    torso.updateMatrixWorld(true);
+    armIK(rig, 'R', gR.clone().add(shift), handQ, w);
+    armIK(rig, 'L', sock.localToWorld(V(0, 0, gy)).lerp(gL.clone().add(shift), 1 - w), handQ, w);
+    return rig.colliders ? resolveArmCollision(rig).reduce((a, b) => a + b, 0) : 0;
+  };
+  // 손·팔이 가슴·배·머리에 박히지 않는 자리를 후보 중에서 고른다. 팔이 짧아 가슴 한가운데 앞을 쥐면
+  // 쭉 편 팔이 가슴을 가로지르므로, 앞으로 내밀기(0~12cm)뿐 아니라 좌우로 비키기·조금 위로 들기도 본다.
+  // 왼손은 오른손 아래(자루 끝 쪽) 또는 위(도구 머리 쪽, 내려찍을 때 자루 끝이 배를 향하면)를 쥔다.
+  // 덜 박힌 자리 → 덜 옮긴 자리 → 원래 손 순서를 우선한다. 안 박히는 자리를 찾으면 그 줄은 더 보지 않는다.
+  let pick = { gy: y, off: V(), cost: Infinity };
+  if (rig.colliders) {
+    search: for (const gy of [y, -y]) {
+      const { gL, shift } = place(gy);
+      for (const side of [0, 0.035, -0.035]) {
+        for (const up of [0, 0.03]) {
+          for (let k = 0; k <= 4; k++) {
+            const off = V(side, up, 0.03 * k);
+            const d = grip(gy, gL, torso.localToWorld(off.clone()).sub(T).add(shift)) / scale;
+            const cost = Math.max(0, d - 0.002) + 0.004 * k + Math.abs(side) * 0.1 + up * 0.1 + (gy === y ? 0 : 0.006);
+            if (cost < pick.cost) pick = { gy, off, cost };
+            if (pick.cost < 1e-9) break search; // 원래 자리 그대로 안 박힘
+            if (d < 0.002) break; // 더 앞으로 낼 필요 없음
+          }
+        }
+      }
+    }
   }
-  armIK(rig, 'R', gR.add(shift), handQ, w);
-  armIK(rig, 'L', gL.add(shift), handQ, w);
+  // 프레임마다 고른 자리가 바뀌어도 튀지 않게 부드럽게 따라간다
+  const st = (rig.twoHandPick ??= { gy: pick.gy, off: pick.off.clone() });
+  st.gy += (pick.gy - st.gy) * 0.6;
+  st.off.lerp(pick.off, 0.6);
+  const { gL, shift } = place(st.gy);
+  grip(st.gy, gL, torso.localToWorld(st.off.clone()).sub(T).add(shift));
 }
+const ARM_JOINTS = ['shoulderR', 'elbowR', 'handR', 'shoulderL', 'elbowL', 'handL'];
 
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
 const v1 = V();

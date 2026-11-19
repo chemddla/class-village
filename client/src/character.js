@@ -6,6 +6,15 @@ import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { ACTIONS } from './villager/actions.js';
 import { syncToon } from './villager/toon.js';
+import { FX } from './fx.js';
+
+const wrapAngle = (d) => Math.atan2(Math.sin(d), Math.cos(d));
+const RUN_SPEED_REF = 5.6;
+// 스쿼시 & 스트레치 스프링: 감쇠를 크게 잡아 한 번 살짝 넘쳤다가 바로 자리 잡음 (뽀잉뽀잉 여러 번 튀지 않게)
+const SQ_K = 260;
+const SQ_C = 24;
+const vA = new THREE.Vector3();
+const vB = new THREE.Vector3();
 
 // 주민 모델은 키 약 1.0 → 예전 캐릭터(약 1.7)와 같은 크기로
 const SCALE = 1.7;
@@ -65,7 +74,20 @@ export class Character {
     this.villager.root.scale.setScalar(SCALE);
     // 마을 그림체에 맞춘 툰 명암 + 쇼룸보다 35% 얇은 외곽선 (멀리서 내려다봐도 뭉개지지 않게)
     syncToon(this.villager.root, true, OUTLINE_SCALE);
-    this.root.add(this.villager.root);
+    // body: 주민 모델을 한 겹 감싸 탄성(늘어남·눌림)·기울기·흔들림을 애니메이션과 따로 얹는다 (발바닥이 축)
+    this.body = new THREE.Group();
+    this.body.add(this.villager.root);
+    this.root.add(this.body);
+    this.sq = new THREE.Vector3(1, 1, 1);
+    this.sqV = new THREE.Vector3();
+    this.speed = 0;
+    this.prev = null; // [x, z, 방향]
+    this.actSec = 0; // 지금 동작을 시작한 뒤 흐른 초
+    this.marks = {}; // 이번 동작에서 이미 한 연출 (도약·착지)
+    this.stepT = 0;
+    this.stepSide = 0;
+    this.shakeT = 0;
+    this.trails = {};
 
     const shadow = new THREE.Mesh(blobGeometry, shadowMat);
     shadow.position.y = 0.004;
@@ -120,7 +142,9 @@ export class Character {
     const want = ACTS[this.anim] && this.actLeft > 0 ? ACTS[this.anim] : BASE[this.anim] ?? 'idle';
     if (want !== this.current) {
       this.current = want;
-      this.villager.setAction(want);
+      this.actSec = 0;
+      this.marks = {};
+      this.villager.setAction(want, (name, n) => Character.onHit?.(this, name, n));
       // 동작이 끝나면 원래 들고 있던 도구로 돌아간다
       if (!ACTIONS[want]?.equip && this.villager.state.equipment !== TOOLS[this.tool]) this.villager.equip(TOOLS[this.tool]);
     }
@@ -130,12 +154,140 @@ export class Character {
 
     // 둥근 지평선: 캐릭터 전체를 땅과 같은 만큼 내린다 (주민 재질에는 휘는 셰이더가 없음)
     this.root.position.y = -curveDrop(this.root.position.x, this.root.position.z);
+    this.actSec += dt;
+    this.juice(dt);
+  }
+
+  // 늘어남·눌림: 정한 비율로 확 바꾼 뒤 스프링으로 통통 튀며 1로 돌아간다
+  squash(x, y, z) {
+    this.sq.set(x, y, z);
+    this.sqV.set(0, 0, 0);
+  }
+
+  // 맞았을 때 몸이 부르르
+  shake() { this.shakeT = 0.35; }
+
+  // 발밑 땅 높이 (둥근 지평선으로 내려간 만큼)
+  get groundY() { return this.root.position.y; }
+
+  trail(key, opts) {
+    if (!this.trails[key]) this.trails[key] = FX.trail(opts);
+    return this.trails[key];
+  }
+
+  footPuff(n, power = 1, ring = false) {
+    const r = this.root.rotation.y;
+    FX.burst('dust', n, this.x - Math.sin(r) * 0.15, this.groundY + 0.06, this.z - Math.cos(r) * 0.15, {
+      floor: this.groundY, ring, power, dir: [-Math.sin(r), -Math.cos(r)], spread: ring ? Math.PI : 0.9,
+    });
+  }
+
+  // ── 손맛 연출 (매 장면) ──
+  juice(dt) {
+    const rig = this.villager.rig;
+    // 실제로 움직인 빠르기·도는 빠르기 (다른 학생도 똑같이 계산되도록 위치 변화로 잰다)
+    let turn = 0;
+    if (this.prev && dt > 0) {
+      const d = Math.hypot(this.x - this.prev[0], this.z - this.prev[1]) / dt;
+      this.speed += (Math.min(d, 9) - this.speed) * Math.min(1, dt * 10);
+      turn = wrapAngle(this.root.rotation.y - this.prev[2]) / dt;
+    }
+    this.prev = [this.x, this.z, this.root.rotation.y];
+    const run = Math.min(1, this.speed / RUN_SPEED_REF);
+
+    // 점프: 도약하는 순간 쭉 늘어나고, 착지하는 순간 납작 → 탄성 복원 + 발밑 먼지
+    const cur = this.current;
+    const M = this.marks;
+    if (cur === 'jump') {
+      if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
+      if (!M.down && this.actSec >= 0.73) { M.down = 1; this.squash(1.18, 0.82, 1.18); this.footPuff(10, 1, true); }
+    } else if (cur === 'flip') {
+      if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
+      if (!M.down && this.actSec >= 0.62) { M.down = 1; this.squash(1.2, 0.8, 1.2); this.footPuff(12, 1.2, true); }
+      // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
+      if (this.actSec < 0.55) {
+        rig.head.getWorldPosition(vB);
+        rig.pelvis.getWorldPosition(vA);
+        this.trail('flip', { life: 0.16, color: 0xffffff, alpha: 0.55 }).push(this.time, vA, vB);
+      }
+    }
+
+    // 달리기: 발이 땅을 찰 때마다 뒤로 먼지 퐁퐁
+    if (cur === 'run' && this.speed > 2.2) {
+      this.stepT -= dt;
+      if (this.stepT <= 0) {
+        this.stepT = 0.17;
+        this.stepSide ^= 1;
+        (this.stepSide ? rig.footR : rig.footL).getWorldPosition(vA);
+        const r = this.root.rotation.y;
+        FX.burst('dust', 2, vA.x, this.groundY + 0.05, vA.z, { floor: this.groundY, power: 0.6, dir: [-Math.sin(r), -Math.cos(r)], spread: 0.6 });
+      }
+    } else this.stepT = 0;
+
+    // 휘두르기 궤적: 액션에 trail: [시작, 끝] 이 있으면 그 구간 동안 도구 끝을 따라 부채꼴
+    const def = ACTIONS[cur];
+    const u = this.villager.progress;
+    if (def?.trail && u >= def.trail[0] && u <= def.trail[1] && toolEnds(rig, vA, vB)) {
+      this.trail('swing', { life: 0.15, color: 0xfffbe8, alpha: 0.95 }).push(this.time, vA, vB);
+    }
+    for (const k in this.trails) this.trails[k].update(this.time);
+
+    // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)
+    let leanX = run * 0.16 + (cur === 'flip' ? 0.2 * (1 - Math.min(1, this.actSec / 0.5)) : 0);
+    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip') leanX = 0; // 생활·공격 동작 중에는 똑바로
+    const leanZ = THREE.MathUtils.clamp(-turn * 0.035, -0.22, 0.22) * run;
+    const a = 1 - Math.exp(-dt * 10);
+    this.body.rotation.x += (leanX - this.body.rotation.x) * a;
+    this.body.rotation.z += (leanZ - this.body.rotation.z) * a;
+
+    // 스프링
+    this.sqV.addScaledVector(vA.set(1, 1, 1).sub(this.sq), SQ_K * dt).multiplyScalar(Math.exp(-SQ_C * dt));
+    this.sq.addScaledVector(this.sqV, dt);
+    this.body.scale.copy(this.sq);
+
+    // 맞은 몸 흔들림
+    if (this.shakeT > 0) {
+      this.shakeT = Math.max(0, this.shakeT - dt);
+      const k = this.shakeT / 0.35;
+      this.body.position.set(Math.sin(this.time * 80) * 0.06 * k, 0, Math.cos(this.time * 67) * 0.03 * k);
+    } else this.body.position.set(0, 0, 0);
   }
 
   dispose() {
+    for (const k in this.trails) this.trails[k].dispose();
     this.villager.dispose();
     this.label.material.map.dispose();
     this.label.material.dispose();
     this.root.removeFromParent();
   }
+}
+
+// 오른손 도구의 손잡이 쪽(a)과 머리 끝(b)의 세계 좌표. 도구가 없으면 false
+// 끝점은 도구를 처음 볼 때 한 번 재서 기억해 둔다 (소켓 기준 가장 먼 부품까지)
+const inv = new THREE.Matrix4();
+function toolEnds(rig, a, b) {
+  const tool = rig.rightSocket?.children[0];
+  if (!tool) return false;
+  const sock = rig.rightSocket;
+  if (!tool.userData.tipLocal) {
+    sock.updateWorldMatrix(true, true);
+    inv.copy(sock.matrixWorld).invert();
+    let best = null;
+    let bestD = 0;
+    tool.traverse((m) => {
+      if (!m.isMesh || m.userData.isOutline) return;
+      m.geometry.computeBoundingSphere();
+      const bs = m.geometry.boundingSphere;
+      const p = bs.center.clone().applyMatrix4(m.matrixWorld).applyMatrix4(inv);
+      const d = p.length();
+      if (d > bestD) { bestD = d; best = p.multiplyScalar((d + bs.radius * m.getWorldScale(vA).x / sock.getWorldScale(vB).x) / d); }
+    });
+    if (!best) return false;
+    tool.userData.tipLocal = best;
+    tool.userData.baseLocal = best.clone().multiplyScalar(0.15);
+  }
+  sock.updateWorldMatrix(true, false);
+  a.copy(tool.userData.baseLocal).applyMatrix4(sock.matrixWorld);
+  b.copy(tool.userData.tipLocal).applyMatrix4(sock.matrixWorld);
+  return true;
 }

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM } from '../../shared/world.js';
 import { toon, addOutline } from './materials.js';
+import { puffyCanopy, trunkGeometry } from './village.js';
 
 const REACH = 1.8; // 대상까지 이만큼 안이면 가능 (m)
 // 도구 → 동작, 대상 이름(안내 문구용)
@@ -41,8 +42,9 @@ export function buildLifeSpots(scene) {
     const o = new THREE.Group();
     o.position.set(s.x, 0, s.z);
     if (s.kind === 'tree') {
-      o.add(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.26, 1.2, 8).translate(0, 0.6, 0), toon(0xa9744f)));
-      o.add(new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1).translate(0, 1.9, 0), toon(0x7cc35a)));
+      // 마을 나무와 같은 몽글몽글한 나무 (조금 작게)
+      o.add(new THREE.Mesh(trunkGeometry().scale(0.85, 0.85, 0.85), toon(0xa9744f)));
+      o.add(new THREE.Mesh(puffyCanopy().scale(0.85, 0.85, 0.85), toon(0x86c95e, { vertexColors: true })));
     } else if (s.kind === 'pond') {
       const water = new THREE.Mesh(new THREE.CircleGeometry(s.r, 32).rotateX(-Math.PI / 2), toon(0x7cc8f0));
       water.position.y = 0.03;

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
-  ANIM, COLORS, TOOLS, LIFE_TOOLS, LIFE_SPOTS, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
+  ANIM, COLORS, TOOLS, LIFE_TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
 import { Character, actTime } from './character.js';
@@ -11,6 +11,7 @@ import { createLookEditor } from './look-editor.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
 import { setCurveCenter, curveDrop } from './materials.js';
+import { FX } from './fx.js';
 
 const params = new URLSearchParams(location.search);
 const LOW = params.get('q') === 'low';
@@ -35,12 +36,31 @@ const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1 : 1.5)); // 태블릿 성능을 위해 최대 1.5배
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xbfe6ff);
-scene.fog = new THREE.Fog(0xbfe6ff, 26, 52);
-scene.add(new THREE.HemisphereLight(0xfffaf0, 0x9ccf7a, 1.7));
-const sun = new THREE.DirectionalLight(0xffffff, 1.9);
+// 하늘: 위는 맑은 하늘색, 지평선 쪽은 안개와 같은 파스텔색으로 번지는 그라데이션
+const FOG_COLOR = 0xdcecf6;
+const FOG_DENSITY = 0.0145;
+scene.background = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 2;
+  cv.height = 256;
+  const g = cv.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, '#8fcfff');
+  grd.addColorStop(0.55, '#c4e4fb');
+  grd.addColorStop(1, '#dcecf6');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+})();
+// 거리 안개: 가까운 곳은 또렷하고 맵 가장자리로 갈수록 하늘과 자연스럽게 섞임
+scene.fog = new THREE.FogExp2(FOG_COLOR, FOG_DENSITY);
+scene.add(new THREE.HemisphereLight(0xfff6ec, 0x9cc98a, 1.65));
+const sun = new THREE.DirectionalLight(0xfff3dc, 2.0); // 살짝 따뜻한 햇빛
 sun.position.set(8, 15, 6);
 scene.add(sun);
+FX.init(scene);
 
 const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 150);
 const camTarget = new THREE.Vector3(0, 0, 3);
@@ -60,7 +80,7 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-const village = buildVillage(scene);
+const village = buildVillage(scene, { low: LOW });
 
 // ── 화면 요소 ──
 const $id = (id) => document.getElementById(id);
@@ -107,6 +127,66 @@ function getHit(fromX, fromZ) {
   local.hurt = local.actLeft; // 맞는 동안은 움직여도 끊기지 않음
   me.setPose(me.x, me.z, Math.atan2(fromX - me.x, fromZ - me.z)); // 때린 쪽으로 돌아봄
 }
+// ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
+// 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
+function hitFx(char, action) {
+  const fx = Math.sin(char.targetRot);
+  const fz = Math.cos(char.targetRot);
+  const gy = char.groundY;
+  const dir = [fx, fz];
+  const at = (x, z, y = 0.6) => [x, gy + y, z];
+  const burst = (kind, n, [x, y, z], opts = {}) => FX.burst(kind, n, x, y, z, { floor: gy, dir, spread: 1.4, ...opts });
+  const spotIdx = (kind, x, z, reach) => LIFE_SPOTS.findIndex((s) => lifeSpots.length && s.kind === kind && Math.hypot(s.x - x, s.z - z) < reach);
+  const shakeSpot = (i) => { const o = lifeSpotsMesh?.children[i]; if (o) FX.shake(o, fx, fz); };
+  let strong = false;
+
+  if (action === 'clubSmash' || action === 'chop') {
+    // 몽둥이: 사람 → 바위 → 나무 → 땅 순서로 맞은 것을 찾는다 · 도끼: 나무
+    const hx = char.x + fx * 0.95;
+    const hz = char.z + fz * 0.95;
+    const victims = action === 'clubSmash' ? [me, ...[...others.values()].map((o) => o.char)].filter((c) => c && c !== char && inSwing(char.x, char.z, char.targetRot, c.x, c.z)) : [];
+    const rock = action === 'clubSmash' ? village.nearRock(hx, hz, 0.7) : -1;
+    const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
+    const spot = spotIdx('tree', hx, hz, 1.3);
+    if (victims.length) {
+      for (const v of victims) {
+        v.shake();
+        burst('star', 9, at(v.x, v.z, 1.35), { spread: Math.PI, power: 0.9 });
+        burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
+        if (v === me) strong = true;
+      }
+    } else if (rock >= 0) {
+      const r = WORLD.rocks[rock];
+      village.shakeRock(rock, fx, fz);
+      const p = at(r.x - fx * r.r, r.z - fz * r.r, 0.45 * r.s);
+      burst('stone', 10, p, { dir: [-fx, -fz] });
+      burst('dust', 6, p, { spread: Math.PI, power: 0.7 });
+    } else if (tree >= 0 || spot >= 0) {
+      const t = tree >= 0 ? WORLD.trees[tree] : { ...LIFE_SPOTS[spot], r: 0.25, s: 0.85 };
+      if (tree >= 0) village.shakeTree(tree, fx, fz, action === 'chop' ? 1 : 0.7);
+      else shakeSpot(spot);
+      // 나뭇조각은 맞은 자리에서 때린 사람 쪽으로 튀고, 잎은 위에서 팔랑팔랑
+      burst('wood', 9, at(t.x - fx * t.r, t.z - fz * t.r, 0.6), { dir: [-fx, -fz] });
+      burst('leaf', 7, at(t.x, t.z, 1.9 * t.s), { spread: Math.PI, power: 0.8 });
+    } else {
+      burst('dust', 10, at(hx, hz, 0.05), { ring: true, power: 1.1 });
+      burst('stone', 4, at(hx, hz, 0.05), { spread: Math.PI, power: 0.6 });
+    }
+  } else if (action === 'gather') {
+    const t = findTarget('none', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 0.6, z: char.z + fz * 0.6 };
+    const bush = spotIdx('bush', t.x, t.z, 0.5);
+    if (bush >= 0) { shakeSpot(bush); burst('leaf', 6, at(t.x, t.z, 0.5), { spread: Math.PI, power: 0.7 }); }
+    else burst('petal', 7, at(t.x, t.z, 0.3), { spread: Math.PI, power: 0.8 });
+    burst('sparkle', 8, at(t.x, t.z, 0.45), { spread: Math.PI });
+  } else if (action === 'fish') {
+    const t = findTarget('rod', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 1.5, z: char.z + fz * 1.5 };
+    burst('splash', 14, at(t.x, t.z, 0), { spread: Math.PI, floor: gy - 0.1 });
+    burst('star', 6, at(t.x, t.z, 0.8), { spread: Math.PI, power: 0.6 });
+  }
+  if (char === me || strong) FX.hitstop(0.05);
+}
+Character.onHit = (char, action) => hitFx(char, action);
+
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
 const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏' };
 const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', club: '💥' };
@@ -413,7 +493,7 @@ function updateOthers(now) {
 }
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
-if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, get me() { return me; }, get room() { return room; } };
+if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, FX, get me() { return me; }, get room() { return room; } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
@@ -421,8 +501,11 @@ let fpsFrames = 0;
 let fpsTime = 0;
 
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const realDt = Math.min(clock.getDelta(), 0.05);
   const now = performance.now();
+  // 히트스톱: 맞는 순간 아주 잠깐 캐릭터·파티클을 멈춰 '퍽' 하는 손맛을 준다 (카메라·풍경은 계속)
+  const dt = FX.simDt(realDt);
+  village.update(realDt, now / 1000);
 
   if (me) updateMe(dt);
   updateOthers(now);
@@ -434,13 +517,13 @@ renderer.setAnimationLoop(() => {
   camOffset.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
   camera.position.copy(camTarget).addScaledVector(camOffset, d);
   camera.lookAt(camTarget.x, 0.8, camTarget.z);
-  // 멀리 볼수록 안개도 멀리 (멀리 빼도 내 주변이 뿌옇게 되지 않게)
-  scene.fog.near = 26 * Math.max(1, cam.zoom);
-  scene.fog.far = 52 * Math.max(1, cam.zoom);
+  // 멀리 볼수록 안개를 옅게 (멀리 빼도 내 주변이 뿌옇게 되지 않게)
+  scene.fog.density = FOG_DENSITY / Math.max(1, cam.zoom * camScale);
   setCurveCenter(camTarget.x, camTarget.z, cam.yaw);
   // 둥근 지평선의 중심을 정한 뒤에 캐릭터를 내린다 (한 프레임 늦으면 걸을 때 발이 땅과 어긋남)
   if (me) me.update(dt);
   for (const { char } of others.values()) char.update(dt);
+  FX.update(dt);
 
   for (const label of village.labels) {
     const b = label.userData.base;
@@ -450,7 +533,7 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 
   fpsFrames++;
-  fpsTime += dt;
+  fpsTime += realDt;
   if (fpsTime >= 0.5) {
     ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS`;
     fpsFrames = 0;

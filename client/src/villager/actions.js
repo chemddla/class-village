@@ -21,13 +21,16 @@ function crouch(P, c) {
 }
 
 // 키프레임: kf(u, [u0, v0], [u1, v1], ...) — 구간마다 smoothstep으로 이어 붙인 값
+// 세 번째 값으로 그 구간의 빠르기 곡선을 바꿀 수 있다: 'in' 점점 빨라짐(내려찍기) · 'out' 확 나갔다가 느려짐(관성)
+const EASE = { in: (s) => s * s * s, out: (s) => 1 - (1 - s) ** 3 };
 function kf(u, ...pts) {
   if (u <= pts[0][0]) return pts[0][1];
   for (let i = 1; i < pts.length; i++) {
-    const [u1, v1] = pts[i];
+    const [u1, v1, ease] = pts[i];
     if (u <= u1) {
       const [u0, v0] = pts[i - 1];
-      return v0 + (v1 - v0) * sm(u, u0, u1);
+      const w = ease ? EASE[ease]((u - u0) / (u1 - u0)) : sm(u, u0, u1);
+      return v0 + (v1 - v0) * w;
     }
   }
   return pts[pts.length - 1][1];
@@ -70,8 +73,9 @@ export const ACTIONS = {
     P['head.rx'] = -b * 0.012;
     P['head.ry'] = Math.sin(t * 0.8) * 0.05;
     P['head.rz'] = -sway * 0.02;
-    P['shoulderR.rz'] = -0.14 - b * 0.02;
-    P['shoulderL.rz'] = 0.14 + b * 0.02;
+    // 팔은 차렷처럼 벌리지 않고 몸통 옆선에 가볍게 붙여 내린다
+    P['shoulderR.rz'] = -0.06 - b * 0.015;
+    P['shoulderL.rz'] = 0.06 + b * 0.015;
     P['shoulderR.rx'] = sway * 0.03;
     P['shoulderL.rx'] = -sway * 0.03;
     P['elbowR.rx'] = P['elbowL.rx'] = -0.08;
@@ -295,43 +299,52 @@ Object.assign(ACTIONS, {
       P['root.sy'] = kf(u, [0.7, 0], [0.76, -0.05], [0.84, 0.05], [0.96, -0.04], [1, 0]);
     },
   },
+  // 도끼질: 허리를 틀며 도끼를 어깨 너머로 천천히 크게 젖혀(예비 동작) → 순식간에 내려찍고(가속) →
+  // 관성으로 조금 더 파고들었다가(잔여 동작) 부르르 되튐. 내려찍는 구간이 예전보다 두 배 빠르다.
   chop: {
-    duration: 1.3, hitAt: 0.55, equip: 'axe',
+    duration: 1.3, hitAt: 0.55, equip: 'axe', rate: 42, trail: [0.47, 0.66],
     fn(u, P, fx) {
       twoHand(P, fx);
-      // 허리를 틀어 도끼를 오른쪽 어깨 위로 크게 넘겼다가 체중을 실어 내려찍고, 맞는 순간 부르르 되튐
       const shake = u > 0.55 ? Math.sin((u - 0.55) * 60) * Math.exp(-(u - 0.55) * 14) : 0;
-      crouch(P, kf(u, [0, 0], [0.2, 0.2], [0.42, 0.05], [0.56, 0.55], [0.75, 0.45], [1, 0]));
-      P['shoulderR.rx'] = kf(u, [0, 0], [0.42, -1.9], [0.55, -0.5], [0.75, -0.6], [1, 0]) + shake * 0.12;
-      P['shoulderR.rz'] = kf(u, [0, 0], [0.42, -1.2], [0.55, 0.3], [0.75, 0.3], [1, 0]);
-      P['shoulderL.rx'] = kf(u, [0, 0], [0.42, -1.3], [0.55, -0.5], [0.75, -0.55], [1, 0]) + shake * 0.12;
-      P['shoulderL.rz'] = kf(u, [0, 0], [0.42, -0.2], [0.55, -0.35], [1, 0]);
-      P['elbowR.rx'] = kf(u, [0, 0], [0.42, -0.45], [0.55, -0.1], [1, 0]);
-      P['elbowL.rx'] = kf(u, [0, 0], [0.42, -0.9], [0.55, -0.2], [1, 0]);
-      P['spine.rx'] += kf(u, [0, 0], [0.42, -0.25], [0.55, 0.45], [0.75, 0.35], [1, 0]) + shake * 0.05;
-      P['spine.ry'] = kf(u, [0, 0], [0.42, -0.32], [0.55, 0.18], [1, 0]);
-      P['pelvis.ry'] = kf(u, [0, 0], [0.42, -0.14], [0.55, 0.1], [1, 0]);
-      P['head.rx'] = kf(u, [0, 0], [0.42, -0.2], [0.55, 0.15], [1, 0]) - shake * 0.06;
-      P['head.ry'] = kf(u, [0, 0], [0.42, 0.25], [0.55, -0.1], [1, 0]); // 몸을 틀어도 눈은 나무에
-      P['hipL.rx'] -= kf(u, [0, 0], [0.42, 0.25], [1, 0]);
-      P['root.sy'] = kf(u, [0.3, 0], [0.42, 0.04], [0.56, -0.05], [0.75, 0]);
+      crouch(P, kf(u, [0, 0], [0.2, 0.22], [0.48, 0.02], [0.55, 0.5, 'in'], [0.62, 0.62, 'out'], [0.78, 0.45], [1, 0]));
+      P['shoulderR.rx'] = kf(u, [0, 0], [0.4, -1.85], [0.48, -2.1], [0.55, -0.5, 'in'], [0.62, -0.3, 'out'], [0.78, -0.6], [1, 0]) + shake * 0.12;
+      P['shoulderR.rz'] = kf(u, [0, 0], [0.4, -1.15], [0.48, -1.3], [0.55, 0.3, 'in'], [0.62, 0.38, 'out'], [0.78, 0.3], [1, 0]);
+      P['shoulderL.rx'] = kf(u, [0, 0], [0.4, -1.25], [0.48, -1.45], [0.55, -0.5, 'in'], [0.62, -0.35, 'out'], [0.78, -0.55], [1, 0]) + shake * 0.12;
+      P['shoulderL.rz'] = kf(u, [0, 0], [0.48, -0.22], [0.55, -0.35, 'in'], [1, 0]);
+      P['elbowR.rx'] = kf(u, [0, 0], [0.48, -0.5], [0.55, -0.1, 'in'], [1, 0]);
+      P['elbowL.rx'] = kf(u, [0, 0], [0.48, -0.95], [0.55, -0.2, 'in'], [1, 0]);
+      P['spine.rx'] += kf(u, [0, 0], [0.4, -0.25], [0.48, -0.34], [0.55, 0.45, 'in'], [0.62, 0.55, 'out'], [0.78, 0.35], [1, 0]) + shake * 0.05;
+      P['spine.ry'] = kf(u, [0, 0], [0.48, -0.38], [0.55, 0.18, 'in'], [0.62, 0.24, 'out'], [1, 0]);
+      P['pelvis.ry'] = kf(u, [0, 0], [0.48, -0.16], [0.55, 0.1, 'in'], [1, 0]);
+      P['head.rx'] = kf(u, [0, 0], [0.48, -0.22], [0.55, 0.15, 'in'], [1, 0]) - shake * 0.06;
+      P['head.ry'] = kf(u, [0, 0], [0.48, 0.28], [0.55, -0.1, 'in'], [1, 0]); // 몸을 틀어도 눈은 나무에
+      P['hipL.rx'] -= kf(u, [0, 0], [0.48, 0.28], [1, 0]);
+      P['root.sy'] = kf(u, [0.3, 0], [0.48, 0.05], [0.56, -0.06], [0.75, 0]);
     },
   },
-  // 몽둥이 내려치기: 두 손으로 머리 위까지 번쩍 들었다가 몸 앞으로 곧게 내리찍고, 맞는 순간 부르르
+  // 몽둥이 대각선 휘두르기: 허리를 오른쪽으로 감으며 몽둥이 끝이 오른쪽 위 뒤를 향하도록 비스듬히 크게 젖혔다가(예비 동작)
+  // 몸 앞을 대각선으로 가르며 번개처럼 휘두르고(가속), 관성으로 왼쪽 아래까지 더 내려간 뒤(잔여 동작) 부르르 되튐.
+  // 두 손 IK라 팔 각도는 '몽둥이 방향'으로만 쓰인다 (값은 몽둥이 끝 위치를 재 가며 맞춤)
   clubSmash: {
-    duration: 0.9, hitAt: 0.5, equip: 'club',
+    duration: 0.9, hitAt: 0.5, equip: 'club', rate: 45, trail: [0.42, 0.68],
     fn(u, P, fx) {
       twoHand(P, fx);
       const shake = u > 0.5 ? Math.sin((u - 0.5) * 60) * Math.exp(-(u - 0.5) * 14) : 0;
-      crouch(P, kf(u, [0, 0], [0.32, 0.1], [0.52, 0.55], [0.75, 0.45], [1, 0]));
-      P['shoulderR.rx'] = kf(u, [0, 0], [0.32, -2.8], [0.5, -0.9], [0.75, -1.0], [1, 0]) + shake * 0.12;
-      P['shoulderR.rz'] = kf(u, [0, 0], [0.32, -0.25], [0.5, 0.15], [1, 0]);
-      P['elbowR.rx'] = kf(u, [0, 0], [0.32, -0.7], [0.5, -0.1], [1, 0]);
-      P['handR.rx'] = kf(u, [0, 0], [0.32, -0.5], [0.5, 0.25], [1, 0]);
-      P['spine.rx'] += kf(u, [0, 0], [0.32, -0.25], [0.5, 0.4], [0.75, 0.3], [1, 0]) + shake * 0.05;
-      P['head.rx'] = kf(u, [0, 0], [0.32, -0.2], [0.5, 0.15], [1, 0]) - shake * 0.06;
-      P['hipL.rx'] -= kf(u, [0, 0], [0.32, 0.3], [0.6, 0.2], [1, 0]);
-      P['root.sy'] = kf(u, [0.2, 0], [0.32, 0.04], [0.52, -0.05], [0.75, 0]);
+      crouch(P, kf(u, [0, 0], [0.3, 0.15], [0.43, 0.1], [0.5, 0.4, 'in'], [0.6, 0.5, 'out'], [0.8, 0.3], [1, 0]));
+      //            쉼        젖히는 중        끝까지 젖힘        타격(몸 앞)           관성(왼쪽 아래)        되돌아옴
+      P['shoulderR.rx'] = kf(u, [0, 0], [0.3, -0.9], [0.43, -1.01], [0.5, 0.15, 'in'], [0.62, 0.2, 'out'], [0.8, -0.2], [1, 0]) + shake * 0.1;
+      P['shoulderR.rz'] = kf(u, [0, 0], [0.3, 1.3], [0.43, 1.44], [0.5, 1.36, 'in'], [0.62, 1.16, 'out'], [0.8, 0.8], [1, 0]);
+      P['shoulderR.ry'] = kf(u, [0, 0], [0.3, -0.85], [0.43, -1.03], [0.5, 0.02, 'in'], [0.62, 0.28, 'out'], [0.8, 0.15], [1, 0]);
+      P['elbowR.rx'] = kf(u, [0, 0], [0.3, -0.42], [0.43, -0.46], [0.5, -1.02, 'in'], [0.62, -0.95], [0.8, -0.6], [1, 0]);
+      P['handR.rx'] = kf(u, [0, 0], [0.3, 0.55], [0.43, 0.6], [0.5, 1.04, 'in'], [0.62, 0.94, 'out'], [0.8, 0.6], [1, 0]);
+      // 허리 비틀기: 오른쪽으로 감았다가 왼쪽으로 확 풀림
+      P['spine.ry'] = kf(u, [0, 0], [0.3, -0.38], [0.43, -0.45], [0.5, 0.15, 'in'], [0.62, 0.5, 'out'], [0.8, 0.3], [1, 0]);
+      P['pelvis.ry'] = kf(u, [0, 0], [0.43, -0.2], [0.5, 0.1, 'in'], [0.62, 0.2, 'out'], [1, 0]);
+      P['spine.rx'] += kf(u, [0, 0], [0.3, -0.15], [0.43, -0.2], [0.5, 0.4, 'in'], [0.62, 0.35, 'out'], [0.8, 0.2], [1, 0]) + shake * 0.05;
+      P['head.rx'] = kf(u, [0, 0], [0.43, -0.1], [0.5, 0.12, 'in'], [1, 0]) - shake * 0.06;
+      P['head.ry'] = kf(u, [0, 0], [0.43, 0.35], [0.5, -0.12, 'in'], [0.62, -0.4], [1, 0]); // 몸을 틀어도 눈은 앞을
+      P['hipL.rx'] -= kf(u, [0, 0], [0.43, 0.3], [0.6, 0.2], [1, 0]);
+      P['root.sy'] = kf(u, [0.2, 0], [0.43, 0.04], [0.52, -0.05], [0.75, 0]);
     },
   },
   fishCast: { duration: 1.2, hitAt: 0.6, equip: 'rod', next: 'fishWait', fn: fishCast },
@@ -483,15 +496,19 @@ Object.assign(ACTIONS, {
 export function createAnimator(rate = 18) {
   const cur = {};
   const target = {};
+  // 팔 관절은 모든 축을 매 프레임 다시 쓴다: 장비 IK·몸 충돌 보정(collision.js)이 쿼터니언으로 돌려 놓아도 다음 프레임에 쌓이지 않게
+  for (const s of SIDES) for (const j of ['shoulder', 'elbow', 'hand']) for (const a of ['rx', 'ry', 'rz']) cur[`${j}${s}.${a}`] = 0;
   let name = 'idle';
   let start = null;
   let hits = 0;
   let done = false;
   let cb = {};
+  let progress = -1; // 일회성 액션 진행도 0→1 (반복 액션은 -1)
   const wrap = (d) => Math.atan2(Math.sin(d), Math.cos(d));
 
   return {
     get action() { return name; },
+    get progress() { return progress; },
     onEnd: null, // (이름, 다음 액션|null) — 일회성이 끝날 때 한 번
     play(next, onHit, onComplete) {
       name = ACTIONS[next] ? next : 'idle';
@@ -506,11 +523,13 @@ export function createAnimator(rate = 18) {
       const fx = {};
       const def = ACTIONS[name];
       let ended = false;
+      progress = -1;
       if (typeof def === 'function') def(t, target, fx);
       else if (def.loop) def.loop(t, target, fx);
       else {
         const sec = t - start;
         const u = Math.min(1, sec / def.duration);
+        progress = u;
         def.fn(u, target, fx, sec);
         const at = [].concat(def.hitAt ?? []);
         while (hits < at.length && u >= at[hits]) {
@@ -519,7 +538,8 @@ export function createAnimator(rate = 18) {
         }
         if (u >= 1 && !done) { done = true; ended = true; }
       }
-      const a = 1 - Math.exp(-rate * dt);
+      // 빠르게 휘두르는 액션은 rate를 높여 관절이 목표를 바짝 따라가게 (부드럽게 늦게 따라가면 타격이 뭉개짐)
+      const a = 1 - Math.exp(-(def.rate ?? rate) * dt);
       for (const k of new Set([...Object.keys(cur), ...Object.keys(target)])) {
         const [joint, ch] = k.split('.');
         const o = rig[joint];
