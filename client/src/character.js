@@ -1,57 +1,36 @@
-// 머리가 큰 귀여운 캐릭터 (기본 도형으로 만들고 동작은 코드로 움직임)
+// 마을 캐릭터: 쇼룸과 같은 주민 모델(createVillager)을 마을 이동·애니메이션에 연결한다
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ANIM, COLORS } from '../../shared/world.js';
-import { paint, vertexColorToon, blobGeometry, blobMaterial, curveDrop } from './materials.js';
+import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
+import { createVillager, PRESETS } from './villager/villager.js';
 
-const SKIN = 0xffe3c8;
-const PANTS = 0x6b7fb3;
-const SHOES = 0x5a4636;
-const HAIRS = [0x7a4e2d, 0x3b2f2a, 0xd9a066, 0x8a5a3b, 0x5b3a29, 0xb5651d, 0x4a3426, 0xe0b878];
-
-function sphere(r, color, x, y, z, sx = 1, sy = 1, sz = 1, ws = 16, hs = 12) {
-  return paint(new THREE.SphereGeometry(r, ws, hs).scale(sx, sy, sz).translate(x, y, z), color);
+// 주민 모델은 키 약 1.0 → 예전 캐릭터(약 1.7)와 같은 크기로
+const SCALE = 1.7;
+const LABEL_Y = 2.0;
+const HAIR_COLORS = ['#3a2a22', '#a65a2e', '#e4b660', '#6b4a32', '#2f2622', '#d9604a', '#5a3d2b', '#c99a5b'];
+const LOOKS = [
+  { base: 'boy', hair: 'side' },
+  { base: 'girl', hair: 'bob' },
+  { base: 'boy', hair: 'short' },
+  { base: 'girl', hair: 'pony' },
+];
+// 서버에는 색 번호만 있으므로, 색 번호로 상의 색·머리 모양·머리색을 정한다 (누가 봐도 같은 모습)
+function lookFor(colorIndex) {
+  const i = colorIndex % COLORS.length;
+  const look = LOOKS[i % LOOKS.length];
+  return {
+    ...PRESETS[look.base],
+    hair: look.hair,
+    hairColor: HAIR_COLORS[i % HAIR_COLORS.length],
+    top: `#${COLORS[i].toString(16).padStart(6, '0')}`,
+    crown: false,
+    backpack: false,
+  };
 }
 
-function buildTorsoHead(shirt, hair) {
-  const parts = [
-    // 몸통
-    paint(new THREE.CapsuleGeometry(0.26, 0.22, 6, 14).scale(1, 1, 0.85).translate(0, 0.64, 0), shirt),
-    // 머리 (크게)
-    sphere(0.43, SKIN, 0, 1.25, 0, 1, 0.95, 1, 20, 16),
-    // 앞머리·윗머리
-    paint(new THREE.SphereGeometry(0.455, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.42).translate(0, 1.29, -0.01), hair),
-    // 뒷머리
-    paint(new THREE.SphereGeometry(0.45, 20, 12, Math.PI, Math.PI, 0, Math.PI * 0.72).translate(0, 1.27, -0.02), hair),
-    // 눈
-    sphere(0.058, 0x2b2320, -0.15, 1.17, 0.375, 1, 1.35, 0.6, 10, 8),
-    sphere(0.058, 0x2b2320, 0.15, 1.17, 0.375, 1, 1.35, 0.6, 10, 8),
-    // 눈 반짝임
-    sphere(0.02, 0xffffff, -0.13, 1.2, 0.405, 1, 1, 1, 6, 4),
-    sphere(0.02, 0xffffff, 0.17, 1.2, 0.405, 1, 1, 1, 6, 4),
-    // 볼
-    sphere(0.06, 0xffaab5, -0.26, 1.08, 0.31, 1, 0.7, 0.4, 10, 6),
-    sphere(0.06, 0xffaab5, 0.26, 1.08, 0.31, 1, 0.7, 0.4, 10, 6),
-  ];
-  return new THREE.Mesh(mergeGeometries(parts), vertexColorToon);
-}
-
-function buildArm(shirt) {
-  const geo = mergeGeometries([
-    paint(new THREE.CapsuleGeometry(0.075, 0.2, 4, 8).translate(0, -0.15, 0), shirt),
-    sphere(0.08, SKIN, 0, -0.32, 0, 1, 1, 1, 10, 8),
-  ]);
-  return new THREE.Mesh(geo, vertexColorToon);
-}
-
-function buildLeg() {
-  const geo = mergeGeometries([
-    paint(new THREE.CapsuleGeometry(0.095, 0.16, 4, 8).translate(0, -0.14, 0), PANTS),
-    sphere(0.1, SHOES, 0, -0.29, 0.04, 1, 0.7, 1.3, 10, 8),
-  ]);
-  return new THREE.Mesh(geo, vertexColorToon);
-}
+// 발밑 그림자: 몸 전체를 둥근 지평선만큼 내리므로, 셰이더로 한 번 더 내리지 않는 재질을 쓴다
+const shadowMat = new THREE.MeshBasicMaterial({ color: 0x2a3b1a, transparent: true, opacity: 0.18, depthWrite: false });
 
 function lerpAngle(a, b, t) {
   let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -59,40 +38,26 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 
+const ACTION = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run', [ANIM.WAVE]: 'wave' };
+
 export class Character {
   constructor(name, colorIndex) {
-    const shirt = COLORS[colorIndex % COLORS.length];
-    const hair = HAIRS[colorIndex % HAIRS.length];
     this.root = new THREE.Group();
-    this.body = new THREE.Group();
-    this.root.add(this.body);
+    // 여러 명이 함께 보이므로 표정 텍스처는 1/4 해상도, 머리 곡면도 가볍게
+    this.villager = createVillager(lookFor(colorIndex), { texScale: 0.25, hairSegs: 240 });
+    this.villager.root.scale.setScalar(SCALE);
+    this.root.add(this.villager.root);
 
-    this.body.add(buildTorsoHead(shirt, hair));
-    this.armL = new THREE.Group();
-    this.armR = new THREE.Group();
-    this.armL.position.set(-0.31, 0.8, 0);
-    this.armR.position.set(0.31, 0.8, 0);
-    this.armL.add(buildArm(shirt));
-    this.armR.add(buildArm(shirt));
-    this.legL = new THREE.Group();
-    this.legR = new THREE.Group();
-    this.legL.position.set(-0.13, 0.36, 0);
-    this.legR.position.set(0.13, 0.36, 0);
-    this.legL.add(buildLeg());
-    this.legR.add(buildLeg());
-    this.body.add(this.armL, this.armR, this.legL, this.legR);
-
-    const shadow = new THREE.Mesh(blobGeometry, blobMaterial);
+    const shadow = new THREE.Mesh(blobGeometry, shadowMat);
     shadow.position.y = 0.02;
     shadow.renderOrder = 1;
     this.root.add(shadow);
 
     this.label = makeLabel(name);
+    this.label.position.y = LABEL_Y;
     this.root.add(this.label);
 
     this.anim = ANIM.IDLE;
-    this.phase = 0;
-    this.amp = 0;
     this.time = Math.random() * 10;
     this.waveTime = 0;
     this.targetRot = 0;
@@ -102,7 +67,8 @@ export class Character {
   get z() { return this.root.position.z; }
 
   setPose(x, z, rot) {
-    this.root.position.set(x, 0, z);
+    this.root.position.x = x;
+    this.root.position.z = z;
     this.targetRot = rot;
   }
 
@@ -116,46 +82,20 @@ export class Character {
 
   update(dt) {
     this.time += dt;
-    const moving = this.anim === ANIM.WALK || this.anim === ANIM.RUN;
-    const running = this.anim === ANIM.RUN;
-
-    // 방향 돌리기 (부드럽게)
     this.root.rotation.y = lerpAngle(this.root.rotation.y, this.targetRot, Math.min(1, dt * 14));
 
-    // 걷기·달리기 흔들림
-    const targetAmp = running ? 0.95 : moving ? 0.6 : 0;
-    this.amp += (targetAmp - this.amp) * Math.min(1, dt * 10);
-    this.phase += dt * (running ? 15 : 10);
-    const s = Math.sin(this.phase) * this.amp;
-    this.legL.rotation.x = s;
-    this.legR.rotation.x = -s;
-    this.armL.rotation.x = -s * 0.9;
-    this.armR.rotation.x = s * 0.9;
-    this.body.position.y = Math.abs(Math.cos(this.phase)) * 0.07 * this.amp;
-    this.body.rotation.x = running ? 0.14 * this.amp : 0;
+    if (this.waveTime > 0) this.waveTime -= dt;
+    const moving = this.anim === ANIM.WALK || this.anim === ANIM.RUN;
+    const action = !moving && this.waveTime > 0 ? 'wave' : ACTION[this.anim] ?? 'idle';
+    if (this.villager.state.action !== action) this.villager.setAction(action);
+    this.villager.update(this.time, dt);
 
-    // 가만히 있을 때 숨쉬기
-    const breathe = 1 + Math.sin(this.time * 2.2) * 0.012 * (1 - this.amp);
-    this.body.scale.set(1, breathe, 1);
-
-    // 인사 (오른팔 들고 흔들기)
-    if (this.waveTime > 0) {
-      this.waveTime -= dt;
-      const k = Math.min(1, this.waveTime * 4, (1.6 - this.waveTime) * 6);
-      this.armR.rotation.z = k * (2.6 + Math.sin(this.time * 14) * 0.35);
-      this.armR.rotation.x = 0;
-    } else {
-      this.armR.rotation.z *= 0.8;
-    }
-
-    // 이름표: 둥근 지평선만큼 같이 내려가게
-    this.label.position.y = 2.0 - curveDrop(this.root.position.x, this.root.position.z);
+    // 둥근 지평선: 캐릭터 전체를 땅과 같은 만큼 내린다 (주민 재질에는 휘는 셰이더가 없음)
+    this.root.position.y = -curveDrop(this.root.position.x, this.root.position.z);
   }
 
   dispose() {
-    this.root.traverse((o) => {
-      if (o.isMesh && o.geometry !== blobGeometry) o.geometry.dispose();
-    });
+    this.villager.dispose();
     this.label.material.map.dispose();
     this.label.material.dispose();
     this.root.removeFromParent();

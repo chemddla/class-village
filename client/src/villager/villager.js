@@ -230,7 +230,8 @@ export const HAIRSTYLES = {
   },
 };
 
-function buildHair(head, o) {
+// hairSegs: 머리 곡면의 둘레 칸 수 (이마 경계선의 섬세함 ↔ 정점 수)
+function buildHair(head, o, { hairSegs = 720 } = {}) {
   const hair = new THREE.Group();
   hair.name = '헤어';
   head.add(hair);
@@ -253,7 +254,7 @@ function buildHair(head, o) {
   let g;
   if (style === 'bob') {
     // 종 모양: 옆·뒤는 아래로 갈수록 살짝 퍼졌다가(A라인) 턱선에서 안쪽으로 부드럽게 말림(C컬)
-    g = shellGrid(720, 64, thetaMax, (phi, _th, t) => {
+    g = shellGrid(hairSegs, Math.round(hairSegs / 11), thetaMax, (phi, _th, t) => {
       const tm = thetaMax(phi);
       const body = 0.86;
       const flare = (th) => 0.06 * smooth(PI * 0.35, tm, th) ** 1.5 * smooth(0.9, 1.5, Math.abs(phi));
@@ -273,7 +274,7 @@ function buildHair(head, o) {
     });
   } else {
     // 돔: 끝은 피부 쪽으로 부드럽게 내려앉아 앞머리 끝이 이마에 얹힌 듯
-    g = shellGrid(720, 48, thetaMax, (phi, th, t) => {
+    g = shellGrid(hairSegs, Math.round(hairSegs / 15), thetaMax, (phi, th, t) => {
       const s = height(phi, th);
       const tm = thetaMax(phi);
       return surf(phi, th, s + (SKIN_HUG - s) * smooth(tm - PI * 0.1, tm, th) ** 1.3);
@@ -498,7 +499,7 @@ function buildBackpack(torso, color) {
 // R은 캐릭터의 오른쪽(-x), L은 왼쪽(+x)
 const SIDE = { '-1': 'R', 1: 'L' };
 
-function buildBody(root, o, live) {
+function buildBody(root, o, live, detail) {
   const P = {}; // 움직일 관절들
 
   // 골반 (전체 기준점)
@@ -628,7 +629,7 @@ function buildBody(root, o, live) {
   torso.add(head);
   P.head = head;
   buildHead(head, o, live);
-  buildHair(head, o);
+  buildHair(head, o, detail);
   if (o.crown) buildFlowerCrown(head);
   if (o.glasses) buildGlasses(head);
   if (o.backpack) buildBackpack(torso, o.bagColor ?? '#f0a848');
@@ -738,7 +739,10 @@ export const EXPRESSIONS = {
 // 이 키가 바뀌면 얼굴·눈 텍스처를 다시 그린다
 const FACE_KEYS = ['skin', 'iris', 'lash'];
 
-export function createVillager(options = {}) {
+// texScale: 표정 텍스처 해상도 배율 (마을처럼 여러 명이 동시에 보일 때는 낮춰 메모리를 아낀다)
+// hairSegs: 머리 곡면 해상도 (기본 720, 마을은 낮춤)
+export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = {}) {
+  const detail = { hairSegs };
   const o = { ...PRESETS.boy, ...options };
   const root = new THREE.Group();
   root.name = '주민';
@@ -747,7 +751,8 @@ export function createVillager(options = {}) {
   const state = { action: 'idle', expression: 'smile', equipment: 'none' };
   let baseExpression = null; // 액션이 표정을 잠깐 바꿨을 때 돌아갈 표정
   // 표정용 실시간 텍스처: 몸을 다시 만들어도 같은 텍스처를 계속 쓴다
-  const live = { face: liveTexture(2048, 1024), eyes: [liveTexture(1024, 1024), liveTexture(1024, 1024)] };
+  const E = 1024 * texScale;
+  const live = { face: liveTexture(2 * E, E), eyes: [liveTexture(E, E), liveTexture(E, E)] };
   let rig = null;
 
   function redrawFace() {
@@ -756,13 +761,17 @@ export function createVillager(options = {}) {
     e.eyes.forEach((mode, i) => drawEye(live.eyes[i], { iris: o.iris, lash: o.lash, mode }));
   }
 
-  function rebuild() {
+  // 재질만 버리고 텍스처는 남긴다 (캐시·실시간 텍스처를 계속 재사용)
+  function clear() {
     for (const c of [...root.children]) {
       root.remove(c);
-      // 재질만 버리고 텍스처는 남긴다 (캐시·실시간 텍스처를 계속 재사용)
       c.traverse((x) => { if (x.isMesh) { x.geometry.dispose(); x.material.dispose(); } });
     }
-    rig = buildBody(root, o, live);
+  }
+
+  function rebuild() {
+    clear();
+    rig = buildBody(root, o, live, detail);
     rig.root = root;
     attachEquipment(rig, state.equipment);
   }
@@ -826,6 +835,13 @@ export function createVillager(options = {}) {
   redrawFace();
   rebuild();
   // onChange: 액션 종료·자동 장착 등 내부에서 상태가 바뀔 때 UI가 다시 그리도록 연결하는 자리
-  const api = { root, get rig() { return rig; }, options: o, state, set, setExpression, setAction, equip, update, onChange: null };
+  // 완전히 치울 때: 몸과 이 캐릭터 전용 표정 텍스처까지 해제 (공유 캐시 텍스처는 남김)
+  function dispose() {
+    clear();
+    live.face.dispose();
+    live.eyes.forEach((t) => t.dispose());
+    root.removeFromParent();
+  }
+  const api = { root, get rig() { return rig; }, options: o, state, set, setExpression, setAction, equip, update, dispose, onChange: null };
   return api;
 }
