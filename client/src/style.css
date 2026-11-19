@@ -71,7 +71,7 @@ html, body {
 }
 #toast.show { opacity: 1; }
 
-#look-btn {
+#look-btn, #inv-btn {
   position: fixed; top: max(56px, calc(env(safe-area-inset-top) + 44px)); right: 12px;
   border: none; background: var(--card); box-shadow: var(--shadow); border-radius: 999px;
   padding: 8px 14px; font-weight: 800; font-size: 15px; color: var(--ink); cursor: pointer;
@@ -81,6 +81,12 @@ html, body {
   width: min(300px, calc(100% - 24px)); max-height: calc(100% - 300px); overflow: auto; padding: 14px 16px;
 }
 #look-panel h3 { margin: 10px 0 6px; font-size: 14px; }
+#inv-btn { right: auto; left: 12px; }
+#inv-panel {
+  position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); left: 12px;
+  width: min(300px, calc(100% - 24px)); padding: 14px 16px;
+}
+#inv-panel h3 { margin: 0 0 8px; font-size: 14px; }
 #look-panel h3:first-child { margin-top: 0; }
 .look-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .look-row button:not(.swatch) {

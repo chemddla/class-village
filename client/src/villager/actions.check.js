@@ -49,4 +49,15 @@ for (const [name, def] of Object.entries(ACTIONS)) {
   run(p, 1, 0.9);
   assert.ok(Math.abs(rig.pelvis.rotation.y - before) < 0.3, `되감김: ${before} → ${rig.pelvis.rotation.y}`);
 }
+
+// 4) 공중제비(앞으로 2π) 뒤에도 반대로 되감지 않고, 끝나면 땅에 내려와 있음
+{
+  const p = createAnimator();
+  p.play('flip');
+  run(p, 0.85);
+  p.play('idle');
+  run(p, 1, 0.85);
+  assert.ok(Math.abs(rig.root.rotation.x - Math.PI * 2) < 0.1, `되감김: ${rig.root.rotation.x}`);
+  assert.ok(Math.abs(rig.root.position.y) < 0.01);
+}
 console.log('actions.check: ok');

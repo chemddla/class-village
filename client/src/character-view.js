@@ -115,7 +115,7 @@ scene.add(villager.root);
 let spin = false;
 
 // ── 패널 데이터: 버튼 목록은 전부 여기서 만든다 ──
-const ACTION_LABELS = { idle: '대기', walk: '걷기', run: '달리기', jump: '점프', wave: '인사', cheer: '환호' };
+const ACTION_LABELS = { idle: '대기', walk: '걷기', run: '달리기', jump: '점프', flip: '공중제비', wave: '인사', cheer: '환호' };
 const LIFE_ACTIONS = { gather: '채집', chop: '벌목', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
 const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',

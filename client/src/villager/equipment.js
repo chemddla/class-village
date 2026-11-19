@@ -45,7 +45,7 @@ function setLine(l, points) {
 function axe() {
   const g = new THREE.Group();
   g.name = '도끼';
-  part(new THREE.CylinderGeometry(0.011, 0.013, 0.32, 8), WOOD(), g, '도끼자루', [0, 0.12, 0]);
+  part(new THREE.CylinderGeometry(0.011, 0.013, 0.38, 8), WOOD(), g, '도끼자루', [0, 0.09, 0]);
   const head = mat('#8d939c', { roughness: 0.4, metalness: 0.4 });
   part(new THREE.BoxGeometry(0.02, 0.05, 0.05), head, g, '도끼머리', [0, 0.25, 0.02]);
   // 날: 끝으로 갈수록 넓어지는 쐐기 + 밝게 간 날끝
@@ -67,7 +67,7 @@ function fishingRod() {
   const g = new THREE.Group();
   g.name = '낚싯대';
   part(new THREE.CylinderGeometry(0.0035, 0.008, 0.55, 8), DARK_WOOD(), g, '낚싯대', [0, 0.215, 0]);
-  part(new THREE.CylinderGeometry(0.012, 0.012, 0.09, 10), mat('#d8b07a', { roughness: 0.95 }), g, '손잡이', [0, -0.01, 0]);
+  part(new THREE.CylinderGeometry(0.012, 0.012, 0.13, 10), mat('#d8b07a', { roughness: 0.95 }), g, '손잡이', [0, -0.03, 0]);
   const reel = part(new THREE.CylinderGeometry(0.018, 0.018, 0.014, 14).rotateZ(PI / 2), mat('#3d6fc4', { roughness: 0.4 }), g, '릴', [0.022, 0.06, 0]);
   reel.castShadow = false;
   const tip = new THREE.Object3D();
@@ -100,6 +100,15 @@ function bugNet() {
 }
 
 // ── 사냥 무기 ──
+function club() {
+  const g = new THREE.Group();
+  g.name = '나무몽둥이';
+  part(new THREE.CylinderGeometry(0.012, 0.013, 0.16, 8), DARK_WOOD(), g, '몽둥이자루', [0, 0, 0]);
+  // 끝으로 갈수록 굵어지는 머리 + 둥근 끝
+  part(new THREE.CylinderGeometry(0.03, 0.016, 0.2, 9), WOOD(), g, '몽둥이머리', [0, 0.18, 0]);
+  part(new THREE.SphereGeometry(0.03, 9, 6, 0, PI * 2, 0, PI / 2), WOOD(), g, '몽둥이끝', [0, 0.28, 0]);
+  return grip(g);
+}
 function sword() {
   const g = new THREE.Group();
   g.name = '한손검';
@@ -184,16 +193,18 @@ function staff() {
 
 // 장비 목록: right / left 는 각 손 소켓에 붙일 모델을 만드는 함수
 // carry: 대기·걷기처럼 도구를 쓰지 않는 동안 손목을 세워 도구를 비스듬히 드는 각도 [오른손, 왼손]
+// twoHand: 두 손 액션(fx.twoHand)에서 왼손이 잡을 자루 위치 (도구 공간 y, 오른손 = 0)
 export const EQUIPMENT = {
   none: { label: '맨손' },
-  axe: { label: '도끼', right: axe, carry: [-0.9, 0] },
-  rod: { label: '낚싯대', right: fishingRod, carry: [-0.7, 0] },
+  axe: { label: '도끼', right: axe, carry: [-0.9, 0], twoHand: -0.07 },
+  club: { label: '나무 몽둥이', right: club, carry: [-0.9, 0], twoHand: -0.07 },
+  rod: { label: '낚싯대', right: fishingRod, carry: [-0.7, 0], twoHand: -0.07 },
   net: { label: '잠자리채', right: bugNet, carry: [-1.0, 0] },
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
   bow: { label: '활 + 화살', left: bow, carry: [0, -1.2] },
   staff: { label: '마법 지팡이', right: staff, carry: [-1.35, 0] },
 };
-const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'wave', 'cheer']);
+const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'wave', 'cheer']);
 
 // 소켓을 비우고 새 장비를 쥐어 준다
 export function attachEquipment(rig, id) {
@@ -207,6 +218,69 @@ export function attachEquipment(rig, id) {
   }
 }
 
+// ── 두 손 쥐기 IK ──
+// 애니메이션이 정한 도구 방향은 그대로 두고, 두 손 사이가 몸 한가운데 오도록 도구를 옆으로 옮긴 뒤
+// 두 팔을 IK로 뻗어 오른손은 원래 쥔 곳, 왼손은 자루의 y 지점을 같은 방향으로 감싸 쥔다 (w = 0→1 섞는 비율).
+// 팔꿈치는 몸통 기준 바깥·아래·뒤(pole) 쪽으로 굽는다. 관절의 굽힘축은 로컬 x, 팔은 로컬 -y로 뻗는다.
+const POLE = { R: V(-0.7, -1, -0.3).normalize(), L: V(0.7, -1, -0.3).normalize() };
+const qA = new THREE.Quaternion();
+const qB = new THREE.Quaternion();
+const m4 = new THREE.Matrix4();
+function blendWorld(o, worldQ, w) {
+  o.parent.getWorldQuaternion(qB).invert().multiply(worldQ);
+  o.quaternion.slerp(qB, w);
+  o.updateMatrixWorld(true);
+}
+function aimJoint(o, X, Y, Z, w) {
+  blendWorld(o, qA.setFromRotationMatrix(m4.makeBasis(X, Y, Z)), w);
+}
+// 손(소켓)을 grip 위치·handQ 방향에 오도록 어깨·팔꿈치·손을 돌린다
+function armIK(rig, s, grip, handQ, w) {
+  const sh = rig[`shoulder${s}`], el = rig[`elbow${s}`], hand = rig[`hand${s}`];
+  const sock = s === 'R' ? rig.rightSocket : rig.leftSocket;
+  const S = sh.getWorldPosition(V());
+  const E0 = el.getWorldPosition(V());
+  const a = S.distanceTo(E0);
+  const b = E0.distanceTo(hand.getWorldPosition(V()));
+  // 손목 목표 = 쥘 곳에서 손 안의 소켓 오프셋만큼 되돌린 자리
+  const ST = sock.position.clone().multiply(hand.getWorldScale(V())).applyQuaternion(handQ).negate().add(grip).sub(S);
+  const d = THREE.MathUtils.clamp(ST.length(), Math.abs(a - b) + 1e-4, a + b - 1e-4);
+  ST.normalize();
+  const perp = POLE[s].clone().applyQuaternion(sh.parent.getWorldQuaternion(qA));
+  perp.addScaledVector(ST, -perp.dot(ST)).normalize();
+  const cosA = (a * a + d * d - b * b) / (2 * a * d);
+  const sinA = Math.sqrt(1 - cosA * cosA);
+  const u1 = ST.clone().multiplyScalar(cosA).addScaledVector(perp, sinA); // 어깨→팔꿈치
+  const u2 = S.clone().addScaledVector(ST, d).sub(S.clone().addScaledVector(u1, a)).normalize(); // 팔꿈치→손목
+  const Y1 = u1.negate();
+  const Z1 = ST.multiplyScalar(sinA).addScaledVector(perp, -cosA); // 윗팔에 수직, 굽는 쪽
+  const X = V().crossVectors(Y1, Z1);
+  aimJoint(sh, X, Y1, Z1, w);
+  const Y2 = u2.negate();
+  aimJoint(el, X, Y2, V().crossVectors(X, Y2), w);
+  blendWorld(hand, handQ, w);
+}
+function twoHandGrip(rig, y, w) {
+  const torso = rig.shoulderL.parent;
+  const sock = rig.rightSocket;
+  const handQ = sock.getWorldQuaternion(new THREE.Quaternion()).multiply(qA.copy(sock.quaternion).invert());
+  const gR = sock.getWorldPosition(V());
+  const gL = sock.localToWorld(V(0, 0, y));
+  const mid = torso.worldToLocal(gR.clone().add(gL).multiplyScalar(0.5));
+  const shift = torso.localToWorld(V(-mid.x, 0, 0)).sub(torso.getWorldPosition(V()));
+  // 팔이 안 닿으면 가슴 앞쪽으로 조금씩 당긴다 (팔 길이 0.218의 90%까지)
+  const pull = torso.localToWorld(V(0, rig.shoulderL.position.y - 0.06, 0.07)).sub(torso.localToWorld(mid.setX(0)));
+  const reach = 0.196 * rig.shoulderL.getWorldScale(V()).x;
+  const SR = rig.shoulderR.getWorldPosition(V()), SL = rig.shoulderL.getWorldPosition(V());
+  const base = shift.clone();
+  for (let i = 0; i <= 10; i++) {
+    shift.copy(base).addScaledVector(pull, i / 10);
+    if (SR.distanceTo(gR.clone().add(shift)) <= reach && SL.distanceTo(gL.clone().add(shift)) <= reach) break;
+  }
+  armIK(rig, 'R', gR.add(shift), handQ, w);
+  armIK(rig, 'L', gL.add(shift), handQ, w);
+}
+
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
 const v1 = V();
 const v2 = V();
@@ -217,6 +291,9 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   rig.rightSocket.rotation.x += (carry[0] - rig.rightSocket.rotation.x) * k;
   rig.leftSocket.rotation.x += (carry[1] - rig.leftSocket.rotation.x) * k;
   root.updateMatrixWorld(true);
+  const grip = EQUIPMENT[equipment]?.twoHand;
+  rig.twoHandW = (rig.twoHandW ?? 0) + ((fx.twoHand && grip != null ? 1 : 0) - (rig.twoHandW ?? 0)) * k;
+  if (grip != null && rig.twoHandW > 0.001) twoHandGrip(rig, grip, rig.twoHandW);
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
       const { rod, bow: b, staff: st } = o.userData;

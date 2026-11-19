@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
-  ANIM, COLORS, TOOLS, LIFE_SPOTS, WALK_SPEED, RUN_SPEED, resolveMove, toCm, fromCm, angleToByte, byteToAngle,
+  ANIM, COLORS, TOOLS, LIFE_TOOLS, LIFE_SPOTS, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
 import { Character, actTime } from './character.js';
@@ -64,7 +64,7 @@ const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
   fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
-  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), toast: $id('toast'),
+  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
 let toastTimer = 0;
 function toast(text) {
@@ -95,11 +95,19 @@ let room = null;
 let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 든 도구 번호
-const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, last: null };
+const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, last: null, hurt: 0 };
+const HIT_DELAY = 0.45 * 1000; // 휘두르기 시작 → 내려찍는 순간 (clubSmash 0.9초 × hitAt 0.5)
+function getHit(fromX, fromZ) {
+  local.act = ANIM.SURPRISE; // 'hit' 피격 모션
+  local.actLeft = actTime(ANIM.SURPRISE);
+  local.hurt = local.actLeft; // 맞는 동안은 움직여도 끊기지 않음
+  me.setPose(me.x, me.z, Math.atan2(fromX - me.x, fromZ - me.z)); // 때린 쪽으로 돌아봄
+}
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
-const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣' };
-const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟' };
-const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏' };
+const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', club: '💥' };
+const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', club: '공격' };
+let invItems = [0, 1, 2]; // 가진 도구 번호. 테스트 서버에선 나무 몽둥이(3)를 하나 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무·연못·덤불
 let lifeSpotsMesh = null;
 
@@ -110,6 +118,29 @@ function showTool() {
 }
 showTool();
 
+function equipTool(t) {
+  if (local.actLeft > 0) return;
+  local.tool = t;
+  me?.setTool(t);
+  showTool();
+  renderInv();
+}
+function renderInv() {
+  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3>';
+  const row = document.createElement('div');
+  row.className = 'look-row';
+  for (const t of invItems) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = t === local.tool ? 'on' : '';
+    b.textContent = `${TOOL_ICON[TOOLS[t]]} ${EQUIPMENT[TOOLS[t]].label}`;
+    b.onclick = () => equipTool(t);
+    row.appendChild(b);
+  }
+  ui.inv.appendChild(row);
+}
+renderInv();
+
 function startAct(a) {
   if (local.actLeft > 0) return; // 하던 동작이 끝나야 다음 동작
   local.act = a;
@@ -119,13 +150,21 @@ function startAct(a) {
 const input = createInput({
   onAction(name) {
     if (!me) return;
-    if (name === 'jump') startAct(ANIM.JUMP);
+    if (name === 'jump') {
+      // 더블 점프: 떠 있는 동안 한 번 더 누르면 앞으로 공중제비
+      const up = actTime(ANIM.JUMP) - local.actLeft;
+      if (local.act === ANIM.JUMP && local.actLeft > 0 && up > 0.12 && up < 0.7) {
+        local.act = ANIM.FLIP;
+        local.actLeft = actTime(ANIM.FLIP);
+      } else startAct(ANIM.JUMP);
+    }
     else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
     else if (name === 'tool') {
-      if (local.actLeft > 0) return;
-      local.tool = (local.tool + 1) % TOOLS.length;
-      me.setTool(local.tool);
-      showTool();
+      equipTool((local.tool + 1) % LIFE_TOOLS);
+    } else if (name === 'inv') {
+      ui.inv.classList.toggle('hidden');
+    } else if (name === 'attack' || (name === 'life' && TOOLS[local.tool] === 'club')) {
+      if (TOOLS[local.tool] === 'club') startAct(ANIM.SMASH);
     } else if (name === 'life') {
       if (local.actLeft > 0) return;
       const tool = TOOLS[local.tool];
@@ -220,6 +259,9 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
+    invItems = free ? [0, 1, 2, 3] : [0, 1, 2];
+    if (!invItems.includes(local.tool)) equipTool(0);
+    renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
   });
 
@@ -264,6 +306,7 @@ function enterGame() {
   ui.hud.classList.remove('hidden');
   ui.actions.classList.remove('hidden');
   ui.hint.classList.remove('hidden');
+  ui.invBtn.classList.remove('hidden');
   input.enable(true);
 }
 
@@ -304,17 +347,20 @@ ui.form.addEventListener('submit', async (e) => {
 function updateMe(dt) {
   const inp = input.read();
   let anim = ANIM.IDLE;
-  if (inp.mag > 0) {
+  if (local.hurt > 0) local.hurt -= dt;
+  if (inp.mag > 0 && local.hurt <= 0) {
     // 화면 기준 방향을 카메라가 돈 만큼 돌려 땅 위 방향으로
     const c = Math.cos(cam.yaw);
     const sn = Math.sin(cam.yaw);
     const wx = inp.x * c + inp.z * sn;
     const wz = -inp.x * sn + inp.z * c;
     const speed = inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag);
-    const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt);
+    const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
+    for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
+    const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
     me.setPose(nx, nz, Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
-    if (local.act !== ANIM.JUMP) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
+    if (local.act !== ANIM.JUMP && local.act !== ANIM.FLIP) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
   }
   if (local.actLeft > 0) {
     local.actLeft -= dt;
@@ -338,7 +384,9 @@ function updateMe(dt) {
 // ── 다른 학생: 150ms 늦게 그리면서 사이를 채움 ──
 function updateOthers(now) {
   const renderT = now - INTERP_DELAY;
-  for (const { char, buf } of others.values()) {
+  for (const o of others.values()) {
+    const { char, buf } = o;
+    const wasSmash = char.anim === ANIM.SMASH;
     while (buf.length >= 2 && buf[1].t <= renderT) buf.shift();
     const a = buf[0];
     const b = buf[1];
@@ -350,6 +398,12 @@ function updateOthers(now) {
     } else {
       char.setPose(a.x, a.z, a.r);
       char.setAnim(a.a);
+    }
+    // 휘두르기 시작을 보면 내려찍는 순간에 내가 앞에 있는지 확인
+    if (char.anim === ANIM.SMASH && !wasSmash) o.hitAt = now + HIT_DELAY;
+    if (o.hitAt && now >= o.hitAt) {
+      o.hitAt = 0;
+      if (me && inSwing(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z);
     }
   }
 }
@@ -368,8 +422,6 @@ renderer.setAnimationLoop(() => {
 
   if (me) updateMe(dt);
   updateOthers(now);
-  if (me) me.update(dt);
-  for (const { char } of others.values()) char.update(dt);
 
   // 카메라는 비스듬히 내려다보며 부드럽게 따라감
   if (me) camTarget.lerp(new THREE.Vector3(me.x, 0, me.z), Math.min(1, dt * 5));
@@ -382,6 +434,9 @@ renderer.setAnimationLoop(() => {
   scene.fog.near = 26 * Math.max(1, cam.zoom);
   scene.fog.far = 52 * Math.max(1, cam.zoom);
   setCurveCenter(camTarget.x, camTarget.z, cam.yaw);
+  // 둥근 지평선의 중심을 정한 뒤에 캐릭터를 내린다 (한 프레임 늦으면 걸을 때 발이 땅과 어긋남)
+  if (me) me.update(dt);
+  for (const { char } of others.values()) char.update(dt);
 
   for (const label of village.labels) {
     const b = label.userData.base;

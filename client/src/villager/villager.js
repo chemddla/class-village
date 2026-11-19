@@ -192,41 +192,38 @@ const spike = (phi, c, tip, slopeL, slopeR = slopeL, soft = 0) => {
   return tip - d * (phi < c ? slopeL : slopeR);
 };
 
+// side: 귀 위 옆머리 끝, burn: 구레나룻 끝, back: 뒷머리 끝 (모두 π 배수 극각. 귀는 0.50π~0.62π)
+// nape: 목덜미 가운데로 더 내려오는 길이, wisp: 다발 끝이 맺히는 길이
+// whorl: 머릿결이 퍼져 나오는 가마 [방위각, 극각(π 배수), 둘레 다발 수] (포니테일은 묶은 자리), relief: 다발 굴곡 깊이
 export const HAIRSTYLES = {
   side: {
-    label: '덮은 댄디컷', side: 0.45, back: 0.74, press: 1.6,
-    // 가운데 갈래는 넓고 길게, 양옆으로 갈수록 비대칭으로 짧아지는 4갈래. 끝과 골짜기를 살짝 둥글려 차분하게
-    front: (phi) => smax(55,
-      spike(phi, 0.06, 0.475, 0.22, 0.26, 0.06),
-      spike(phi, -0.5, 0.45, 0.38, 0.38, 0.06),
-      spike(phi, -0.98, 0.425, 0.42, 0.38, 0.06),
-      spike(phi, 0.62, 0.44, 0.42, 0.36, 0.06),
-      0.36),
+    label: '시스루 댄디컷', whorl: [2.6, 0.1, 15], side: 0.485, burn: 0.6, back: 0.68, nape: 0.045, press: 1.6,
+    // 한쪽으로 쓸어내린 사선 앞머리: 캐릭터 왼쪽은 높고 오른쪽 눈썹 쪽으로 길어지며, 끝은 같은 방향으로 누운 가닥 4개
+    front: (phi) => smax(70, 0.4 + 0.055 * smooth(0.8, -0.7, phi),
+      spike(phi, -0.6, 0.482, 0.9, 0.3, 0.04), spike(phi, -0.22, 0.47, 0.9, 0.3, 0.04),
+      spike(phi, 0.14, 0.455, 0.9, 0.3, 0.04), spike(phi, 0.48, 0.438, 0.9, 0.3, 0.04)),
+    volume: (phi, th) => 0.035 * gauss(th - PI * 0.2, 0.35),
   },
   bob: {
-    label: '시스루 보브 단발', side: 0.7, back: 0.7, press: 0.6,
-    // 눈썹 위 거의 일자인 앞머리에 이마가 비치는 좁은 역V자 홈 3개를 불규칙하게
-    front: (phi) => 0.455 - 0.02 * Math.max(0, 1 - phi * phi)
-      - notch(phi, -0.32, 0.13, 0.035) - notch(phi, 0.08, 0.12, 0.045) - notch(phi, 0.44, 0.1, 0.028),
+    label: '풀뱅 보브 단발', whorl: [PI, 0.06, 17], side: 0.7, back: 0.7, press: 0.6, wisp: 0.006,
+    // 얼굴을 감싸듯 양옆이 살짝 더 긴 둥근 앞머리에 이마가 비치는 가는 틈 2개
+    front: (phi) => 0.44 + 0.035 * Math.min(1, phi * phi) - notch(phi, -0.22, 0.08, 0.06) - notch(phi, 0.33, 0.07, 0.05),
   },
   pony: {
-    label: '포니테일', side: 0.5, back: 0.62, press: 1,
-    // 살짝 내린 헤어라인 + 완만한 M자 + 이마 가운데에서 캐릭터 오른쪽 눈썹 쪽으로 비스듬히 내려오는 앞머리 한 가닥
-    front: (phi) => smax(120,
-      0.335 + 0.012 * gauss(phi, 0.25) - 0.012 * gauss(Math.abs(phi) - 0.55, 0.25),
-      spike(phi, -0.32, 0.47, 0.75, 0.3)),
+    label: '커튼뱅 포니테일', whorl: [PI, 0.4, 22], relief: 0.016, side: 0.5, burn: 0.64, back: 0.6, nape: 0.05, press: 1,
+    // 가운데 가르마에서 양옆으로 넘어가는 커튼뱅: 이마가 역V로 드러나고 그대로 귀 앞 잔머리(구레나룻)로 흘러내림
+    front: (phi) => 0.28 + 0.165 * smooth(0, 0.85, Math.abs(phi - 0.06)) ** 0.8,
   },
   short: {
-    label: '쉼표 가르마 펌', side: 0.43, back: 0.62, press: 1.4,
-    // 6.5:3.5 가르마(phi≈0.45, 꼭짓점은 둥글게). 넓은 쪽은 눈썹을 덮고 끝이 코 쪽으로 둥글게 휘는 C자 쉼표,
-    // 좁은 쪽은 귀 방향으로 완만하게 넘어감
+    label: '쉼표 가르마 펌', whorl: [1.1, 0.14, 14], relief: 0.026, side: 0.48, burn: 0.59, back: 0.63, nape: 0.05, press: 1.4,
+    // 6.5:3.5 가르마. 넓은 쪽은 가르마에서 솟았다가 눈썹 위로 둥글게 내려와 끝이 쉼표처럼 맺히고, 좁은 쪽은 귀 쪽으로 넘어감
     front: (phi) => {
-      const wide = phi > 0.1 ? 0.48 - 1.1 * (phi - 0.1) ** 2 : 0.48 - 0.06 * smooth(0, 1.1, 0.1 - phi);
-      const narrow = 0.345 + 0.075 * smooth(0.45, 1.1, phi);
-      return wide + (narrow - wide) * smooth(0.33, 0.55, phi);
+      const part = 0.42;
+      if (phi >= part) return 0.33 + 0.09 * smooth(part, 1.1, phi);
+      return smax(60, 0.33 + 0.15 * smooth(part, -0.25, phi) - 0.06 * smooth(-0.3, -0.95, phi), spike(phi, -0.3, 0.5, 0.35, 1.2, 0.04));
     },
     // 넓은 쪽 윗머리만 봉긋하게
-    volume: (phi, th) => 0.06 * gauss(phi + 0.3, 0.5) * gauss(th - PI * 0.22, 0.3),
+    volume: (phi, th) => 0.065 * gauss(phi + 0.3, 0.55) * gauss(th - PI * 0.22, 0.3),
   },
 };
 
@@ -242,15 +239,37 @@ function buildHair(head, o, { hairSegs = 720 } = {}) {
   });
   const style = HAIRSTYLES[o.hair] ? o.hair : 'side';
   const S = HAIRSTYLES[style];
-  // 아래 경계선: 이마 라인 → 관자놀이에서 옆머리 → 뒷머리. 숏컷·댄디는 목덜미 가운데로 좁게 모임
+  // 머릿결: 가마(whorl)에서 사방으로 흘러내리는 굵은 다발. 다발 가운데는 도톰하고 다발 사이는 얕은 골이 진다
+  // (줄무늬 텍스처가 아니라 곡면 자체의 굴곡이라 빛·툰 명암·외곽선이 결을 따라 생긴다)
+  const [wPhi, wTh, nLock] = S.whorl ?? [PI, 0.1, 15];
+  const relief = S.relief ?? 0.022;
+  const W = dir(wPhi, PI * wTh);
+  const E1 = V(1, 0, 0).addScaledVector(W, -W.x).normalize();
+  const E2 = V().crossVectors(W, E1);
+  const pt = V();
+  const lock = (phi, th) => {
+    dir(phi, th, pt);
+    const az = Math.atan2(pt.dot(E2), pt.dot(E1));
+    const w = az + 0.1 * Math.sin(az * 3 + 1.3) + 0.05 * Math.sin(az * 7 + 0.4); // 다발 굵기를 불규칙하게
+    const far = Math.acos(THREE.MathUtils.clamp(pt.dot(W), -1, 1)); // 가마 근처는 매끈하게
+    return (Math.abs(Math.sin((w * nLock) / 2)) ** 0.7 - 0.6) * smooth(0.12, 0.7, far);
+  };
+  // 아래 경계선 한 줄로 머리 모양이 정해진다: 앞머리 → 관자놀이 → 구레나룻 → 귀 위 → 귀 뒤 → 목덜미
   const thetaMax = (phi) => {
     const a = Math.abs(phi);
     const f = PI * S.front(phi);
-    if (a < 1.3) return f + (PI * S.side - f) * smooth(0.85, 1.3, a);
-    const base = PI * S.side + PI * (S.back - S.side) * smooth(1.6, 2.6, a);
-    return style === 'bob' ? base : base + PI * 0.06 * gauss(a - PI, 0.45);
+    let h = f + (PI * S.side - f) * smooth(0.8, 1.25, a);
+    // 구레나룻: 관자놀이에서 귀(phi=±π/2) 앞으로 흘러내리는 둥근 갈래. 얼굴 쪽은 완만하게, 귀 쪽은 귀 앞선을 따라 가파르게
+    const d = a - 1.3;
+    h += PI * Math.max(0, (S.burn ?? 0) - S.side) * Math.exp(-((Math.abs(d) / (d < 0 ? 0.2 : 0.085)) ** 1.6));
+    // 귀 위를 지나 귀 뒤에서 목덜미 길이까지 내려가고, 목덜미 가운데로 살짝 모인다
+    h += PI * (S.back - S.side) * smooth(1.72, 2.25, a) + PI * (S.nape ?? 0) * gauss(a - PI, 0.5);
+    // 끝선도 다발마다 둥글게 맺힌다 (다발 가운데가 조금 더 길고 골은 짧게). 모양을 따로 그린 앞머리는 약하게
+    return h + PI * (S.wisp ?? 0.012) * lock(phi, h) * (0.4 + 0.6 * smooth(0.7, 1.2, a));
   };
-  const height = (phi, th) => capS(phi, th, S.press) + (S.volume ? S.volume(phi, th) : 0);
+  const height = (phi, th) => capS(phi, th, S.press) + (S.volume ? S.volume(phi, th) : 0) + relief * lock(phi, th);
+  // 머리끝이 내려앉는 높이: 골은 피부에 닿고 다발 가운데는 도톰하게 떠서 끝에도 두께가 보인다
+  const hug = (phi, th) => SKIN_HUG + relief * (0.6 + lock(phi, th));
   let g;
   if (style === 'bob') {
     // 종 모양: 옆·뒤는 아래로 갈수록 살짝 퍼졌다가(A라인) 턱선에서 안쪽으로 부드럽게 말림(C컬)
@@ -264,20 +283,20 @@ function buildHair(head, o, { hairSegs = 720 } = {}) {
         const s = height(phi, th) + flare(th);
         // 실제 경계선에서 일정한 폭만 이마로 내려앉음 (홈 가장자리도 이마에 얹히고, 위로 긴 주름은 없음)
         const tuck = smooth(tm - PI * 0.08, tm, th);
-        return surf(phi, th, s + (SKIN_HUG - s) * tuck * (1 - smooth(0.9, 1.4, Math.abs(phi))));
+        return surf(phi, th, s + (hug(phi, th) - s) * tuck * (1 - smooth(0.9, 1.4, Math.abs(phi))));
       }
       // 안으로 말리는 C컬은 옆·뒤만 (이마 앞머리는 말리지 않고 그대로 이마에 얹힘)
       const a = ((t - body) / (1 - body)) * PI;
       const k = smooth(0.9, 1.4, Math.abs(phi));
       const s = height(phi, tm) + flare(tm);
-      return surf(phi, tm + 0.03 * Math.sin(a) * k, s + (SKIN_HUG - s) * (1 - k) - 0.035 * (1 - Math.cos(a)) * k);
+      return surf(phi, tm + 0.03 * Math.sin(a) * k, s + (hug(phi, tm) - s) * (1 - k) - 0.035 * (1 - Math.cos(a)) * k);
     });
   } else {
     // 돔: 끝은 피부 쪽으로 부드럽게 내려앉아 앞머리 끝이 이마에 얹힌 듯
     g = shellGrid(hairSegs, Math.round(hairSegs / 15), thetaMax, (phi, th, t) => {
       const s = height(phi, th);
       const tm = thetaMax(phi);
-      return surf(phi, th, s + (SKIN_HUG - s) * smooth(tm - PI * 0.1, tm, th) ** 1.3);
+      return surf(phi, th, s + (hug(phi, th) - s) * smooth(tm - PI * 0.1, tm, th) ** 1.3);
     });
   }
   // 머리 외곽선은 절반 두께: 단발 뒷머리 외곽선이 턱 아래 목선 쪽으로 비치지 않게

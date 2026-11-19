@@ -35,7 +35,10 @@ export function lookFor(colorIndex, look = {}) {
 }
 
 // 발밑 그림자: 몸 전체를 둥근 지평선만큼 내리므로, 셰이더로 한 번 더 내리지 않는 재질을 쓴다
-const shadowMat = new THREE.MeshBasicMaterial({ color: 0x2a3b1a, transparent: true, opacity: 0.18, depthWrite: false });
+// 땅에 바짝 붙인다: 높이 띄우면 그림자가 신발 밑창을 덮어 발이 땅에 묻힌 것처럼 보인다 (겹침 깜빡임은 polygonOffset으로)
+const shadowMat = new THREE.MeshBasicMaterial({
+  color: 0x2a3b1a, transparent: true, opacity: 0.24, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+});
 
 function lerpAngle(a, b, t) {
   let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -46,11 +49,11 @@ function lerpAngle(a, b, t) {
 const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 // 잠깐 하는 동작: 번호 → 주민 액션 이름. 길이는 일회성은 액션 길이, 반복형은 정해 둔 시간
 const ACTS = {
-  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
-  [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish',
+  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
+  [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash',
 };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
-const LOOP_TIME = { wave: 1.6, jump: 1.4, cheer: 1.6, faint: 3.5 };
+const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5 };
 export const actTime = (a) => LOOP_TIME[ACTS[a]] ?? ACTIONS[ACTS[a]]?.duration ?? 0;
 
 export class Character {
@@ -65,7 +68,8 @@ export class Character {
     this.root.add(this.villager.root);
 
     const shadow = new THREE.Mesh(blobGeometry, shadowMat);
-    shadow.position.y = 0.02;
+    shadow.position.y = 0.004;
+    this.shadow = shadow;
     shadow.renderOrder = 1;
     this.root.add(shadow);
 
@@ -121,6 +125,8 @@ export class Character {
       if (!ACTIONS[want]?.equip && this.villager.state.equipment !== TOOLS[this.tool]) this.villager.equip(TOOLS[this.tool]);
     }
     this.villager.update(this.time, dt);
+    // 발밑에 딱 맞는 크기로, 뛰어오르면 작아져 높이가 읽힌다
+    this.shadow.scale.setScalar(0.8 / (1 + this.villager.root.position.y * 0.9));
 
     // 둥근 지평선: 캐릭터 전체를 땅과 같은 만큼 내린다 (주민 재질에는 휘는 셰이더가 없음)
     this.root.position.y = -curveDrop(this.root.position.x, this.root.position.z);

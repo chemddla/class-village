@@ -12,11 +12,12 @@ export const RUN_SPEED = 5.6;
 
 // 동작 번호
 export const ANIM = {
-  IDLE: 0, WALK: 1, RUN: 2, WAVE: 3, JUMP: 4, CHEER: 5, GATHER: 6, CHOP: 7, FISH: 8, SURPRISE: 9, FAINT: 10,
+  IDLE: 0, WALK: 1, RUN: 2, WAVE: 3, JUMP: 4, CHEER: 5, GATHER: 6, CHOP: 7, FISH: 8, SURPRISE: 9, FAINT: 10, FLIP: 11, SMASH: 12,
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
-// 손에 드는 생활 도구 (번호로 주고받음). 맨손은 채집
-export const TOOLS = ['none', 'axe', 'rod'];
+// 손에 드는 도구 (번호로 주고받음). 맨손은 채집
+export const TOOLS = ['none', 'axe', 'rod', 'club'];
+export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이)는 인벤토리에서 꺼냄
 // 테스트 서버에서 광장 가운데 놓는 생활 체험용 나무·연못·덤불
 export const LIFE_SPOTS = [
   { kind: 'tree', x: -3.6, z: 1.2 },
@@ -129,6 +130,8 @@ export function generateWorld(seed = 20261118) {
   }
 
   const colliders = [...trees, ...rocks].map((o) => ({ x: o.x, z: o.z, r: o.r }));
+  // 예정지 표지판 기둥·판
+  for (const p of PLOTS) colliders.push({ x: p.x, z: p.z + p.d / 2 + 0.25, r: 0.35 });
   return { seed, trees, rocks, flowers, colliders };
 }
 
@@ -149,12 +152,31 @@ export function isBlocked(x, z, radius = PLAYER_RADIUS) {
   return false;
 }
 
-// 벽에 부딪히면 미끄러지듯 이동
-export function resolveMove(x, z, nx, nz) {
-  if (!isBlocked(nx, nz)) return [nx, nz];
-  if (!isBlocked(nx, z)) return [nx, z];
-  if (!isBlocked(x, nz)) return [x, nz];
+// 테스트 서버 광장 요소의 부딪힘 원 (연못은 테두리까지)
+export const LIFE_COLLIDERS = LIFE_SPOTS.map((s) => ({
+  x: s.x, z: s.z, r: s.kind === 'pond' ? s.r + 0.18 : s.kind === 'tree' ? 0.3 : 0.65,
+}));
+
+// 벽에 부딪히면 미끄러지듯 이동. extra: 화면에서만 막는 원들 (다른 캐릭터, 광장 요소)
+export function resolveMove(x, z, nx, nz, extra = []) {
+  // 이미 겹쳐 있으면 멀어지는 쪽으로는 움직일 수 있게 (같은 자리에 나타났을 때 갇히지 않도록)
+  const hit = (px, pz) => isBlocked(px, pz) || extra.some((c) => {
+    const d = Math.hypot(px - c.x, pz - c.z);
+    return d < c.r + PLAYER_RADIUS && d < Math.hypot(x - c.x, z - c.z);
+  });
+  if (!hit(nx, nz)) return [nx, nz];
+  if (!hit(nx, z)) return [nx, z];
+  if (!hit(x, nz)) return [x, nz];
   return [x, z];
+}
+
+// 몽둥이에 맞는지: 때린 사람(a, 바라보는 각 rot) 앞쪽 1.4m · 좌우 약 57° 안에 b가 있으면 true
+export function inSwing(ax, az, rot, bx, bz) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  if (Math.hypot(dx, dz) > 1.4) return false;
+  const d = Math.atan2(dx, dz) - rot;
+  return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < 1.0;
 }
 
 // 네트워크용 압축: m → cm 정수, 각도 → 0~255

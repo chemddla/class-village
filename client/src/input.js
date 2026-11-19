@@ -1,11 +1,11 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터)
-// Space 점프 · 1~4 감정 표현 · Q 도구 바꾸기 · G 생활 행동 · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// Space 점프 · 1~4 감정 표현 · Q 도구 바꾸기 · G 생활 행동 · I 인벤토리 · Z/왼쪽 클릭 공격 · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
 // 키 → 행동 이름 (화면 버튼은 data-key 로 같은 키를 누른 것처럼 동작)
 const ACTION_KEYS = {
-  Space: 'jump', KeyQ: 'tool', KeyG: 'life',
+  Space: 'jump', KeyQ: 'tool', KeyG: 'life', KeyI: 'inv', KeyZ: 'attack',
   Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
   Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
 };
@@ -33,7 +33,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
 
   // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
-  const drag = { id: null, x: 0, y: 0 };
+  const drag = { id: null, x: 0, y: 0, moved: 0 };
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); onZoom(e.deltaY); }, { passive: false });
 
   // ── 떠 있는 조이스틱: 화면 왼쪽 아무 곳이나 누르면 그 자리에 생김 (터치·펜) ──
@@ -43,6 +43,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
       drag.id = e.pointerId;
       drag.x = e.clientX;
       drag.y = e.clientY;
+      drag.moved = 0;
       canvas.setPointerCapture(e.pointerId);
       return;
     }
@@ -61,6 +62,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerId === drag.id) {
       onOrbit(e.clientX - drag.x, e.clientY - drag.y);
+      drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
       drag.x = e.clientX;
       drag.y = e.clientY;
       return;
@@ -75,7 +77,10 @@ export function createInput({ onAction, onOrbit, onZoom }) {
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
   });
   const end = (e) => {
-    if (e.pointerId === drag.id) drag.id = null;
+    if (e.pointerId === drag.id) {
+      drag.id = null;
+      if (enabled && e.type === 'pointerup' && drag.moved < 6) onAction('attack'); // 끌지 않고 누르기만 하면 공격
+    }
     if (e.pointerId !== joy.id) return;
     joy.id = null;
     joy.x = joy.y = 0;
