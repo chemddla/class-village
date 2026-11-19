@@ -2,10 +2,13 @@
 import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
-  ANIM, COLORS, WALK_SPEED, RUN_SPEED, resolveMove, toCm, fromCm, angleToByte, byteToAngle,
+  ANIM, COLORS, TOOLS, LIFE_SPOTS, WALK_SPEED, RUN_SPEED, resolveMove, toCm, fromCm, angleToByte, byteToAngle,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
-import { Character } from './character.js';
+import { Character, actTime } from './character.js';
+import { LIFE, findTarget, buildLifeSpots } from './life.js';
+import { createLookEditor } from './look-editor.js';
+import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
 import { setCurveCenter, curveDrop } from './materials.js';
 
@@ -15,7 +18,6 @@ const SERVER = params.get('server')
   || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:2567`;
 const SEND_INTERVAL = 0.1; // 초당 10회
 const INTERP_DELAY = 150; // 다른 학생은 150ms 늦게 그림
-const WAVE_TIME = 1.6;
 
 // ── 저장 도우미 (사생활 보호 모드에서도 오류 없이) ──
 const store = {
@@ -37,9 +39,11 @@ sun.position.set(8, 15, 6);
 scene.add(sun);
 
 const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 150);
-const CAM_OFFSET = new THREE.Vector3(0, 12.5, 13.5);
 const camTarget = new THREE.Vector3(0, 0, 3);
 let camScale = 1;
+// 시점: 마우스 왼쪽 끌기로 돌리기(yaw)·기울기(pitch), 휠로 거리(zoom). 처음 값은 예전 고정 시점과 같음
+const cam = { yaw: 0, pitch: Math.atan2(12.5, 13.5), dist: Math.hypot(12.5, 13.5), zoom: 1 };
+const camOffset = new THREE.Vector3();
 
 function resize() {
   const w = innerWidth;
@@ -59,8 +63,16 @@ const $id = (id) => document.getElementById(id);
 const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
-  fps: $id('fps'), action: $id('action'), hint: $id('hint'), reconnect: $id('reconnect'),
+  fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
+  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), toast: $id('toast'),
 };
+let toastTimer = 0;
+function toast(text) {
+  ui.toast.textContent = text;
+  ui.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ui.toast.classList.remove('show'), 1800);
+}
 
 let chosenColor = Number(store.get(localStorage, 'color') ?? Math.floor(Math.random() * COLORS.length)) % COLORS.length;
 ui.name.value = store.get(localStorage, 'name') ?? '';
@@ -82,15 +94,71 @@ const client = new Client(SERVER);
 let room = null;
 let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
-const local = { sendTimer: 0, waveTimer: 0, last: null };
+// act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 든 도구 번호
+const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, last: null };
+const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣' };
+const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟' };
+const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
+let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무·연못·덤불
+let lifeSpotsMesh = null;
+
+function showTool() {
+  const t = TOOLS[local.tool];
+  ui.toolBtn.innerHTML = `${TOOL_ICON[t]}<span>Q ${EQUIPMENT[t].label}</span>`;
+  ui.lifeBtn.innerHTML = `${LIFE_ICON[t]}<span>G ${LIFE_LABEL[t]}</span>`;
+}
+showTool();
+
+function startAct(a) {
+  if (local.actLeft > 0) return; // 하던 동작이 끝나야 다음 동작
+  local.act = a;
+  local.actLeft = actTime(a);
+}
 
 const input = createInput({
-  onAction() {
+  onAction(name) {
     if (!me) return;
-    local.waveTimer = WAVE_TIME;
-    me.wave();
+    if (name === 'jump') startAct(ANIM.JUMP);
+    else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
+    else if (name === 'tool') {
+      if (local.actLeft > 0) return;
+      local.tool = (local.tool + 1) % TOOLS.length;
+      me.setTool(local.tool);
+      showTool();
+    } else if (name === 'life') {
+      if (local.actLeft > 0) return;
+      const tool = TOOLS[local.tool];
+      const t = findTarget(tool, me.x, me.z, lifeSpots);
+      if (!t) { toast(`${LIFE[tool].what} 가까이에서 해 보세요 (Q로 도구 바꾸기)`); return; }
+      me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 대상 쪽으로 돌아섬
+      startAct(LIFE[tool].anim);
+    }
+  },
+  onOrbit(dx, dy) {
+    cam.yaw -= dx * 0.006;
+    cam.pitch = THREE.MathUtils.clamp(cam.pitch + dy * 0.004, 0.3, 1.3);
+  },
+  onZoom(dy) {
+    cam.zoom = THREE.MathUtils.clamp(cam.zoom * Math.exp(dy * 0.0012), 0.4, 1.6);
   },
 });
+
+let lookSendTimer = 0;
+const lookEditor = createLookEditor({
+  panel: $id('look-panel'),
+  button: $id('look-btn'),
+  getColor: () => me?.colorIndex ?? chosenColor,
+  onChange(look) {
+    store.set(localStorage, 'look', JSON.stringify(look));
+    me?.setLook(look);
+    // 여러 번 연달아 고르면 마지막 것만 보냄 (서버는 너무 잦은 변경을 무시)
+    clearTimeout(lookSendTimer);
+    lookSendTimer = setTimeout(() => room?.send('look', look), 300);
+  },
+});
+function parseLook(v) { try { return JSON.parse(v || '{}'); } catch { return {}; } }
+lookEditor.set(parseLook(store.get(localStorage, 'look')));
 
 function setPeople() {
   ui.people.textContent = `접속 ${room ? room.state.players.size : 0}명`;
@@ -109,14 +177,16 @@ function attach(r) {
 
   $(r.state).players.onAdd((p, id) => {
     if (id === r.sessionId) {
-      me = new Character(p.name, p.color);
+      me = new Character(p.name, p.color, parseLook(p.look));
+      me.setTool(local.tool);
       me.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
       me.root.rotation.y = me.targetRot;
       scene.add(me.root);
       camTarget.set(me.x, 0, me.z);
       local.last = null;
     } else {
-      const char = new Character(p.name, p.color);
+      const char = new Character(p.name, p.color, parseLook(p.look));
+      char.setTool(p.t);
       char.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
       char.root.rotation.y = char.targetRot;
       scene.add(char.root);
@@ -129,9 +199,11 @@ function attach(r) {
         if (last && t - last.t > 200) o.buf.push({ ...last, t: t - 100 });
         o.buf.push({ t, x: fromCm(p.x), z: fromCm(p.z), r: byteToAngle(p.r), a: p.a });
         if (o.buf.length > 30) o.buf.shift();
+        char.setTool(p.t);
       };
       push();
       $(p).onChange(push);
+      $(p).listen('look', (v, prev) => { if (prev !== undefined) char.setLook(parseLook(v)); });
     }
     setPeople();
   });
@@ -140,6 +212,15 @@ function attach(r) {
     const o = others.get(id);
     if (o) { o.char.dispose(); others.delete(id); }
     setPeople();
+  });
+
+  // 테스트 서버: 외형 꾸미기 + 광장 가운데 생활 체험 요소
+  // (입장 직후에는 상태가 아직 안 왔을 수 있어 값이 들어올 때 반영)
+  $(r.state).listen('freeLook', (v) => {
+    const free = !!v;
+    lookEditor.show(free);
+    lifeSpots = free ? LIFE_SPOTS : [];
+    if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
   });
 
   // 서버가 이상한 이동이라고 판단하면 되돌림
@@ -181,7 +262,7 @@ async function tryReconnect() {
 function enterGame() {
   ui.join.classList.add('hidden');
   ui.hud.classList.remove('hidden');
-  ui.action.classList.remove('hidden');
+  ui.actions.classList.remove('hidden');
   ui.hint.classList.remove('hidden');
   input.enable(true);
 }
@@ -195,7 +276,7 @@ ui.form.addEventListener('submit', async (e) => {
   ui.joinBtn.disabled = true;
   ui.error.textContent = '';
   try {
-    const r = await client.joinOrCreate('village', { name, color: chosenColor });
+    const r = await client.joinOrCreate('village', { name, color: chosenColor, look: lookEditor.look });
     attach(r);
     enterGame();
   } catch (err) {
@@ -224,24 +305,30 @@ function updateMe(dt) {
   const inp = input.read();
   let anim = ANIM.IDLE;
   if (inp.mag > 0) {
+    // 화면 기준 방향을 카메라가 돈 만큼 돌려 땅 위 방향으로
+    const c = Math.cos(cam.yaw);
+    const sn = Math.sin(cam.yaw);
+    const wx = inp.x * c + inp.z * sn;
+    const wz = -inp.x * sn + inp.z * c;
     const speed = inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag);
-    const [nx, nz] = resolveMove(me.x, me.z, me.x + inp.x * speed * dt, me.z + inp.z * speed * dt);
-    me.setPose(nx, nz, Math.atan2(inp.x, inp.z));
+    const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt);
+    me.setPose(nx, nz, Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
-    local.waveTimer = 0;
-  } else if (local.waveTimer > 0) {
-    local.waveTimer -= dt;
-    anim = ANIM.WAVE;
+    if (local.act !== ANIM.JUMP) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
   }
-  me.anim = anim;
+  if (local.actLeft > 0) {
+    local.actLeft -= dt;
+    anim = local.act;
+  }
+  me.setAnim(anim);
 
   // 움직임이 있을 때만 초당 10회 전송
   local.sendTimer += dt;
   if (local.sendTimer >= SEND_INTERVAL && room) {
     local.sendTimer = 0;
-    const msg = [toCm(me.x), toCm(me.z), angleToByte(me.targetRot), anim];
+    const msg = [toCm(me.x), toCm(me.z), angleToByte(me.targetRot), anim, local.tool];
     const l = local.last;
-    if (!l || l[0] !== msg[0] || l[1] !== msg[1] || l[2] !== msg[2] || l[3] !== msg[3]) {
+    if (!l || msg.some((v, i) => v !== l[i])) {
       room.send('m', msg);
       local.last = msg;
     }
@@ -268,7 +355,7 @@ function updateOthers(now) {
 }
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
-if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, get me() { return me; } };
+if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, get me() { return me; }, get room() { return room; } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
@@ -287,9 +374,14 @@ renderer.setAnimationLoop(() => {
   // 카메라는 비스듬히 내려다보며 부드럽게 따라감
   if (me) camTarget.lerp(new THREE.Vector3(me.x, 0, me.z), Math.min(1, dt * 5));
   else camTarget.set(Math.sin(now / 6000) * 6, 0, 3 + Math.cos(now / 6000) * 4); // 입장 전: 천천히 둘러보기
-  camera.position.copy(camTarget).addScaledVector(CAM_OFFSET, camScale);
+  const d = cam.dist * camScale * cam.zoom;
+  camOffset.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
+  camera.position.copy(camTarget).addScaledVector(camOffset, d);
   camera.lookAt(camTarget.x, 0.8, camTarget.z);
-  setCurveCenter(camTarget.x, camTarget.z);
+  // 멀리 볼수록 안개도 멀리 (멀리 빼도 내 주변이 뿌옇게 되지 않게)
+  scene.fog.near = 26 * Math.max(1, cam.zoom);
+  scene.fog.far = 52 * Math.max(1, cam.zoom);
+  setCurveCenter(camTarget.x, camTarget.z, cam.yaw);
 
   for (const label of village.labels) {
     const b = label.userData.base;

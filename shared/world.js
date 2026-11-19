@@ -11,7 +11,18 @@ export const WALK_SPEED = 3.2;
 export const RUN_SPEED = 5.6;
 
 // 동작 번호
-export const ANIM = { IDLE: 0, WALK: 1, RUN: 2, WAVE: 3 };
+export const ANIM = {
+  IDLE: 0, WALK: 1, RUN: 2, WAVE: 3, JUMP: 4, CHEER: 5, GATHER: 6, CHOP: 7, FISH: 8, SURPRISE: 9, FAINT: 10,
+};
+export const ANIM_MAX = Math.max(...Object.values(ANIM));
+// 손에 드는 생활 도구 (번호로 주고받음). 맨손은 채집
+export const TOOLS = ['none', 'axe', 'rod'];
+// 테스트 서버에서 광장 가운데 놓는 생활 체험용 나무·연못·덤불
+export const LIFE_SPOTS = [
+  { kind: 'tree', x: -3.6, z: 1.2 },
+  { kind: 'pond', x: 3.6, z: 1.4, r: 1.3 },
+  { kind: 'bush', x: 0, z: 0.2 },
+];
 
 // 캐릭터 색 목록 (파스텔)
 export const COLORS = [
@@ -151,3 +162,21 @@ export const toCm = (m) => Math.round(m * 100);
 export const fromCm = (cm) => cm / 100;
 export const angleToByte = (a) => (Math.round((a / (Math.PI * 2)) * 256) % 256 + 256) % 256;
 export const byteToAngle = (b) => (b / 256) * Math.PI * 2;
+
+// ── 외형 꾸미기 (테스트 서버 전용): 정해진 키·값만 통과시켜 JSON 문자열로 ──
+export const LOOK_BASES = ['boy', 'girl'];
+export const LOOK_HAIRS = ['side', 'bob', 'pony', 'short'];
+const HEX = /^#[0-9a-f]{6}$/i;
+const LOOK_RULES = {
+  base: (v) => LOOK_BASES.includes(v),
+  hair: (v) => LOOK_HAIRS.includes(v),
+  hairColor: (v) => HEX.test(v), top: (v) => HEX.test(v), skin: (v) => HEX.test(v),
+  glasses: (v) => typeof v === 'boolean', crown: (v) => typeof v === 'boolean', backpack: (v) => typeof v === 'boolean',
+};
+export function cleanLook(look) {
+  const out = {};
+  if (look && typeof look === 'object') {
+    for (const k in LOOK_RULES) if (k in look && LOOK_RULES[k](look[k])) out[k] = look[k];
+  }
+  return JSON.stringify(out);
+}

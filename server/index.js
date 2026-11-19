@@ -6,12 +6,14 @@ import { Server, Room } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema } from '@colyseus/schema';
 import {
-  ANIM, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm,
+  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
 } from '../shared/world.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
 const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
 const RECONNECT_SECONDS = 60;
+// 테스트 서버에서는 외형을 마음대로 바꿀 수 있다 (실제 수업 서버는 NODE_ENV=production 또는 FREE_LOOK=0 으로 끔)
+const FREE_LOOK = process.env.FREE_LOOK ? process.env.FREE_LOOK === '1' : process.env.NODE_ENV !== 'production';
 
 // ── 주고받는 상태 정의 ──
 const Player = schema({
@@ -19,12 +21,15 @@ const Player = schema({
   z: 'int16', // cm
   r: 'uint8', // 바라보는 방향 0~255
   a: 'uint8', // 동작 번호
+  t: 'uint8', // 든 도구 번호 (TOOLS)
   name: 'string',
   color: 'uint8',
+  look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
 }, 'Player');
 
 const VillageState = schema({
   players: { map: Player },
+  freeLook: 'boolean',
 }, 'VillageState');
 
 // ── 전송량 측정 ──
@@ -52,14 +57,15 @@ class VillageRoom extends Room {
   onCreate() {
     this.setState(new VillageState());
     if (!this.state.players) this.state.players = new MapSchema();
+    this.state.freeLook = FREE_LOOK;
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각
 
-    // 이동: [x(cm), z(cm), 방향(0~255), 동작]
+    // 이동: [x(cm), z(cm), 방향(0~255), 동작, 도구]
     this.onMessage('m', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || !Array.isArray(msg) || msg.length < 4) return;
-      const [cx, cz, r, a] = msg.map((v) => Number(v) | 0);
+      const [cx, cz, r, a, tool = 0] = msg.map((v) => Number(v) | 0);
       const now = Date.now();
       const prev = this.last.get(client.sessionId);
       const dt = Math.min((now - prev.t) / 1000, 1.5);
@@ -77,7 +83,18 @@ class VillageRoom extends Room {
       p.x = cx;
       p.z = cz;
       p.r = r & 255;
-      p.a = a >= 0 && a <= ANIM.WAVE ? a : 0;
+      p.a = a >= 0 && a <= ANIM_MAX ? a : 0;
+      p.t = tool >= 0 && tool < TOOLS.length ? tool : 0;
+    });
+
+    // 외형 바꾸기 (테스트 서버에서만)
+    this.onMessage('look', (client, look) => {
+      const p = this.state.players.get(client.sessionId);
+      // 외형이 바뀌면 모두의 화면에서 캐릭터를 다시 만들므로 너무 잦은 변경은 무시
+      const now = Date.now();
+      if (!FREE_LOOK || !p || now - (client.userData?.lookAt ?? 0) < 250) return;
+      client.userData = { ...client.userData, lookAt: now };
+      p.look = cleanLook(look);
     });
   }
 
@@ -98,6 +115,7 @@ class VillageRoom extends Room {
     p.a = ANIM.IDLE;
     p.name = cleanName(options.name);
     p.color = Math.max(0, Math.min(COLORS.length - 1, Number(options.color) | 0));
+    p.look = FREE_LOOK ? cleanLook(options.look) : '';
     this.state.players.set(client.sessionId, p);
     this.last.set(client.sessionId, { x, z, t: Date.now() });
     console.log(`입장: ${p.name} (현재 ${this.clients.length}명)`);

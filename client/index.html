@@ -20,8 +20,25 @@
 
   <!-- 조이스틱과 행동 버튼 -->
   <div id="joy-base" class="hidden"><div id="joy-knob"></div></div>
-  <button id="action" class="hidden" type="button">👋<span>인사</span></button>
-  <div id="hint" class="hidden">왼쪽 화면을 눌러 움직이기 · 방향키/WASD · Shift 달리기 · Space 인사</div>
+  <div id="actions" class="hidden">
+    <div class="emotes">
+      <button type="button" data-key="Digit1">👋<span>1 인사</span></button>
+      <button type="button" data-key="Digit2">🎉<span>2 환호</span></button>
+      <button type="button" data-key="Digit3">😲<span>3 깜짝</span></button>
+      <button type="button" data-key="Digit4">😵<span>4 벌러덩</span></button>
+    </div>
+    <div class="main-btns">
+      <button type="button" id="tool-btn" class="small" data-key="KeyQ"></button>
+      <button type="button" id="life-btn" data-key="KeyG"></button>
+      <button type="button" id="jump-btn" data-key="Space">⤴️<span>점프</span></button>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <div id="hint" class="hidden">방향키/WASD 이동 · Shift 달리기 · Space 점프 · 1~4 감정 표현 · Q 도구 · G 생활 · 마우스 끌기 시점 · 휠 확대</div>
+
+  <!-- 외형 꾸미기 (테스트 서버 전용) -->
+  <button id="look-btn" class="hidden" type="button">👕 꾸미기</button>
+  <div id="look-panel" class="card hidden"></div>
 
   <!-- 입장 화면 -->
   <div id="join">

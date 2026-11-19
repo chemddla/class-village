@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   WORLD, HALF, EDGE, PLOTS, BRIDGE, SPAWN, RIVER_HALF_WIDTH, riverCenterZ,
 } from '../../shared/world.js';
-import { toon, paint, vertexColorToon } from './materials.js';
+import { toon, paint, vertexColorToon, addOutline } from './materials.js';
 import { makeLabel } from './label.js';
 
 const GRASS_A = new THREE.Color(0xa6d97f);
@@ -110,7 +110,7 @@ function buildTrees(group) {
     m.compose(p.set(t.x, 0, t.z), q.identity(), s.setScalar(t.s));
     trunks.setMatrixAt(i, m);
   });
-  group.add(trunks);
+  group.add(addOutline(trunks));
 
   // 둥근 나무: 뭉게뭉게 잎 3덩이를 하나로 합침
   const blob = mergeGeometries([
@@ -125,7 +125,7 @@ function buildTrees(group) {
     leaves.setMatrixAt(i, m);
     leaves.setColorAt(i, col.setHSL(0.27 + ((t.x * 7.1) % 1 + 1) % 1 * 0.06, 0.45, 0.55));
   });
-  group.add(leaves);
+  group.add(addOutline(leaves, 0.04));
 
   // 뾰족한 나무: 원뿔 3단
   const cone = mergeGeometries([
@@ -139,7 +139,7 @@ function buildTrees(group) {
     pines.setMatrixAt(i, m);
     pines.setColorAt(i, col.setHSL(0.36, 0.4, 0.42 + ((t.z * 3.3) % 1 + 1) % 1 * 0.08));
   });
-  group.add(pines);
+  group.add(addOutline(pines, 0.04));
 }
 
 function buildRocks(group) {
@@ -152,7 +152,7 @@ function buildRocks(group) {
     m.compose(new THREE.Vector3(r.x, 0, r.z), q, new THREE.Vector3(r.s, r.s, r.s));
     rocks.setMatrixAt(i, m);
   });
-  group.add(rocks);
+  group.add(addOutline(rocks));
 }
 
 function buildFlowers(group) {
@@ -171,7 +171,7 @@ function buildFlowers(group) {
     heads.setMatrixAt(i, m);
     heads.setColorAt(i, palette[f.c]);
   });
-  group.add(stems, heads);
+  group.add(stems, addOutline(heads, 0.015));
 }
 
 function buildFence(group) {
@@ -189,7 +189,7 @@ function buildFence(group) {
     parts.push(paint(new THREE.BoxGeometry(0.06, 0.08, r * 2).translate(-r, y, 0), 0xf3e2bf));
     parts.push(paint(new THREE.BoxGeometry(0.06, 0.08, r * 2).translate(r, y, 0), 0xf3e2bf));
   }
-  group.add(new THREE.Mesh(mergeGeometries(parts), vertexColorToon));
+  group.add(addOutline(new THREE.Mesh(mergeGeometries(parts), vertexColorToon), 0.02));
 }
 
 function buildPlots(group, labels) {
@@ -216,7 +216,7 @@ function buildPlots(group, labels) {
     labels.push(label);
     group.add(label);
   }
-  group.add(new THREE.Mesh(mergeGeometries(parts), vertexColorToon));
+  group.add(addOutline(new THREE.Mesh(mergeGeometries(parts), vertexColorToon), 0.02));
 }
 
 export function buildVillage(scene) {

@@ -1,13 +1,20 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터)
+// Space 점프 · 1~4 감정 표현 · Q 도구 바꾸기 · G 생활 행동 · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
-export function createInput({ onAction }) {
+// 키 → 행동 이름 (화면 버튼은 data-key 로 같은 키를 누른 것처럼 동작)
+const ACTION_KEYS = {
+  Space: 'jump', KeyQ: 'tool', KeyG: 'life',
+  Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
+  Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
+};
+
+export function createInput({ onAction, onOrbit, onZoom }) {
   const keys = new Set();
   const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
   const base = document.getElementById('joy-base');
   const knob = document.getElementById('joy-knob');
-  const actionBtn = document.getElementById('action');
   let enabled = false;
 
   // ── 키보드 ──
@@ -19,14 +26,26 @@ export function createInput({ onAction }) {
   addEventListener('keydown', (e) => {
     if (!enabled) return;
     if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); }
-    if ((e.code === 'Space' || e.code === 'KeyE') && !e.repeat) { onAction(); e.preventDefault(); }
+    if (ACTION_KEYS[e.code]) { if (!e.repeat) onAction(ACTION_KEYS[e.code]); e.preventDefault(); }
   });
   addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
   addEventListener('blur', () => keys.clear());
 
-  // ── 떠 있는 조이스틱: 화면 왼쪽 아무 곳이나 누르면 그 자리에 생김 ──
+  // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
+  const drag = { id: null, x: 0, y: 0 };
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); onZoom(e.deltaY); }, { passive: false });
+
+  // ── 떠 있는 조이스틱: 화면 왼쪽 아무 곳이나 누르면 그 자리에 생김 (터치·펜) ──
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') {
+      if (e.button !== 0 || drag.id !== null) return;
+      drag.id = e.pointerId;
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
     if (!enabled || joy.id !== null) return;
     if (e.clientX > innerWidth * 0.6) return; // 오른쪽은 행동 버튼 영역
     joy.id = e.pointerId;
@@ -40,6 +59,12 @@ export function createInput({ onAction }) {
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerId === drag.id) {
+      onOrbit(e.clientX - drag.x, e.clientY - drag.y);
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      return;
+    }
     if (e.pointerId !== joy.id) return;
     let dx = e.clientX - joy.ox;
     let dy = e.clientY - joy.oy;
@@ -50,6 +75,7 @@ export function createInput({ onAction }) {
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
   });
   const end = (e) => {
+    if (e.pointerId === drag.id) drag.id = null;
     if (e.pointerId !== joy.id) return;
     joy.id = null;
     joy.x = joy.y = 0;
@@ -58,7 +84,9 @@ export function createInput({ onAction }) {
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
 
-  actionBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); if (enabled) onAction(); });
+  for (const b of document.querySelectorAll('[data-key]')) {
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); if (enabled) onAction(ACTION_KEYS[b.dataset.key]); });
+  }
 
   // iOS 확대 동작 막기
   for (const t of ['gesturestart', 'gesturechange', 'dblclick']) {

@@ -48,20 +48,52 @@ html, body {
   border-radius: 50%; background: rgba(255, 250, 240, 0.95); box-shadow: var(--shadow);
 }
 
-#action {
-  position: fixed; right: max(24px, env(safe-area-inset-right)); bottom: max(28px, env(safe-area-inset-bottom));
-  width: 96px; height: 96px; border-radius: 50%; border: none;
-  background: var(--card); box-shadow: var(--shadow); font-size: 36px; line-height: 1;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  color: var(--ink); touch-action: none;
+#actions {
+  position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
 }
-#action span { font-size: 14px; font-weight: 800; }
-#action:active { transform: translateY(3px); box-shadow: 0 3px 0 rgba(74, 59, 42, 0.15); }
+#actions button {
+  border: none; background: var(--card); box-shadow: var(--shadow); color: var(--ink); touch-action: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border-radius: 50%; line-height: 1; cursor: pointer;
+}
+#actions button span { font-size: 12px; font-weight: 800; white-space: nowrap; }
+#actions button:active { transform: translateY(3px); box-shadow: 0 3px 0 rgba(74, 59, 42, 0.15); }
+.emotes, .main-btns { display: flex; gap: 8px; align-items: flex-end; }
+.emotes button { width: 58px; height: 58px; font-size: 22px; }
+.main-btns button { width: 84px; height: 84px; font-size: 30px; }
+.main-btns button.small { width: 66px; height: 66px; font-size: 24px; }
+
+#toast {
+  position: fixed; left: 50%; top: 70px; transform: translateX(-50%); pointer-events: none;
+  background: rgba(255, 250, 240, 0.95); padding: 8px 16px; border-radius: 999px; box-shadow: var(--shadow);
+  font-weight: 700; font-size: 15px; opacity: 0; transition: opacity 0.2s; max-width: calc(100% - 32px); text-align: center;
+}
+#toast.show { opacity: 1; }
+
+#look-btn {
+  position: fixed; top: max(56px, calc(env(safe-area-inset-top) + 44px)); right: 12px;
+  border: none; background: var(--card); box-shadow: var(--shadow); border-radius: 999px;
+  padding: 8px 14px; font-weight: 800; font-size: 15px; color: var(--ink); cursor: pointer;
+}
+#look-panel {
+  position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); right: 12px;
+  width: min(300px, calc(100% - 24px)); max-height: calc(100% - 300px); overflow: auto; padding: 14px 16px;
+}
+#look-panel h3 { margin: 10px 0 6px; font-size: 14px; }
+#look-panel h3:first-child { margin-top: 0; }
+.look-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.look-row button:not(.swatch) {
+  border: 2px solid transparent; background: #f3ead8; border-radius: 10px; padding: 6px 10px;
+  font-weight: 700; font-size: 13px; color: var(--ink); cursor: pointer;
+}
+.look-row button.on:not(.swatch) { border-color: var(--ink); }
+.look-row .swatch { width: 30px; }
 
 #hint {
-  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
-  font-size: 13px; color: rgba(74, 59, 42, 0.75); pointer-events: none; text-align: center;
-  padding: 0 130px;
+  position: fixed; left: 12px; bottom: 12px; max-width: calc(100% - 340px);
+  font-size: 13px; color: rgba(74, 59, 42, 0.75); pointer-events: none;
+  background: rgba(255, 250, 240, 0.7); padding: 6px 12px; border-radius: 12px;
 }
 @media (pointer: coarse) { #hint { display: none; } }
 
