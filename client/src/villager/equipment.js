@@ -6,11 +6,12 @@ import * as THREE from 'three';
 const PI = Math.PI;
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 
-const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.65, ...o });
+// 도구 기본 재질: 매끈한 플라스틱·칠 광택 (나무는 따로 거칠게)
+const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.3, ...o });
 const WOOD = () => mat('#a8743f', { roughness: 0.8 });
 const DARK_WOOD = () => mat('#6e4526', { roughness: 0.8 });
 const METAL = () => mat('#dfe5ec', { roughness: 0.3, metalness: 0.35 });
-const LEATHER = () => mat('#5a3a2a', { roughness: 0.9 });
+const LEATHER = () => mat('#5a3a2a', { roughness: 0.35 });
 
 function part(geo, material, parent, name, [x, y, z] = [0, 0, 0]) {
   const m = new THREE.Mesh(geo, material);

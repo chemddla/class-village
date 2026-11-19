@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
-  aoGradient, liveTexture, drawFace, drawEye, hairTexture, hairBump, clothTexture, clothBump,
+  aoGradient, liveTexture, drawFace, drawEye, hairTexture, clothTexture, clothBump,
   plaidTexture, soleBump, pocketTexture, shade,
 } from './textures.js';
 import { ACTIONS, createAnimator } from './actions.js';
@@ -113,25 +113,30 @@ function facePatch(phiC, thC, dPhi, dTh, { lift = 0.0025, bulge = 0.006, flipU =
 function lathe(points, segs = 40, zScale = 1) {
   // 입력은 위→아래 순서. 바깥을 향하도록 아래→위로 뒤집는다 (텍스처 v도 위=위가 됨)
   const pts = [...points].reverse().map(([r, y]) => new THREE.Vector2(r, y));
-  const g = new THREE.LatheGeometry(pts, segs, PI, PI * 2);
+  // 둘레는 최소 48칸: 소매·바짓단 같은 둥근 테두리에 각진 면이 보이지 않게
+  const g = new THREE.LatheGeometry(pts, Math.max(segs, 48), PI, PI * 2);
   if (zScale !== 1) g.scale(1, 1, zScale);
   g.computeVertexNormals();
   return g;
 }
 
 function ellipsoid(rx, ry, rz, segs = 32) {
-  return new THREE.SphereGeometry(1, segs, Math.round(segs * 0.7)).scale(rx, ry, rz);
+  const n = Math.max(segs, 32);
+  return new THREE.SphereGeometry(1, n, Math.max(24, Math.round(n * 0.7))).scale(rx, ry, rz);
 }
 
 // ───────────── 재질 ─────────────
-function skinMat(map, skin) {
+// 피부: 보송한 솜털 광(sheen)으로 혈색 있게
+function skinMat(map) {
   return new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, map, roughness: 0.58, sheen: 0.35, sheenColor: new THREE.Color(shade(skin, 1.1)),
-    sheenRoughness: 0.8,
+    color: 0xffffff, map, roughness: 0.55, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c2), sheenRoughness: 0.8,
   });
 }
+// 천(코튼): 거칠지만 결 방향으로 포근하게 번지는 sheen
 function clothMat(map, bumpMap, { roughness = 0.85, bumpScale = 1.2 } = {}) {
-  return new THREE.MeshStandardMaterial({ map, bumpMap, bumpScale, roughness, metalness: 0 });
+  return new THREE.MeshPhysicalMaterial({
+    map, bumpMap, bumpScale, roughness, metalness: 0, sheen: 0.6, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff),
+  });
 }
 
 function mesh(geo, mat, parent, name) {
@@ -149,177 +154,170 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-// 머리 덮개가 얹히는 높이 (정수리일수록 볼륨)
-const capScale = (th) => 1.07 + 0.05 * Math.max(0, Math.cos(th));
+// 머리 덮개가 얹히는 높이: 정수리는 두상의 약 1.15배로 풍성하게 (소두 효과)
+const capScale = (th) => 1.09 + 0.075 * Math.max(0, Math.cos(th));
 
-// 뾰족한 머리 가닥 (뿌리→끝으로 좁아지고 가운데가 볼록한 리본)
-function strand({ phiRoot, phiTip, thRoot, thTip, width, tipWidth = 0, lift = 0.012, curl = 0, hug = false }) {
-  const rows = 14;
-  const cols = 4;
-  const pos = [];
-  const uv = [];
-  const idx = [];
-  for (let r = 0; r <= rows; r++) {
-    const t = r / rows;
-    const phi = phiRoot + (phiTip - phiRoot) * t ** 1.3;
-    const th = thRoot + (thTip - thRoot) * t;
-    // 끝이 둥글게 모이는 폭 (뿌리 쪽은 넓게 유지)
-    const w = width * (1 - t ** 2.4) ** 0.55 + tipWidth * t;
-    // 뿌리는 덮개에 바짝 붙였다가 서서히 떠오름 (뿌리에 가로 이음새가 생기지 않게)
-    const blend = smooth(0, 0.35, t);
-    // hug: 끝으로 갈수록 머리 피부 곡면에 붙도록 (구레나룻 등)
-    const lay = capScale(th) + 0.003 + 0.009 * blend + curl * t * t;
-    const sc = hug ? lay * (1 - t) + 1.012 * t : lay;
-    for (let c = 0; c <= cols; c++) {
-      const s = c / cols;
-      const off = (s - 0.5) * 2;
-      const ph = phi + (off * w) / Math.max(0.3, Math.sin(th));
-      const p = surf(ph, th, sc);
-      const crown = (1 - off * off) * lift * (1 - 0.6 * t) * blend;
-      p.addScaledVector(surfNormal(ph, th, sc), crown);
-      pos.push(p.x, p.y, p.z);
-      uv.push(0.3 + s * 0.4 + phiRoot * 0.05, 1 - (0.15 + t * 0.85));
-    }
+// 덮개 곡면: 뒤통수는 봉긋하게, 귀 위쪽은 안으로 눌러 붕 뜨지 않게 (press: 누르는 정도)
+function capS(phi, th, press = 1) {
+  const a = Math.abs(phi);
+  const back = 0.055 * smooth(1.5, 2.9, a) * Math.exp(-(((th - 1.35) / 0.55) ** 2));
+  const ear = 0.04 * press * Math.exp(-(((a - 1.57) / 0.5) ** 2)) * smooth(PI * 0.3, PI * 0.48, th);
+  return capScale(th) + back - ear;
+}
+const SKIN_HUG = 1.012; // 머리끝이 내려앉는 높이 (피부 바로 위)
+
+// 텍스처 세로 좌표를 극각으로: 덮개와 가닥의 엔젤링이 한 줄로 이어짐
+const hairV = (th) => 1 - th / (PI * 0.8);
+function thetaUV(g) {
+  const p = g.attributes.position;
+  const uv = g.attributes.uv;
+  for (let i = 0; i < p.count; i++) {
+    const r = Math.hypot(p.getX(i), p.getY(i), p.getZ(i));
+    uv.setY(i, hairV(Math.acos(THREE.MathUtils.clamp(p.getY(i) / r, -1, 1))));
   }
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const a = r * (cols + 1) + c;
-      const b = (r + 1) * (cols + 1) + c;
-      idx.push(a, b, a + 1, a + 1, b, b + 1);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  g.setIndex(idx);
-  g.computeVertexNormals();
   return g;
 }
 
-// 헤어스타일별 덮개 범위 (옆·뒤 끝이 내려오는 극각, π 배수)
+// 헤어는 스타일마다 '통짜 곡면 한 장'. 덮개의 아래 경계선(극각 thetaMax(phi))을 수학 곡선으로 깎아
+// 앞머리 모양 자체를 만든다. 가닥 조각을 덧대지 않으므로 이음새·겹침 그림자·외곽선 속 지저분한 선이 없다.
+// front(phi): 이마 쪽 경계선, side/back: 옆·뒤 끝 (π 배수), press: 귀 위를 누르는 정도
+const gauss = (x, w) => Math.exp(-((x / w) ** 2));
+// 부드러운 최댓값: 여러 갈래 곡선을 이어 붙일 때 사이 골짜기만 살짝 둥글게 (k가 클수록 날카로움)
+const smax = (k, ...xs) => Math.log(xs.reduce((s, x) => s + Math.exp(k * x), 0)) / k;
+// 위로 파고드는 좁은 역V자 홈 (아래로 벌어지고 꼭짓점만 살짝 둥글게: 외곽선이 끝에 뭉치지 않게)
+const notch = (phi, c, w, depth) => depth * Math.max(0, 1 - Math.hypot(phi - c, w * 0.15) / w);
+// 아래로 뾰족하게 떨어지는 갈래: c에서 길이 tip, 양옆 기울기 slopeL/slopeR, soft만큼 끝을 둥글림
+const spike = (phi, c, tip, slopeL, slopeR = slopeL, soft = 0) => {
+  const d = Math.hypot(phi - c, soft) - soft;
+  return tip - d * (phi < c ? slopeL : slopeR);
+};
+
 export const HAIRSTYLES = {
-  side: { label: '덮은 앞머리', side: 0.47, back: 0.6 },
-  bob: { label: '일자 단발', side: 0.68, back: 0.7 },
-  pony: { label: '포니테일', side: 0.5, back: 0.58 },
-  short: { label: '숏컷(가르마)', side: 0.42, back: 0.55 },
+  side: {
+    label: '덮은 댄디컷', side: 0.45, back: 0.74, press: 1.6,
+    // 가운데 갈래는 넓고 길게, 양옆으로 갈수록 비대칭으로 짧아지는 4갈래. 끝과 골짜기를 살짝 둥글려 차분하게
+    front: (phi) => smax(55,
+      spike(phi, 0.06, 0.475, 0.22, 0.26, 0.06),
+      spike(phi, -0.5, 0.45, 0.38, 0.38, 0.06),
+      spike(phi, -0.98, 0.425, 0.42, 0.38, 0.06),
+      spike(phi, 0.62, 0.44, 0.42, 0.36, 0.06),
+      0.36),
+  },
+  bob: {
+    label: '시스루 보브 단발', side: 0.7, back: 0.7, press: 0.6,
+    // 눈썹 위 거의 일자인 앞머리에 이마가 비치는 좁은 역V자 홈 3개를 불규칙하게
+    front: (phi) => 0.455 - 0.02 * Math.max(0, 1 - phi * phi)
+      - notch(phi, -0.32, 0.13, 0.035) - notch(phi, 0.08, 0.12, 0.045) - notch(phi, 0.44, 0.1, 0.028),
+  },
+  pony: {
+    label: '포니테일', side: 0.5, back: 0.62, press: 1,
+    // 살짝 내린 헤어라인 + 완만한 M자 + 이마 가운데에서 캐릭터 오른쪽 눈썹 쪽으로 비스듬히 내려오는 앞머리 한 가닥
+    front: (phi) => smax(120,
+      0.335 + 0.012 * gauss(phi, 0.25) - 0.012 * gauss(Math.abs(phi) - 0.55, 0.25),
+      spike(phi, -0.32, 0.47, 0.75, 0.3)),
+  },
+  short: {
+    label: '쉼표 가르마 펌', side: 0.43, back: 0.62, press: 1.4,
+    // 6.5:3.5 가르마(phi≈0.45, 꼭짓점은 둥글게). 넓은 쪽은 눈썹을 덮고 끝이 코 쪽으로 둥글게 휘는 C자 쉼표,
+    // 좁은 쪽은 귀 방향으로 완만하게 넘어감
+    front: (phi) => {
+      const wide = phi > 0.1 ? 0.48 - 1.1 * (phi - 0.1) ** 2 : 0.48 - 0.06 * smooth(0, 1.1, 0.1 - phi);
+      const narrow = 0.345 + 0.075 * smooth(0.45, 1.1, phi);
+      return wide + (narrow - wide) * smooth(0.33, 0.55, phi);
+    },
+    // 넓은 쪽 윗머리만 봉긋하게
+    volume: (phi, th) => 0.06 * gauss(phi + 0.3, 0.5) * gauss(th - PI * 0.22, 0.3),
+  },
 };
 
 function buildHair(head, o) {
   const hair = new THREE.Group();
   hair.name = '헤어';
   head.add(hair);
-  const mat = new THREE.MeshStandardMaterial({
-    map: hairTexture(o.hairColor), bumpMap: hairBump(), bumpScale: 0.5, roughness: 0.5, side: THREE.DoubleSide,
+  // 매끈한 파스텔 재질: 반사는 낮추고 결 방향 sheen만 은은하게
+  const mat = new THREE.MeshPhysicalMaterial({
+    map: hairTexture(o.hairColor), roughness: 0.62, specularIntensity: 0.35,
+    sheen: 0.3, sheenRoughness: 0.7, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide,
   });
   const style = HAIRSTYLES[o.hair] ? o.hair : 'side';
-  const bob = style === 'bob';
-  // 덮개: 앞은 이마 위, 옆·뒤는 스타일에 따라
+  const S = HAIRSTYLES[style];
+  // 아래 경계선: 이마 라인 → 관자놀이에서 옆머리 → 뒷머리. 숏컷·댄디는 목덜미 가운데로 좁게 모임
   const thetaMax = (phi) => {
     const a = Math.abs(phi);
-    const front = PI * 0.33;
-    const side = PI * HAIRSTYLES[style].side;
-    const back = PI * HAIRSTYLES[style].back;
-    if (a < 1.2) return front + (side - front) * smooth(0.55, 1.2, a);
-    return side + (back - side) * smooth(1.6, 2.6, a);
+    const f = PI * S.front(phi);
+    if (a < 1.3) return f + (PI * S.side - f) * smooth(0.85, 1.3, a);
+    const base = PI * S.side + PI * (S.back - S.side) * smooth(1.6, 2.6, a);
+    return style === 'bob' ? base : base + PI * 0.06 * gauss(a - PI, 0.45);
   };
-  let cap;
-  if (bob) {
-    // 한 장으로 이어진 단발 볼륨: 아래로 갈수록 바깥으로 퍼지고(A라인), 끝은 둥글게 안으로 말림
-    cap = shellGrid(140, 48, thetaMax, (phi, _th, t) => {
+  const height = (phi, th) => capS(phi, th, S.press) + (S.volume ? S.volume(phi, th) : 0);
+  let g;
+  if (style === 'bob') {
+    // 종 모양: 옆·뒤는 아래로 갈수록 살짝 퍼졌다가(A라인) 턱선에서 안쪽으로 부드럽게 말림(C컬)
+    g = shellGrid(720, 64, thetaMax, (phi, _th, t) => {
       const tm = thetaMax(phi);
-      const body = 0.88;
+      const body = 0.86;
+      const flare = (th) => 0.06 * smooth(PI * 0.35, tm, th) ** 1.5 * smooth(0.9, 1.5, Math.abs(phi));
       if (t <= body) {
         const th = (t / body) * tm;
-        // 퍼짐을 일찍·완만하게 시작해 옆면에 가로로 꺾이는 선이 생기지 않게
-        const flare = 0.1 * smooth(PI * 0.3, tm, th) ** 1.4;
-        return surf(phi, th, capScale(th) + flare);
+        // 앞머리 쪽 끝은 이마로 내려앉음
+        const s = height(phi, th) + flare(th);
+        // 실제 경계선에서 일정한 폭만 이마로 내려앉음 (홈 가장자리도 이마에 얹히고, 위로 긴 주름은 없음)
+        const tuck = smooth(tm - PI * 0.08, tm, th);
+        return surf(phi, th, s + (SKIN_HUG - s) * tuck * (1 - smooth(0.9, 1.4, Math.abs(phi))));
       }
-      // 끝단: 바깥 면에서 안쪽 면으로 반원을 그리며 말려 들어감
-      const u = (t - body) / (1 - body);
-      const outer = capScale(tm) + 0.1;
-      const a = u * PI;
-      const sc = outer - 0.03 * (1 - Math.cos(a));
-      const th = tm + 0.035 * Math.sin(a);
-      return surf(phi, th, sc);
+      // 안으로 말리는 C컬은 옆·뒤만 (이마 앞머리는 말리지 않고 그대로 이마에 얹힘)
+      const a = ((t - body) / (1 - body)) * PI;
+      const k = smooth(0.9, 1.4, Math.abs(phi));
+      const s = height(phi, tm) + flare(tm);
+      return surf(phi, tm + 0.03 * Math.sin(a) * k, s + (SKIN_HUG - s) * (1 - k) - 0.035 * (1 - Math.cos(a)) * k);
     });
   } else {
-    cap = shellGrid(120, 36, thetaMax, (phi, th) => surf(phi, th, capScale(th)));
+    // 돔: 끝은 피부 쪽으로 부드럽게 내려앉아 앞머리 끝이 이마에 얹힌 듯
+    g = shellGrid(720, 48, thetaMax, (phi, th, t) => {
+      const s = height(phi, th);
+      const tm = thetaMax(phi);
+      return surf(phi, th, s + (SKIN_HUG - s) * smooth(tm - PI * 0.1, tm, th) ** 1.3);
+    });
   }
-  mesh(cap, mat, hair, '머리덮개');
-
-  const strands = [];
-  const sideburns = (thTip) => {
-    for (const s of [-1, 1]) {
-      strands.push({ phiRoot: s * 1.3, phiTip: s * 1.24, thRoot: PI * 0.36, thTip, width: 0.2, lift: 0.006, hug: true });
-    }
-  };
-  const backTufts = (thTip, curl) => {
-    for (let i = 0; i < 9; i++) {
-      const phi = 2.2 + (1.9 * i) / 8;
-      const p = phi > PI ? phi - 2 * PI : phi;
-      strands.push({ phiRoot: p, phiTip: p, thRoot: PI * 0.4, thTip, width: 0.3, tipWidth: 0.08, lift: 0.016, curl });
-    }
-  };
-  if (bob) {
-    // 일자 앞머리: 넓은 가닥이 같은 길이로 촘촘히. 뿌리를 정수리에 두어 이마 위에 가로 이음새가 안 보이게
-    for (let i = 0; i < 13; i++) {
-      const phi = -1.05 + (2.1 * i) / 12;
-      strands.push({ phiRoot: phi, phiTip: phi, thRoot: PI * 0.04, thTip: PI * (0.435 + (i % 2) * 0.012),
-        width: 0.2, tipWidth: 0.07, lift: 0.014 });
-    }
-  } else if (style === 'side') {
-    // 옆으로 넘긴 뾰족한 앞머리: 길이를 번갈아
-    for (let i = 0; i < 5; i++) {
-      const phi = -0.92 + (1.84 * i) / 4;
-      strands.push({ phiRoot: phi, phiTip: phi + 0.2, thRoot: PI * 0.14,
-        thTip: PI * (0.425 + (i % 2) * 0.02 - Math.abs(phi) * 0.02), width: 0.4, tipWidth: 0.0, lift: 0.024 });
-    }
-    sideburns(PI * 0.56);
-    backTufts(PI * 0.64, 0.03);
-  } else if (style === 'pony') {
-    // 살짝 넘긴 둥근 앞머리 + 얼굴 옆으로 흘러내리는 잔머리 + 높이 묶은 꼬리
-    for (let i = 0; i < 7; i++) {
-      const phi = -0.95 + (1.9 * i) / 6;
-      strands.push({ phiRoot: phi, phiTip: phi + 0.1, thRoot: PI * 0.15, thTip: PI * (0.415 + (i % 2) * 0.015),
-        width: 0.27, tipWidth: 0.05, lift: 0.018 });
-    }
-    sideburns(PI * 0.66);
-    buildPonytail(hair, mat, o);
-  } else {
-    // 숏컷: phi≈0.5의 가르마에서 양쪽으로 갈라져 넘어가는 짧은 앞머리
-    for (let i = 0; i < 5; i++) {
-      const phi = 0.42 - i * 0.3;
-      strands.push({ phiRoot: phi, phiTip: phi - 0.38, thRoot: PI * 0.1, thTip: PI * (0.37 + (i % 2) * 0.02),
-        width: 0.34, tipWidth: 0, lift: 0.022 });
-    }
-    for (const phi of [0.62, 0.95]) {
-      strands.push({ phiRoot: phi, phiTip: phi + 0.3, thRoot: PI * 0.12, thTip: PI * 0.38, width: 0.3, lift: 0.018 });
-    }
-    sideburns(PI * 0.5);
-    backTufts(PI * 0.58, 0.015);
-  }
-  for (const s of strands) mesh(strand(s), mat, hair, '머리가닥');
+  mesh(thetaUV(g), mat, hair, '머리');
+  if (style === 'pony') buildPonytail(hair, mat, o);
   return hair;
 }
 
-// 뒤통수 높이 묶은 포니테일: 머리끈 + 아래로 처지며 가늘어지는 꼬리
+// 뒤통수 포니테일: 머리끈 1개 + 매끈한 꼬리 1개 (통통하게 내려오다 S자로 흐르며 끝이 뾰족하게 모임)
 function buildPonytail(hair, mat, o) {
-  const th = PI * 0.36;
-  const sc = capScale(th);
+  const th = PI * 0.4;
+  const sc = capS(PI, th);
   const tail = new THREE.Group();
   tail.name = '포니테일';
-  tail.position.copy(surf(PI, th, sc)).addScaledVector(surfNormal(PI, th, sc), 0.012);
-  tail.rotation.x = 0.55; // 뒤로 비스듬히 처짐
+  tail.position.copy(surf(PI, th, sc)).addScaledVector(surfNormal(PI, th, sc), 0.006);
+  tail.rotation.x = 0.2; // 뒤로 살짝 비스듬히 처짐
   hair.add(tail);
-  const tie = mesh(new THREE.TorusGeometry(0.026, 0.009, 12, 28).rotateX(PI / 2),
-    new THREE.MeshStandardMaterial({ color: o.tie ?? '#ff6b8a', roughness: 0.45 }), tail, '머리끈');
-  tie.position.y = 0.004;
-  const g = lathe([[0.022, 0.012], [0.036, -0.02], [0.05, -0.06], [0.054, -0.1], [0.046, -0.15], [0.03, -0.19], [0.012, -0.215], [0, -0.22]], 32);
-  // 끝으로 갈수록 바깥으로 살짝 휘어 올라감
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const y = -p.getY(i);
-    p.setZ(i, p.getZ(i) - 0.35 * y * y);
+  // 스크런치: 둘레를 따라 주름이 잡힌 도넛
+  const R = 0.03;
+  const tieGeo = new THREE.TorusGeometry(R, 0.013, 16, 72);
+  const tp = tieGeo.attributes.position;
+  const c = V();
+  const p = V();
+  for (let i = 0; i < tp.count; i++) {
+    p.fromBufferAttribute(tp, i);
+    const u = Math.atan2(p.y, p.x);
+    c.set(Math.cos(u) * R, Math.sin(u) * R, 0);
+    p.sub(c).multiplyScalar(1 + 0.22 * Math.sin(u * 14)).add(c);
+    tp.setXYZ(i, p.x, p.y, p.z);
+  }
+  tieGeo.rotateX(PI / 2).computeVertexNormals();
+  const tie = mesh(tieGeo, new THREE.MeshPhysicalMaterial({ color: o.tie ?? '#ff6b8a', roughness: 0.6, sheen: 0.6, sheenRoughness: 0.6 }), tail, '머리끈');
+  tie.position.y = 0.002;
+  const L = 0.36;
+  const g = lathe([[0.022, 0.004], [0.042, -0.03], [0.056, -0.09], [0.054, -0.16], [0.042, -0.23], [0.026, -0.29],
+    [0.011, -0.335], [0, -L]], 48);
+  // 아래로 갈수록 뒤로 휘고 옆으로 S자 물결
+  const gp = g.attributes.position;
+  for (let k = 0; k < gp.count; k++) {
+    const y = -gp.getY(k);
+    gp.setX(k, gp.getX(k) + 0.03 * Math.sin((2 * PI * y) / L) * (y / L));
+    gp.setZ(k, gp.getZ(k) - 0.18 * y * y);
   }
   g.computeVertexNormals();
   mesh(g, mat, tail, '꼬리');
@@ -566,11 +564,11 @@ function buildBody(root, o, live) {
   // A라인 티셔츠 (세로 90%): 좁은 어깨 → 아래로 퍼짐, 목둘레·밑단은 안쪽으로 접힌 두께
   mesh(lathe(ty([
     [0.044, 0.215], [0.051, 0.238], [0.072, 0.236], [0.096, 0.222], [0.11, 0.2], [0.114, 0.165],
-    [0.117, 0.12], [0.124, 0.07], [0.134, 0.02], [0.142, -0.02], [0.144, -0.032], [0.132, -0.029], [0.127, -0.005],
+    [0.117, 0.12], [0.124, 0.07], [0.134, 0.02], [0.142, -0.02], [0.144, -0.031], [0.138, -0.032], [0.133, -0.02],
   ]), 56, 0.78), shirtMat, torso, '상의');
 
   // 옷깃: 셔츠 목둘레와 같은 타원을 따라 도톰하게 말린 리브
-  mesh(lathe(ty([[0.044, 0.236], [0.048, 0.247], [0.056, 0.246], [0.06, 0.238], [0.058, 0.232]]), 56, 0.78),
+  mesh(lathe(ty([[0.044, 0.236], [0.047, 0.244], [0.053, 0.2445], [0.057, 0.238], [0.0555, 0.233]]), 64, 0.78),
     clothMat(clothTexture('collar', shade(o.top, 0.97), { ao: [[0, 0.8], [0.5, 1], [1, 0.9]] }), clothBump('collar')),
     torso, '옷깃');
 
@@ -648,7 +646,7 @@ function buildBody(root, o, live) {
     arm.position.set(s * 0.106, 0.2 * TY, 0);
     torso.add(arm);
     // 소매: 윗부분은 어깨 경사를 덮는 돔, 끝은 안쪽으로 접힌 두께
-    mesh(lathe([[0, 0.034], [0.026, 0.03], [0.042, 0.018], [0.052, 0.0], [0.056, -0.025], [0.058, -0.05], [0.06, -0.072], [0.061, -0.082], [0.05, -0.079], [0.046, -0.06]], 40),
+    mesh(lathe([[0, 0.034], [0.026, 0.03], [0.042, 0.018], [0.052, 0.0], [0.056, -0.025], [0.058, -0.05], [0.06, -0.072], [0.0608, -0.081], [0.057, -0.0825], [0.053, -0.075]], 64),
       sleeveMat, arm, '소매');
     // 윗팔 + 팔꿈치(굽혀도 틈이 안 보이도록 같은 굵기의 구) + 아래팔: 손목에서 손과 같은 굵기로 끝남
     mesh(lathe([[0.024, -0.02], [0.025, -0.06], [0.0255, -0.085], [0.0258, -0.092]], 24), armMat, arm, '윗팔');
@@ -681,9 +679,9 @@ function buildBody(root, o, live) {
 
 function buildShoe(foot, o) {
   const upperMat = new THREE.MeshStandardMaterial({
-    map: aoGradient('shoe', o.shoes, [[0, 0.55], [0.18, 0.95], [0.3, 1], [1, 0.9]]), roughness: 0.6,
+    map: aoGradient('shoe', o.shoes, [[0, 0.55], [0.18, 0.95], [0.3, 1], [1, 0.9]]), roughness: 0.3,
   });
-  const white = new THREE.MeshStandardMaterial({ color: '#f7f3ea', roughness: 0.75, bumpMap: soleBump(), bumpScale: 2 });
+  const white = new THREE.MeshStandardMaterial({ color: '#f7f3ea', roughness: 0.4, bumpMap: soleBump(), bumpScale: 2 });
   // 고무 밑창
   // 갑피(타원)와 같은 윤곽을 가진 일체형 고무창: 단위 회전체를 가로·세로로 늘림
   const soleGeo = lathe([[0, 0.008], [0.86, 0.008], [0.97, 0.006], [1.0, 0.0], [0.97, -0.006], [0.86, -0.008], [0, -0.008]], 48);
@@ -749,7 +747,7 @@ export function createVillager(options = {}) {
   const state = { action: 'idle', expression: 'smile', equipment: 'none' };
   let baseExpression = null; // 액션이 표정을 잠깐 바꿨을 때 돌아갈 표정
   // 표정용 실시간 텍스처: 몸을 다시 만들어도 같은 텍스처를 계속 쓴다
-  const live = { face: liveTexture(2048, 1024), eyes: [liveTexture(512, 512), liveTexture(512, 512)] };
+  const live = { face: liveTexture(2048, 1024), eyes: [liveTexture(1024, 1024), liveTexture(1024, 1024)] };
   let rig = null;
 
   function redrawFace() {

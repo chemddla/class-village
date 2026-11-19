@@ -2,20 +2,29 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES } from './villager/villager.js';
 import { EQUIPMENT } from './villager/equipment.js';
-import { contactShadow, canvasTexture } from './villager/textures.js';
+import { contactShadow, canvasTexture, setMaxAnisotropy } from './villager/textures.js';
 
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 1.05;
+// ACES 톤 매핑: 밝은 곳은 부드럽게 눌러 주고 채도는 살려 화사하게
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// 캔버스 텍스처(눈·볼터치·체크무늬)가 비스듬히 봐도 번지지 않게
+setMaxAnisotropy(renderer.capabilities.getMaxAnisotropy());
 
 const scene = new THREE.Scene();
+// 스튜디오 환경광(IBL): 표면마다 은은한 반사광이 돌아 찰흙처럼 탁한 느낌이 사라짐
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.35;
+pmrem.dispose();
 // 배경: 위는 하늘색, 아래는 따뜻한 빛
 scene.background = canvasTexture('bg', 4, 512, (g, w, h) => {
   const gr = g.createLinearGradient(0, 0, 0, h);
@@ -36,9 +45,10 @@ controls.maxDistance = 6;
 controls.maxPolarAngle = Math.PI * 0.55;
 
 // ── 조명: 반구광 + 키 라이트(따뜻) + 필 라이트(따뜻·약하게) + 림 라이트(뒤에서 외곽선) ──
-scene.add(new THREE.HemisphereLight(0xe3f1ff, 0xd8c3a0, 1.25));
+// 반구광: 맑은 하늘색 + 따뜻한 크림·피치 지면 반사 → 그늘도 회색이 아닌 파스텔 톤으로
+scene.add(new THREE.HemisphereLight(0xdbeeff, 0xffe8d6, 0.75));
 
-const key = new THREE.DirectionalLight(0xfff1e0, 2.6);
+const key = new THREE.DirectionalLight(0xfff1e0, 1.9);
 key.position.set(-1.6, 2.6, 2.2);
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
@@ -51,11 +61,11 @@ key.shadow.bias = -0.0004;
 key.shadow.normalBias = 0.015;
 scene.add(key);
 
-const fill = new THREE.DirectionalLight(0xffd2b0, 0.9);
+const fill = new THREE.DirectionalLight(0xffd2b0, 0.6);
 fill.position.set(2.2, 0.9, 1.6);
 scene.add(fill);
 
-const rim = new THREE.DirectionalLight(0xf4f8ff, 2.2);
+const rim = new THREE.DirectionalLight(0xf4f8ff, 1.8);
 rim.position.set(0.6, 1.8, -2.4);
 scene.add(rim);
 
@@ -91,6 +101,83 @@ const shadowCatcher = new THREE.Mesh(
 shadowCatcher.receiveShadow = true;
 shadowCatcher.visible = false;
 scene.add(shadowCatcher);
+
+// ── 카툰 모드: 역법선(Inverted Hull) 외곽선 + 반-툰 명암 ──
+const OUTLINE_COLOR = 0x4a3525; // 검정 대신 따뜻한 짙은 갈색
+// 눈·렌즈 같은 평면 데칼과 그물·발목 입구처럼 얇은 면에는 외곽선을 두르지 않음
+const NO_OUTLINE = new Set(['눈', '렌즈', '그물', '그물코', '발목입구']);
+
+// 4단계 계단형 명암: 가장 어두운 단도 55% 밝기라 그늘이 칙칙해지지 않음
+const toonGradient = new THREE.DataTexture(new Uint8Array([140, 185, 225, 255]), 4, 1, THREE.RedFormat);
+toonGradient.minFilter = toonGradient.magFilter = THREE.NearestFilter;
+toonGradient.needsUpdate = true;
+
+// 두께별로 공유하는 외곽선 재질: 정점을 법선 방향으로 밀어낸 뒤 뒷면만 그림
+const outlineMats = new Map();
+function outlineMaterial(thickness, color) {
+  const key = `${thickness.toFixed(4)}:${color}`;
+  if (!outlineMats.has(key)) {
+    const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>',
+        `#include <begin_vertex>
+  transformed += normalize(normal) * ${thickness.toFixed(4)};`);
+    };
+    m.customProgramCacheKey = () => `outline:${key}`;
+    outlineMats.set(key, m);
+  }
+  return outlineMats.get(key);
+}
+
+// 메시에 같은 지오메트리를 쓰는 외곽선 껍질을 자식으로 붙임 (메시와 함께 움직이고 함께 사라짐)
+export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
+  const o = new THREE.Mesh(mesh.geometry, outlineMaterial(thickness, color));
+  o.name = '외곽선';
+  o.userData.isOutline = true;
+  o.raycast = () => {};
+  mesh.add(o);
+  mesh.userData.outline = o;
+  return o;
+}
+
+// 원래 재질의 색·텍스처·범프를 그대로 옮긴 툰 재질 (원래 재질이 버려지면 같이 버림)
+const toonCache = new WeakMap();
+function toonOf(src) {
+  let t = toonCache.get(src);
+  if (!t) {
+    t = new THREE.MeshToonMaterial({
+      color: src.color, map: src.map, bumpMap: src.bumpMap, bumpScale: src.bumpScale, side: src.side,
+      emissive: src.emissive ?? 0x000000, emissiveIntensity: src.emissiveIntensity ?? 1, gradientMap: toonGradient,
+    });
+    src.addEventListener('dispose', () => t.dispose());
+    toonCache.set(src, t);
+  }
+  return t;
+}
+
+// 매 프레임 호출: 옷을 바꾸거나 장비를 바꿔 새로 생긴 메시도 자동으로 같은 모드가 됨
+function syncToon(root, on) {
+  root.traverse((m) => {
+    if (!m.isMesh || m.userData.isOutline || m.userData.toon === on) return;
+    m.userData.toon = on;
+    const mat = m.userData.pbr ?? m.material;
+    if (mat.transparent || NO_OUTLINE.has(m.name)) return;
+    if (on) {
+      m.userData.pbr = mat;
+      m.material = toonOf(mat);
+      if (!m.userData.outline) {
+        // 얼굴·머리·옷은 0.012, 신발끈·꽃잎 같은 작은 부품은 크기에 맞춰 더 얇게
+        if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+        addOutline(m, m.userData.outlineWidth ?? Math.min(0.012, m.geometry.boundingSphere.radius * 0.12));
+      }
+      m.userData.outline.visible = true;
+    } else {
+      m.material = mat;
+      if (m.userData.outline) m.userData.outline.visible = false;
+    }
+  });
+}
+let toon = true;
 
 // ── 캐릭터 ──
 const villager = createVillager(PRESETS.boy);
@@ -207,6 +294,12 @@ $('bg').onclick = () => {
   shadowCatcher.visible = white;
   $('bg').textContent = white ? '배경: 순백색' : '배경: 잔디';
 };
+$('outline').onclick = () => {
+  toon = !toon;
+  $('outline').textContent = `외곽선: ${toon ? 'ON' : 'OFF'}`;
+  $('outline').classList.toggle('on', toon);
+};
+$('outline').classList.toggle('on', toon);
 $('spin').onclick = () => {
   spin = !spin;
   $('spin').classList.toggle('on', spin);
@@ -216,6 +309,8 @@ $('glb').onclick = async () => {
   btn.disabled = true;
   btn.textContent = '내보내는 중…';
   try {
+    // 외곽선 껍질과 툰 재질은 화면 전용이므로 원래 3D 재질로 되돌린 상태로 내보냄
+    syncToon(villager.root, false);
     const glb = await new GLTFExporter().parseAsync(villager.root, { binary: true });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
@@ -252,6 +347,7 @@ renderer.setAnimationLoop(() => {
   const t = clock.elapsedTime;
   if (spin) villager.root.rotation.y += dt * 0.6;
   villager.update(t, dt);
+  syncToon(villager.root, toon);
   // 뛰어오르면 발밑 그림자가 작고 옅어짐
   const k = 1 - Math.min(0.6, villager.root.position.y * 2.5);
   contact.scale.setScalar(k);
@@ -287,4 +383,4 @@ window.CharacterApp = {
 };
 
 // 개발 중 점검용
-window.__show = { renderer, scene, camera, villager };
+window.__show = { renderer, scene, camera, villager, syncToon: (on) => syncToon(villager.root, on) };

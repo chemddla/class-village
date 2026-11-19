@@ -14,17 +14,32 @@ export function rng(seed = 1) {
 }
 
 const cache = new Map();
+const live = new Set();
+let maxAniso = 8;
 
+// 렌더러가 지원하는 최대 이방성 필터링을 이미 만든 텍스처와 앞으로 만들 텍스처 모두에 적용
+export function setMaxAnisotropy(n) {
+  maxAniso = n;
+  for (const t of [...cache.values(), ...live]) {
+    t.anisotropy = n;
+    t.needsUpdate = true;
+  }
+}
+
+// 그리기 코드는 논리 크기(w×h)로 그리고, 512 이하인 작은 텍스처는 실제 캔버스를 2배로 키워 선명하게
+// shortcut: 큰 옷감 텍스처(1024×512)는 메모리 때문에 그대로 둠, 더 선명해야 하면 여기 기준을 올릴 것
 export function canvasTexture(key, w, h, draw, { color = true, repeat = null } = {}) {
   if (cache.has(key)) return cache.get(key);
+  const k = Math.max(w, h) <= 512 ? 2 : 1;
   const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
+  c.width = w * k;
+  c.height = h * k;
   const g = c.getContext('2d');
+  g.scale(k, k);
   draw(g, w, h);
   const t = new THREE.CanvasTexture(c);
   if (color) t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = maxAniso;
   t.wrapS = THREE.RepeatWrapping;
   t.wrapT = THREE.ClampToEdgeWrapping;
   if (repeat) {
@@ -63,8 +78,10 @@ export function liveTexture(w, h) {
   c.height = h;
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.anisotropy = maxAniso;
   t.wrapS = THREE.RepeatWrapping;
+  live.add(t);
+  t.addEventListener('dispose', () => live.delete(t));
   return t;
 }
 
@@ -184,8 +201,10 @@ export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
 export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
   const c = tex.image;
   const g = c.getContext('2d');
-  const W = c.width;
-  const H = c.height;
+  // 캔버스 실제 크기와 상관없이 512×512 기준으로 그린다 (선 굵기가 그대로 유지됨)
+  const W = 512;
+  const H = 512;
+  g.setTransform(c.width / W, 0, 0, c.height / H, 0, 0);
   g.clearRect(0, 0, W, H);
   const cx = W / 2;
   const cy = H * 0.52;
@@ -312,37 +331,16 @@ export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
 
 // ── 머리카락: 정수리→끝 그라데이션 + 결 + 엔젤링 ──
 export function hairTexture(color) {
-  return canvasTexture(`hair:${color}`, 1024, 512, (g, W, H) => {
+  // 줄무늬 없이 위에서 아래로 은은하게 어두워지는 깔끔한 2톤 그라데이션 (세로 v = 정수리부터의 극각)
+  return canvasTexture(`hair2:${color}`, 64, 256, (g, W, H) => {
     const base = css(color);
     const grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, shade(base, 1.18));
-    grad.addColorStop(0.5, base);
-    grad.addColorStop(1, shade(base, 0.72));
+    grad.addColorStop(0, shade(base, 1.06));
+    grad.addColorStop(0.4, shade(base, 1.06));
+    grad.addColorStop(0.75, shade(base, 0.86));
+    grad.addColorStop(1, shade(base, 0.86));
     g.fillStyle = grad;
     g.fillRect(0, 0, W, H);
-    // 머릿결: 세로로 흐르는 가는 선
-    const r = rng(11);
-    for (let i = 0; i < 260; i++) {
-      const x = r() * W;
-      const dark = r() < 0.6;
-      g.strokeStyle = dark ? `rgba(40,20,10,${0.03 + r() * 0.07})` : `rgba(255,240,220,${0.04 + r() * 0.08})`;
-      g.lineWidth = 1 + r() * 3;
-      g.beginPath();
-      g.moveTo(x, r() * H * 0.2);
-      g.bezierCurveTo(x + (r() - 0.5) * 20, H * 0.4, x + (r() - 0.5) * 20, H * 0.7, x + (r() - 0.5) * 10, H);
-      g.stroke();
-    }
-    // 엔젤링: 은은한 밝은 띠 (결 따라 끊김)
-    for (let x = 0; x < W; x += 3) {
-      const a = 0.18 + 0.16 * Math.sin(x * 0.11) * Math.sin(x * 0.023);
-      const y = H * (0.36 + 0.02 * Math.sin(x * 0.01));
-      const gg = g.createLinearGradient(0, y - 26, 0, y + 26);
-      gg.addColorStop(0, 'rgba(255,250,235,0)');
-      gg.addColorStop(0.5, `rgba(255,250,235,${Math.max(0, a)})`);
-      gg.addColorStop(1, 'rgba(255,250,235,0)');
-      g.fillStyle = gg;
-      g.fillRect(x, y - 26, 3, 52);
-    }
   });
 }
 
