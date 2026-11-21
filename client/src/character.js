@@ -59,10 +59,12 @@ const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 // 잠깐 하는 동작: 번호 → 주민 액션 이름. 길이는 일회성은 액션 길이, 반복형은 정해 둔 시간
 const ACTS = {
   [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
-  [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash',
+  [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2',
 };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5 };
+// 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
+export const LAND = { jump: 0.78 * ACTIONS.jump.duration + 0.015, flip: 0.74 * ACTIONS.flip.duration };
 export const actTime = (a) => LOOP_TIME[ACTS[a]] ?? ACTIONS[ACTS[a]]?.duration ?? 0;
 
 export class Character {
@@ -74,6 +76,8 @@ export class Character {
     this.villager.root.scale.setScalar(SCALE);
     // 마을 그림체에 맞춘 툰 명암 + 쇼룸보다 35% 얇은 외곽선 (멀리서 내려다봐도 뭉개지지 않게)
     syncToon(this.villager.root, true, OUTLINE_SCALE);
+    // 도구를 바꿔 쥐면 새로 생긴 도구에도 툰 명암·외곽선을 입힌다 (몸은 처음 한 번이면 되지만 도구는 쥘 때마다 새로 만들어진다)
+    this.villager.onChange = () => syncToon(this.villager.root, true, OUTLINE_SCALE);
     // body: 주민 모델을 한 겹 감싸 탄성(늘어남·눌림)·기울기·흔들림을 애니메이션과 따로 얹는다 (발바닥이 축)
     this.body = new THREE.Group();
     this.body.add(this.villager.root);
@@ -200,10 +204,11 @@ export class Character {
     const M = this.marks;
     if (cur === 'jump') {
       if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
-      if (!M.down && this.actSec >= 0.73) { M.down = 1; this.squash(1.18, 0.82, 1.18); this.footPuff(10, 1, true); }
+      // 발이 땅에 닿는 순간(진행도 0.78 = 0.74초)에 맞춘다: 더 이르면 아직 공중에서 납작해지고 먼지가 난다
+      if (!M.down && this.actSec >= LAND.jump) { M.down = 1; this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
     } else if (cur === 'flip') {
       if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
-      if (!M.down && this.actSec >= 0.62) { M.down = 1; this.squash(1.2, 0.8, 1.2); this.footPuff(12, 1.2, true); }
+      if (!M.down && this.actSec >= LAND.flip) { M.down = 1; this.footPuff(12, 1.2, true); }
       // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
       if (this.actSec < 0.55) {
         rig.head.getWorldPosition(vB);

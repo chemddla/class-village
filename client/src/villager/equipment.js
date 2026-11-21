@@ -2,7 +2,7 @@
 // 도구 공간: 쥐는 곳이 원점, 손잡이→머리 방향이 +Y. grip()으로 감싸면 +Y가 손의 +Z(팔을 내렸을 때 앞쪽)가 된다.
 // 날(도끼·검)은 휘두르는 방향인 도구 +Z 쪽을 향한다.
 import * as THREE from 'three';
-import { resolveArmCollision } from './collision.js';
+import { pointHit, forearmHit } from './collision.js';
 
 const PI = Math.PI;
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -198,7 +198,7 @@ function staff() {
 export const EQUIPMENT = {
   none: { label: '맨손' },
   axe: { label: '도끼', right: axe, carry: [-0.9, 0], twoHand: -0.07 },
-  club: { label: '나무 몽둥이', right: club, carry: [-0.9, 0], twoHand: -0.07 },
+  club: { label: '나무 몽둥이', right: club, carry: [-0.9, 0], twoHand: -0.056 }, // 두 주먹이 맞닿는 간격
   rod: { label: '낚싯대', right: fishingRod, carry: [-0.7, 0], twoHand: -0.07 },
   net: { label: '잠자리채', right: bugNet, carry: [-1.0, 0] },
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
@@ -261,86 +261,246 @@ function armIK(rig, s, grip, handQ, w) {
   aimJoint(el, X, Y2, V().crossVectors(X, Y2), w);
   blendWorld(hand, handQ, w);
 }
-function twoHandGrip(rig, y, w) {
-  const torso = rig.shoulderL.parent;
-  const sock = rig.rightSocket;
-  const handQ = sock.getWorldQuaternion(new THREE.Quaternion()).multiply(qA.copy(sock.quaternion).invert());
-  const gR = sock.getWorldPosition(V());
-  const scale = rig.shoulderL.getWorldScale(V()).x;
-  const T = torso.getWorldPosition(V());
-  const reach = 0.196 * scale;
-  const SR = rig.shoulderR.getWorldPosition(V()), SL = rig.shoulderL.getWorldPosition(V());
-  // 왼손이 자루의 gy 지점을 쥘 때: 두 손 사이가 몸 한가운데 오게 옆으로 옮기고,
-  // 팔이 안 닿으면 가슴 앞(겉면보다 바깥)으로 조금씩 당긴다 (팔 길이 0.218의 90%까지)
-  // (애니메이션 자세의 소켓 기준: 아래에서 후보를 시험하며 오른팔이 움직여도 같은 자리가 나오게)
-  const sockM = sock.matrixWorld.clone();
-  const place = (gy) => {
-    const gL = V(0, 0, gy).applyMatrix4(sockM);
-    const mid = torso.worldToLocal(gR.clone().add(gL).multiplyScalar(0.5));
-    const base = torso.localToWorld(V(-mid.x, 0, 0)).sub(T);
-    const pull = torso.localToWorld(V(0, rig.shoulderL.position.y - 0.04, 0.13)).sub(torso.localToWorld(mid.setX(0)));
-    const shift = base.clone();
-    for (let i = 0; i <= 10; i++) {
-      shift.copy(base).addScaledVector(pull, i / 10);
-      if (SR.distanceTo(gR.clone().add(shift)) <= reach && SL.distanceTo(gL.clone().add(shift)) <= reach) break;
+// 도구 위의 검사 점(소켓 공간, 굵기 포함): 부품마다 가장 긴 축을 따라 5점. 도구를 처음 볼 때 한 번 잰다
+function toolProbes(sock) {
+  const tool = sock.children[0];
+  if (!tool) return [];
+  if (tool.userData.probes) return tool.userData.probes;
+  sock.updateWorldMatrix(true, true);
+  const inv = new THREE.Matrix4().copy(sock.matrixWorld).invert();
+  const sc = sock.getWorldScale(V()).x;
+  const out = [];
+  tool.traverse((m) => {
+    if (!m.isMesh || m.userData.isOutline || m.parent?.name === '찌') return;
+    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    const b = m.geometry.boundingBox;
+    const size = b.getSize(V());
+    const c = b.getCenter(V());
+    const ax = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
+    const [o1, o2] = ['x', 'y', 'z'].filter((a) => a !== ax);
+    const rad = (Math.min(size[o1], size[o2]) / 2) * (m.getWorldScale(V()).x / sc);
+    for (let n = 0; n <= 4; n++) {
+      const p = c.clone();
+      p[ax] = b.min[ax] + (size[ax] * n) / 4;
+      out.push({ p: p.applyMatrix4(m.matrixWorld).applyMatrix4(inv), rad });
     }
-    return { gL, shift };
+  });
+  return (tool.userData.probes = out);
+}
+
+// 도구를 몸 밖으로 (P = 쥔 곳, Q = 방향, fwd = 몸통이 바라보는 쪽):
+//  - 손 가까운 점(주먹·자루 끝)이 박혔으면 도구째 '앞으로' 빼낸다. 가장 가까운 바깥쪽으로 밀면 몸 중심선 뒤에 있던 손은
+//    등 뒤로 밀려나, 프레임에 따라 손이 몸 앞뒤를 오가며 튄다. 앞으로만 빼면 자세가 조금 바뀔 때 결과도 조금만 바뀐다.
+//  - 손에서 먼 점(날·낚싯대 끝)이 박혔으면 쥔 곳을 축으로 도구를 돌려 뺀다.
+const TOOL_MARGIN = 0.014; // 몸 부피는 옷 겉면보다 안쪽이라, 도구는 그만큼 더 띄운다
+const NEAR = 0.2; // 쥔 곳에서 이 거리 안이면 '손 가까운 점'
+const hitT = { depth: 0, n: V() };
+const rT = V(), pT = V(), bn = V();
+const qT = new THREE.Quaternion();
+function clearTool(colliders, probes, P, Q, scale, fwd, right) {
+  // 1) 먼 점: 쥔 곳을 축으로 도구 끝을 '위→앞'으로 넘기며 처음 빠져나오는 각을 찾는다 (늘 같은 쪽으로 돌려야 튀지 않는다).
+  //    머리가 커서 도끼·낚싯대를 어깨 너머로 젖히면 머리 속을 지나가므로, 젖힐 수 있는 데까지만 젖힌 자세가 된다
+  const Q0 = qT.copy(Q);
+  const blocked = (ang) => {
+    Q.copy(Q0).premultiply(qR.setFromAxisAngle(right, ang));
+    for (const s of probes) {
+      if (s.p.length() <= NEAR) continue;
+      rT.copy(s.p).multiplyScalar(scale).applyQuaternion(Q);
+      if (pointHit(colliders, pT.copy(P).add(rT), (s.rad + TOOL_MARGIN) * scale, hitT) > 0.0005 * scale) return true;
+    }
+    return false;
   };
-  const joints = ARM_JOINTS.map((k) => rig[k]);
-  const saved = joints.map((j) => j.quaternion.clone());
-  // 도구를 shift(세계)만큼 옮긴 자리를 두 손으로 쥐어 보고, 몸에 박힌 깊이(두 팔 합)를 돌려준다.
-  // 도구는 오른손에 붙어 있으므로 왼손은 오른손이 실제로 간 곳의 자루를 쥔다 (오른손이 덜 닿아도 도구에서 안 떨어짐)
-  const grip = (gy, gL, shift) => {
-    joints.forEach((j, k) => j.quaternion.copy(saved[k]));
-    torso.updateMatrixWorld(true);
-    armIK(rig, 'R', gR.clone().add(shift), handQ, w);
-    armIK(rig, 'L', sock.localToWorld(V(0, 0, gy)).lerp(gL.clone().add(shift), 1 - w), handQ, w);
-    return rig.colliders ? resolveArmCollision(rig).reduce((a, b) => a + b, 0) : 0;
-  };
-  // 손·팔이 가슴·배·머리에 박히지 않는 자리를 후보 중에서 고른다. 팔이 짧아 가슴 한가운데 앞을 쥐면
-  // 쭉 편 팔이 가슴을 가로지르므로, 앞으로 내밀기(0~12cm)뿐 아니라 좌우로 비키기·조금 위로 들기도 본다.
-  // 왼손은 오른손 아래(자루 끝 쪽) 또는 위(도구 머리 쪽, 내려찍을 때 자루 끝이 배를 향하면)를 쥔다.
-  // 덜 박힌 자리 → 덜 옮긴 자리 → 원래 손 순서를 우선한다. 안 박히는 자리를 찾으면 그 줄은 더 보지 않는다.
-  let pick = { gy: y, off: V(), cost: Infinity };
-  if (rig.colliders) {
-    search: for (const gy of [y, -y]) {
-      const { gL, shift } = place(gy);
-      for (const side of [0, 0.035, -0.035]) {
-        for (const up of [0, 0.03]) {
-          for (let k = 0; k <= 4; k++) {
-            const off = V(side, up, 0.03 * k);
-            const d = grip(gy, gL, torso.localToWorld(off.clone()).sub(T).add(shift)) / scale;
-            const cost = Math.max(0, d - 0.002) + 0.004 * k + Math.abs(side) * 0.1 + up * 0.1 + (gy === y ? 0 : 0.006);
-            if (cost < pick.cost) pick = { gy, off, cost };
-            if (pick.cost < 1e-9) break search; // 원래 자리 그대로 안 박힘
-            if (d < 0.002) break; // 더 앞으로 낼 필요 없음
-          }
-        }
+  if (blocked(0)) {
+    let lo = 0, hi = 0;
+    for (let a = 0.12; a <= 2.8; a += 0.12) {
+      if (!blocked(a)) { hi = a; break; }
+      lo = a;
+    }
+    if (hi) {
+      for (let n = 0; n < 6; n++) {
+        const mid = (lo + hi) / 2;
+        if (blocked(mid)) lo = mid; else hi = mid;
       }
     }
+    Q.copy(Q0).premultiply(qR.setFromAxisAngle(right, hi));
+  } else Q.copy(Q0);
+  // 2) 손 가까운 점: 도구째 앞으로
+  let shift = 0;
+  for (const s of probes) {
+    if (s.p.length() > NEAR) continue;
+    rT.copy(s.p).multiplyScalar(scale).applyQuaternion(Q).add(P);
+    const rad = (s.rad + (s.hand ? 0 : TOOL_MARGIN)) * scale;
+    if (pointHit(colliders, pT.copy(rT).addScaledVector(fwd, shift), rad, hitT) <= 0) continue;
+    let lo = shift, hi = shift + 0.3 * scale;
+    for (let n = 0; n < 9; n++) {
+      const mid = (lo + hi) / 2;
+      if (pointHit(colliders, pT.copy(rT).addScaledVector(fwd, mid), rad, hitT) > 0) lo = mid; else hi = mid;
+    }
+    shift = hi;
   }
-  // 프레임마다 고른 자리가 바뀌어도 튀지 않게 부드럽게 따라간다
-  const st = (rig.twoHandPick ??= { gy: pick.gy, off: pick.off.clone() });
-  st.gy += (pick.gy - st.gy) * 0.6;
-  st.off.lerp(pick.off, 0.6);
-  const { gL, shift } = place(st.gy);
-  grip(st.gy, gL, torso.localToWorld(st.off.clone()).sub(T).add(shift));
+  P.addScaledVector(fwd, shift);
 }
+const qR = new THREE.Quaternion();
+
 const ARM_JOINTS = ['shoulderR', 'elbowR', 'handR', 'shoulderL', 'elbowL', 'handL'];
+// 자루를 쥔 손의 방향: 도구 축(손의 +Z)은 그대로 두고, 손이 뻗은 쪽(손의 -Y)이 팔이 오는 방향과 가장 가깝도록
+// 자루 둘레로 손을 돌린다 → 손목이 덜 꺾이고 주먹이 자루를 자연스럽게 감싼다
+function gripQuat(axis, from, to, up) {
+  const y = to.clone().sub(from).normalize();
+  y.addScaledVector(axis, -y.dot(axis));
+  if (y.lengthSq() < 1e-4) y.copy(up).addScaledVector(axis, -up.dot(axis));
+  y.normalize().negate();
+  return new THREE.Quaternion().setFromRotationMatrix(m4.makeBasis(V().crossVectors(y, axis), y, axis));
+}
+
+// 손목 펴기: 손이 뻗은 쪽(손의 -Y)과 아래팔 방향 f 사이가 max 보다 크게 꺾였으면, 넘친 만큼 손을 팔 쪽으로 되돌린다.
+// 자루가 팔과 거의 나란할 때(내리친 직후 등) 주먹을 자루에 딱 맞추면 손목이 직각으로 꺾이므로,
+// 주먹이 자루를 비스듬히 쥐는 것으로 나눠 갖는다 (도구 방향은 그대로: 오른손은 소켓을 반대로 돌려 맞춘다)
+const WRIST_MAX = 0.55;
+function easeWrist(q, f, max = WRIST_MAX) {
+  const down = V(0, -1, 0).applyQuaternion(q);
+  const ang = down.angleTo(f);
+  if (ang <= max) return q;
+  const n = V().crossVectors(down, f);
+  if (n.lengthSq() < 1e-8) return q;
+  return q.premultiply(qR.setFromAxisAngle(n.normalize(), ang - max));
+}
+
+// dt: 밀어낸 정도를 프레임 사이에 부드럽게 잇는 데 쓴다
+// aim: 액션이 직접 정한 쥘 자리와 도구 방향 { pos, dir } (몸통 기준). 없으면 오른팔 애니메이션이 정한 자세를 쓴다
+function twoHandGrip(rig, y, w, dt, aim) {
+  const torso = rig.shoulderL.parent;
+  const sock = rig.rightSocket;
+  const scale = rig.shoulderL.getWorldScale(V()).x;
+  const T = torso.getWorldPosition(V());
+  const torsoQ = torso.getWorldQuaternion(new THREE.Quaternion());
+  // 애니메이션이 정한 도구 자세
+  const Q0 = sock.getWorldQuaternion(new THREE.Quaternion());
+  const P = sock.getWorldPosition(V());
+  const P0 = P.clone();
+  const L0 = rig.leftSocket.getWorldPosition(V());
+  const handL0 = rig.handL.getWorldQuaternion(new THREE.Quaternion());
+  const Q = Q0.clone();
+  const grip2 = () => V(0, 0, y * scale).applyQuaternion(Q).add(P); // 왼손이 쥘 자리
+  const SR = rig.shoulderR.getWorldPosition(V()), SL = rig.shoulderL.getWorldPosition(V());
+  const up = V(0, 1, 0).applyQuaternion(torsoQ);
+  if (aim) {
+    // 1') 액션이 정한 자리·방향 그대로 (몸통을 틀면 함께 돈다). 오른손도 팔이 오는 쪽에 맞춰 자루를 감싼다
+    P.copy(torso.localToWorld(V(...aim.pos)));
+    Q.copy(gripQuat(V(...aim.dir).normalize().applyQuaternion(torsoQ), SR, P, up)).multiply(sock.quaternion);
+  } else {
+    // 1) 두 손 사이가 몸 한가운데 오도록 옆으로 옮긴다
+    const mid = torso.worldToLocal(P.clone().add(grip2()).multiplyScalar(0.5));
+    P.add(torso.localToWorld(V(-mid.x + 0.035, 0, 0)).sub(T)); // 한가운데보다 살짝 왼쪽: 도구를 쥔 오른팔이 가슴을 덜 가로지른다
+  }
+  // 2) 팔이 안 닿으면 가슴 앞으로 당긴다 (닿는 데까지만: 이분법으로 찾아 조금씩 변한다)
+  const reach = 0.196 * scale;
+  const far = (p0) => Math.max(SR.distanceTo(p0), SL.distanceTo(V(0, 0, y * scale).applyQuaternion(Q).add(p0))) - reach;
+  if (far(P) > 0) {
+    const chest = torso.localToWorld(V(0, rig.shoulderL.position.y - 0.04, 0.13));
+    const pull = chest.sub(P.clone().add(grip2()).multiplyScalar(0.5));
+    let lo = 0, hi = 1;
+    for (let n = 0; n < 10; n++) {
+      const f = (lo + hi) / 2;
+      if (far(P.clone().addScaledVector(pull, f)) > 0) lo = f; else hi = f;
+    }
+    P.addScaledVector(pull, hi);
+  }
+  // 3) 도구와 두 주먹이 몸·머리에 박히면 밀어낸다. 밀어낸 양(몸통 기준)은 부드럽게 따라가게 해 프레임 사이에 튀지 않는다
+  if (rig.colliders) {
+    const tool = sock.children[0];
+    const probes = (tool.userData.probes2 ??= [...toolProbes(sock), { p: V(), rad: 0.03, hand: true }, { p: V(0, 0, y), rad: 0.03, hand: true }]);
+    const P1 = P.clone();
+    const Q1 = Q.clone();
+    const fwd = V(0, 0, 1).applyQuaternion(torsoQ);
+    clearTool(rig.toolColliders ?? rig.colliders, probes, P1, Q1, scale, fwd, V(1, 0, 0).applyQuaternion(torsoQ));
+    // 도구는 안 박혀도 그 자리를 쥐려고 뻗은 아래팔이 가슴·배를 가로지를 수 있다: 쥐어 보고 박힌 만큼 도구를 더 민다
+    const joints = ARM_JOINTS.map((k) => rig[k]);
+    const saved = joints.map((j) => j.quaternion.clone());
+    for (let it = 0; it < 6; it++) {
+      const hq = Q1.clone().multiply(qA.copy(sock.quaternion).invert());
+      armIK(rig, 'R', P1, hq, 1);
+      armIK(rig, 'L', sock.localToWorld(V(0, 0, y)), hq, 1);
+      const d = forearmHit(rig, bn);
+      joints.forEach((j, n) => j.quaternion.copy(saved[n]));
+      torso.updateMatrixWorld(true);
+      if (d < 0.001 * scale) break;
+      P1.addScaledVector(fwd, d * 1.05);
+    }
+    const inv = torsoQ.clone().invert();
+    const dp = P1.sub(P).applyQuaternion(inv).divideScalar(scale);
+    const dq = inv.clone().multiply(Q1.multiply(Q.clone().invert())).multiply(torsoQ);
+    const st = (rig.toolFix ??= { dp: dp.clone(), dq: dq.clone() });
+    // 더 밀어내야 할 때는 바로(박힌 채로 한두 장 지나가지 않게), 덜 밀어도 될 때는 천천히 돌아온다
+    const more = dp.lengthSq() > st.dp.lengthSq() || Math.abs(dq.w) < Math.abs(st.dq.w);
+    const a = 1 - Math.exp(-(more ? 90 : 18) * dt);
+    st.dp.lerp(dp, a);
+    st.dq.slerp(dq, a);
+    P.add(st.dp.clone().multiplyScalar(scale).applyQuaternion(torsoQ));
+    Q.premultiply(torsoQ.clone().multiply(st.dq).multiply(inv));
+  }
+  // 4) 두 팔을 뻗어 쥔다. 도구는 오른손에 붙어 있으므로 왼손은 오른손이 실제로 간 곳의 자루를 쥔다
+  // 쥐는 중·놓는 중(w < 1)에는 관절 각도를 섞지 않고 '손이 갈 자리'를 섞는다: 애니메이션만의 손 자리 → 쥘 자리.
+  // (각도를 섞으면 두 자세가 많이 다를 때 중간에서 팔이 휙 뒤집히며 손이 튄다)
+  const wq = Math.min(1, w * 5); // 팔꿈치 방향만 처음에 잠깐 섞어 준다
+  const Qw = Q0.clone().slerp(Q, w);
+  // 쥐러 가는 길·놓고 돌아오는 길은 몸 앞으로 둥글게 돌아간다: 옆구리 옆의 손과 가슴 앞의 쥘 자리를 곧장 이으면 손이 배를 뚫고 지나간다
+  const arc = V(0, 0, 1).applyQuaternion(torsoQ).multiplyScalar(0.07 * scale * Math.sin(Math.PI * w));
+  const Pw = P0.lerp(P, w).add(arc);
+  // 손목 펴기: 일단 쥐어 보고, 실제 아래팔(팔꿈치→손목) 방향에 견줘 손목이 한계보다 꺾였으면 주먹을 팔 쪽으로 되돌려 다시 쥔다.
+  // 쥐기가 풀려 갈수록(w → 0) 한계를 풀어, 애니메이션 자세로 넘어갈 때 손이 튀지 않게 한다
+  const limit = WRIST_MAX + (1 - w) * 1.2;
+  const hold = (s, target, hq) => {
+    armIK(rig, s, target, hq, wq);
+    // 주먹을 되돌리면 손목 자리가 조금 옮겨져 아래팔 방향도 달라지므로 몇 번 되풀이해 맞춘다
+    for (let n = 0; n < 3; n++) {
+      const f = rig[`hand${s}`].getWorldPosition(V()).sub(rig[`elbow${s}`].getWorldPosition(V())).normalize();
+      const w0 = hq.w, x0 = hq.x;
+      easeWrist(hq, f, limit);
+      if (hq.w === w0 && hq.x === x0) break;
+      armIK(rig, s, target, hq, 1);
+    }
+    return hq;
+  };
+  // 오른손: 주먹을 되돌린 만큼 소켓을 반대로 돌려 도구 방향은 지킨다
+  const handQ = hold('R', Pw, Qw.clone().multiply(qA.copy(sock.quaternion).invert()));
+  sock.quaternion.copy(handQ).invert().multiply(Qw);
+  sock.updateMatrixWorld(true);
+  // 왼손은 오른손 방향을 그대로 베끼지 않고, 왼팔이 오는 쪽에 맞춰 자루를 감싼다
+  const gL = sock.localToWorld(V(0, 0, y));
+  hold('L', L0.lerp(gL, w).addScaledVector(arc, 1 - w), handL0.slerp(gripQuat(V(0, 0, 1).applyQuaternion(sock.getWorldQuaternion(qA)), SL, gL, up), w));
+}
 
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
 const v1 = V();
 const v2 = V();
 export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   // 들고 다니는 자세: 소켓 자체를 부드럽게 기울임 (액션 관절값과 따로 움직임)
-  const carry = CARRY_ACTIONS.has(action) ? EQUIPMENT[equipment]?.carry ?? [0, 0] : [0, 0];
+  // 두 손으로 쥔 손이 다 풀린 뒤에 손목을 세운다 (풀리는 도중에 세우면 도구가 휙 돌아 손이 튄다)
+  const carry = (CARRY_ACTIONS.has(action) || fx.carry) && !((rig.twoHandW ?? 0) > 0.4) ? EQUIPMENT[equipment]?.carry ?? [0, 0] : [0, 0];
   const k = 1 - Math.exp(-10 * dt);
-  rig.rightSocket.rotation.x += (carry[0] - rig.rightSocket.rotation.x) * k;
-  rig.leftSocket.rotation.x += (carry[1] - rig.leftSocket.rotation.x) * k;
+  // (소켓 회전은 매 프레임 '든 각도'에서 새로 시작한다: 두 손 쥐기가 손목을 펴 주느라 소켓을 더 돌려 놓기 때문)
+  const cx = (rig.carryX ??= [0, 0]);
+  cx[0] += (carry[0] - cx[0]) * k;
+  cx[1] += (carry[1] - cx[1]) * k;
+  rig.rightSocket.rotation.set(cx[0], 0, 0);
+  rig.leftSocket.rotation.set(cx[1], 0, 0);
   root.updateMatrixWorld(true);
   const grip = EQUIPMENT[equipment]?.twoHand;
-  rig.twoHandW = (rig.twoHandW ?? 0) + ((fx.twoHand && grip != null ? 1 : 0) - (rig.twoHandW ?? 0)) * k;
-  if (grip != null && rig.twoHandW > 0.001) twoHandGrip(rig, grip, rig.twoHandW);
+  // 쥘 때는 빠르게(0.15초쯤), 놓을 때는 느긋하게
+  const want = fx.twoHand && grip != null ? 1 : 0;
+  if (want) rig.twoHandW = rig.twoHandW1 = (rig.twoHandW ?? 0) + (1 - (rig.twoHandW ?? 0)) * (1 - Math.exp(-22 * dt));
+  else {
+    // 놓을 때는 두 번 걸러 S자로 풀린다: 한 번만 거르면 놓는 첫 순간에 가장 빨리 움직여 툭 끊기는 느낌이 난다
+    const kr = 1 - Math.exp(-16 * dt);
+    rig.twoHandW1 = (rig.twoHandW1 ?? 0) * (1 - kr);
+    rig.twoHandW = (rig.twoHandW ?? 0) + (rig.twoHandW1 - (rig.twoHandW ?? 0)) * kr;
+  }
+  // 놓는 동안에도 마지막으로 쥐던 자리를 기준으로 삼는다: 놓는 순간 기준이 오른팔 애니메이션 자세로 바뀌면 도구가 한 장 만에 휙 돈다
+  if (fx.grip) rig.lastAim = fx.grip;
+  else if (fx.twoHand) rig.lastAim = null; // 자리를 직접 정하지 않는 다른 두 손 동작이 시작되면 잊는다
+  if (grip != null && rig.twoHandW > 0.001) twoHandGrip(rig, grip, rig.twoHandW, dt, rig.lastAim ?? null);
+  else { rig.toolFix = null; rig.lastAim = null; } // 두 손 쥐기가 끝나면 밀어낸 기록을 지운다
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
       const { rod, bow: b, staff: st } = o.userData;

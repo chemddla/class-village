@@ -89,6 +89,25 @@ export function pointDepth(colliders, p, rad) {
   return colliders?.length ? deepest(colliders, p, rad, tmpHit).depth : 0;
 }
 
+// 세계 좌표 점 p(반지름 rad)가 박힌 깊이를 돌려주고, out.n 에 바깥 방향(세계)을 담는다 (도구 밀어내기용)
+export function pointHit(colliders, p, rad, out) {
+  return deepest(colliders, p, rad, out).depth;
+}
+
+// 두 팔(팔꿈치·아래팔·손) 가운데 가장 깊이 박힌 깊이를 돌려주고 nOut 에 바깥 방향(세계)을 담는다
+export function forearmHit(rig, nOut) {
+  let worst = 0;
+  for (const s of ['R', 'L']) {
+    for (const smp of SAMPLES) {
+      const j = rig[`${smp.joint}${s}`];
+      j.localToWorld(pw.set(...smp.at));
+      deepest(rig.colliders, pw, smp.r * j.getWorldScale(E).x, hit);
+      if (hit.depth > worst) { worst = hit.depth; nOut.copy(hit.n); }
+    }
+  }
+  return worst;
+}
+
 // 오브젝트 o를 세계 기준 회전 q만큼 더 돌린다 (부모 좌표로 바꿔 곱함)
 const qp = new THREE.Quaternion();
 const qt = new THREE.Quaternion();
@@ -131,6 +150,8 @@ function measure(el, hand, colliders, only) {
 const TWISTS = [];
 for (let k = 1; k <= 12; k++) TWISTS.push((k * Math.PI) / 12, (-k * Math.PI) / 12);
 const shQ = new THREE.Quaternion();
+const shQ0 = new THREE.Quaternion();
+const shQ1 = new THREE.Quaternion();
 const hdQ = new THREE.Quaternion();
 
 // 팔꿈치 비틀기: 어깨~손목 축으로 팔을 돌려 팔꿈치가 몸 밖으로 나오는 가장 작은 각을 찾는다.
@@ -158,7 +179,19 @@ function twistElbow(sh, el, hand, colliders) {
     apply(ang);
     const d = measure(el, hand, colliders, 'elbow');
     if (d < bestDepth - 1e-5) { bestDepth = d; bestAng = ang; }
-    if (d < 1e-4) break;
+    if (d < 1e-4) {
+      // 15도 단위로 찾은 각을 그대로 쓰면 자세가 조금 바뀔 때 팔꿈치가 15도씩 툭툭 튄다:
+      // 바로 앞 각(아직 박힘)과 이 각(빠져나옴) 사이를 좁혀 '딱 빠져나오는' 각을 쓴다
+      let lo = ang - Math.sign(ang) * (Math.PI / 12);
+      let hi = ang;
+      for (let n = 0; n < 5; n++) {
+        const mid = (lo + hi) / 2;
+        apply(mid);
+        if (measure(el, hand, colliders, 'elbow') < 1e-4) hi = mid; else lo = mid;
+      }
+      bestAng = hi;
+      break;
+    }
   }
   if (bestAng === 0) {
     sh.quaternion.copy(shQ);
@@ -168,24 +201,31 @@ function twistElbow(sh, el, hand, colliders) {
 }
 
 // 한 쪽 팔(s = 'R'|'L')을 몸 밖으로. 반환값: 마지막에 남은 최대 깊이(점검용)
-function resolveArm(rig, s, colliders, holdHand) {
+// hold 0→1: 두 손 쥐기에 손이 묶인 정도. 1이면 손 자리는 그대로(팔꿈치만 비틂), 0이면 팔째 밀어낸다.
+// 그 사이는 밀어낸 자세를 그만큼만 섞어, 쥐는 중·놓는 중에 보정이 켜졌다 꺼지며 손이 튀지 않게 한다
+function resolveArm(rig, s, colliders, hold) {
   const sh = rig[`shoulder${s}`];
   const el = rig[`elbow${s}`];
   const hand = rig[`hand${s}`];
   // 1) 팔꿈치가 박혔으면 먼저 비틀어 본다 (손 자리 유지)
   if (measure(el, hand, colliders, 'elbow') > 1e-4) twistElbow(sh, el, hand, colliders);
   // 2) 그래도 남으면 어깨째 몸 밖으로 민다. 두 손 쥐기 중에는 도구를 놓치지 않게 손 자리를 그대로 둠
+  if (hold >= 1) return measure(el, hand, colliders);
+  shQ0.copy(sh.quaternion);
   for (let it = 0; it < ITER; it++) {
-    if (measure(el, hand, colliders) < 1e-4) return 0;
-    if (holdHand) return best.depth;
+    if (measure(el, hand, colliders) < 1e-4) break;
     // 박힌 점이 바깥 방향으로 움직이도록 (어깨→점) × 바깥 축으로 어깨를 돌린다
     sh.getWorldPosition(S);
     arm.subVectors(best.p, S);
     axis.crossVectors(arm, best.n);
     const lever = axis.length(); // 1 라디안 돌 때 바깥으로 나가는 거리
-    if (lever < 1e-4) return best.depth;
+    if (lever < 1e-4) break;
     axis.divideScalar(lever);
     rotateWorld(sh, qr.setFromAxisAngle(axis, Math.min(MAX_STEP, (best.depth * 1.05) / lever)));
+  }
+  if (hold > 0) {
+    sh.quaternion.copy(shQ1.copy(sh.quaternion)).copy(shQ0).slerp(shQ1, 1 - hold);
+    sh.updateMatrixWorld(true);
   }
   return measure(el, hand, colliders);
 }
@@ -194,8 +234,8 @@ function resolveArm(rig, s, colliders, holdHand) {
 export function resolveArmCollision(rig) {
   const colliders = rig.colliders;
   if (!colliders?.length) return [0, 0];
-  const holdHand = (rig.twoHandW ?? 0) > 0.5;
-  return ['R', 'L'].map((s) => resolveArm(rig, s, colliders, holdHand));
+  const hold = THREE.MathUtils.smoothstep(rig.twoHandW ?? 0, 0.15, 0.85);
+  return ['R', 'L'].map((s) => resolveArm(rig, s, colliders, hold));
 }
 
 // 점검용: 보정 없이 지금 자세에서 팔이 가장 깊이 박힌 깊이

@@ -12,7 +12,7 @@ export const RUN_SPEED = 5.6;
 
 // 동작 번호
 export const ANIM = {
-  IDLE: 0, WALK: 1, RUN: 2, WAVE: 3, JUMP: 4, CHEER: 5, GATHER: 6, CHOP: 7, FISH: 8, SURPRISE: 9, FAINT: 10, FLIP: 11, SMASH: 12,
+  IDLE: 0, WALK: 1, RUN: 2, WAVE: 3, JUMP: 4, CHEER: 5, GATHER: 6, CHOP: 7, FISH: 8, SURPRISE: 9, FAINT: 10, FLIP: 11, SMASH: 12, SMASH2: 13,
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
@@ -188,10 +188,13 @@ export const byteToAngle = (b) => (b / 256) * Math.PI * 2;
 // ── 외형 꾸미기 (테스트 서버 전용): 정해진 키·값만 통과시켜 JSON 문자열로 ──
 export const LOOK_BASES = ['boy', 'girl'];
 export const LOOK_HAIRS = ['side', 'bob', 'pony', 'short'];
+export const LOOK_OUTFITS = ['tee', 'street', 'hoodie', 'track', 'layered', 'base'];
+export const LOOK_HATS = ['none', 'beanie', 'cap'];
 const HEX = /^#[0-9a-f]{6}$/i;
 const LOOK_RULES = {
   base: (v) => LOOK_BASES.includes(v),
   hair: (v) => LOOK_HAIRS.includes(v),
+  outfit: (v) => LOOK_OUTFITS.includes(v), hat: (v) => LOOK_HATS.includes(v),
   hairColor: (v) => HEX.test(v), top: (v) => HEX.test(v), skin: (v) => HEX.test(v),
   glasses: (v) => typeof v === 'boolean', crown: (v) => typeof v === 'boolean', backpack: (v) => typeof v === 'boolean',
 };

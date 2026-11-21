@@ -34,6 +34,10 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
   const drag = { id: null, x: 0, y: 0, moved: 0 };
+  // 마우스가 마지막으로 가리킨 화면 자리 (공격할 때 그쪽을 바라보는 데 쓴다). 터치·펜은 없음
+  let pointer = null;
+  addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') pointer = { x: e.clientX, y: e.clientY }; });
+  addEventListener('pointerdown', (e) => { pointer = e.pointerType === 'mouse' ? { x: e.clientX, y: e.clientY } : null; }, true);
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); onZoom(e.deltaY); }, { passive: false });
 
   // ── 떠 있는 조이스틱: 화면 왼쪽 아무 곳이나 누르면 그 자리에 생김 (터치·펜) ──
@@ -100,6 +104,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   document.addEventListener('contextmenu', (e) => e.preventDefault());
 
   return {
+    get pointer() { return pointer; },
     enable(v) { enabled = v; if (!v) { keys.clear(); joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },
     // 화면 기준 이동 방향: x(오른쪽+), z(아래쪽+), 세기 0~1, 달리기 여부
     read() {

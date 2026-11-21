@@ -25,6 +25,14 @@ const OUTFITS = [
   { name: '8 · 등굣길', note: '크림 카라 티 · 갈색 치마 · 노랑 가방', base: 'girl',
     look: { hair: 'pony', hairColor: '#c99a5b', top: '#fff1d2', collar: '#e2574c', bottomColor: '#8a5634', shoes: '#d94040',
       crown: false, backpack: true, bagColor: '#f0b43c' } },
+  { name: '9 · 오버핏 반팔', note: '흰 반팔 · 베이지 긴바지 · 비니', base: 'girl',
+    look: { hair: 'bob', outfit: 'street', top: '#f3efe6', bottomColor: '#b7a37c', shoes: '#f3efe6', hat: 'beanie', crown: false } },
+  { name: '10 · 로고 후드티', note: '회색 후드 · 검정 긴바지 · 볼캡', base: 'boy',
+    look: { hair: 'short', hairColor: '#2f2622', outfit: 'hoodie', top: '#c9ccd1', bottomColor: '#2b2b33', shoes: '#34477a', hat: 'cap' } },
+  { name: '11 · 트랙 집업', note: '검정 재킷 · 흰 배색 줄', base: 'boy',
+    look: { hair: 'side', hairColor: '#2f2622', outfit: 'track', top: '#2b2b33', bottomColor: '#2b2b33', shoes: '#f3efe6' } },
+  { name: '12 · 레이어드 긴팔', note: '빨강 반팔 · 흰 긴팔 이너', base: 'girl',
+    look: { hair: 'pony', hairColor: '#4a3226', outfit: 'layered', top: '#e2574c', bottomColor: '#3b4a63', shoes: '#f3efe6', crown: false } },
 ];
 
 const canvas = document.getElementById('c');

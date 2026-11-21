@@ -218,6 +218,22 @@ export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
     g.beginPath();
     g.ellipse(x, y, a, b, 0, 0, Math.PI * 2);
   };
+  // 눈매: 위는 둥근 아치, 아래는 평평한 반원형 (모서리만 살짝 둥글림)
+  const yb = cy + ry * 0.66; // 평평한 아랫선
+  const rc = rx * 0.42;
+  const yArch = (cy - ry - (yb - rc) * 0.25) / 0.75; // 아치 꼭대기가 cy - ry 에 오도록 잡은 조절점 높이
+  const arch = () => {
+    g.beginPath();
+    g.moveTo(cx - rx, yb - rc);
+    g.bezierCurveTo(cx - rx, yArch, cx + rx, yArch, cx + rx, yb - rc);
+  };
+  const eyeShape = () => {
+    arch();
+    g.quadraticCurveTo(cx + rx, yb, cx + rx - rc, yb);
+    g.lineTo(cx - rx + rc, yb);
+    g.quadraticCurveTo(cx - rx, yb, cx - rx, yb - rc);
+    g.closePath();
+  };
   g.lineCap = 'round';
   g.strokeStyle = ink;
 
@@ -242,17 +258,17 @@ export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
   const round = mode === 'round';
   // 흰자
   g.fillStyle = '#fffdf8';
-  ell(cx, cy, rx, ry);
+  eyeShape();
   g.fill();
   // 흰자 모양 안에서만 홍채·동공을 그림
   g.save();
-  ell(cx, cy, rx, ry);
+  eyeShape();
   g.clip();
   // 홍채: 기본은 위아래를 꽉 채우고, 놀란 눈은 작고 동그랗게 떠 있음
   const icx = round ? cx : cx - W * 0.01;
-  const icy = round ? cy : cy + H * 0.015;
+  const icy = round ? cy - ry * 0.12 : cy - ry * 0.1;
   const irx = rx * (round ? 0.56 : 0.8);
-  const iry = ry * (round ? 0.5 : 1.02);
+  const iry = ry * (round ? 0.5 : 0.92);
   const ir = g.createRadialGradient(icx, icy + iry * 0.3, 8, icx, icy, iry);
   ir.addColorStop(0, shade(css(iris), 1.5));
   ir.addColorStop(0.5, css(iris));
@@ -286,8 +302,13 @@ export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
   // 윗속눈썹 라인 (놀란 눈은 얇게)
   g.strokeStyle = ink;
   g.lineWidth = round ? 16 : 26;
+  arch();
+  g.stroke();
+  // 아랫선은 가늘게
+  g.lineWidth = 8;
   g.beginPath();
-  g.ellipse(cx, cy + 4, rx * 1.03, ry * 1.02, 0, Math.PI * 1.1, Math.PI * 1.9);
+  g.moveTo(cx - rx + rc, yb);
+  g.lineTo(cx + rx - rc, yb);
   g.stroke();
   if (lash) {
     g.lineWidth = 20;
@@ -487,6 +508,24 @@ export function pocketTexture(color) {
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = grad;
     g.fillRect(0, 0, W, 76);
+  });
+}
+
+// ── 옷·모자에 붙이는 글자 로고 (바탕색 + 굵은 글자, border: 테두리 선) ──
+export function logoTexture(text, bg, fg, { w = 256, h = 128, border = false } = {}) {
+  return canvasTexture(`logo:${text}:${bg}:${fg}:${w}x${h}:${border}`, w, h, (g, W, H) => {
+    g.fillStyle = css(bg);
+    g.fillRect(0, 0, W, H);
+    if (border) {
+      g.strokeStyle = css(fg);
+      g.lineWidth = H * 0.06;
+      g.strokeRect(H * 0.08, H * 0.08, W - H * 0.16, H - H * 0.16);
+    }
+    g.fillStyle = css(fg);
+    g.font = `900 ${Math.round(H * 0.56)}px 'Arial Black', 'Malgun Gothic', sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, W / 2, H * 0.54, W * 0.82);
   });
 }
 

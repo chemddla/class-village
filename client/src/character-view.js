@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES } from './villager/villager.js';
+import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES, OUTFITS, HATS } from './villager/villager.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { contactShadow, canvasTexture, setMaxAnisotropy } from './villager/textures.js';
 import { syncToon } from './villager/toon.js';
@@ -120,6 +120,8 @@ const LIFE_ACTIONS = { gather: '채집', chop: '벌목', fish: '낚시(연속)',
 const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
   castSpell: '마법 시전', hit: '피격', faint: '기절',
+  // 몽둥이 휘두르기 시안 (비교용)
+  clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
 };
 // 타격 시점 콜백을 눈으로 확인할 수 있도록 잠깐 띄우는 문구
 const HIT_TEXT = {
@@ -181,6 +183,12 @@ for (const [id, list] of [['action', ACTION_LABELS], ['life-action', LIFE_ACTION
     button($(id), { label, onClick: () => villager.setAction(k, onHit), isOn: () => villager.state.action === k });
   }
 }
+// 1타 → 2타 연속 재생 (게임에서 공격을 두 번 눌렀을 때와 같은 흐름)
+button($('combat-action'), {
+  label: '몽둥이 연속(1→2타)',
+  onClick: () => { villager.setAction('clubSmash', onHit); setTimeout(() => villager.setAction('clubSmash2', onHit), 470); },
+  isOn: () => false,
+});
 for (const [k, e] of Object.entries(EQUIPMENT)) {
   button($('equipment'), { label: e.label, onClick: () => villager.equip(k), isOn: () => villager.state.equipment === k });
 }
@@ -203,6 +211,13 @@ for (const [k, h] of Object.entries(HAIRSTYLES)) {
 SKINS.forEach((s, i) => button($('skin'), { label: `피부색 ${i + 1}`, color: s.skin, onClick: () => villager.set(s), isOn: () => o.skin === s.skin }));
 for (const [id, key, list] of [['hairColor', 'hairColor', HAIR_COLORS], ['top-color', 'top', TOP_COLORS], ['bottomColor', 'bottomColor', BOTTOM_COLORS]]) {
   list.forEach((c) => button($(id), { label: c, color: c, onClick: () => villager.set({ [key]: c }), isOn: () => o[key] === c }));
+}
+for (const [k, f] of Object.entries(OUTFITS)) {
+  button($('outfit'), { label: f.label, onClick: () => villager.set({ outfit: k }), isOn: () => (o.outfit ?? 'tee') === k });
+}
+// 모자는 하나만 쓴다 (다시 누르면 벗음)
+for (const [k, h] of Object.entries(HATS)) {
+  button($('acc'), { label: h.label, onClick: () => villager.set({ hat: o.hat === k ? 'none' : k }), isOn: () => o.hat === k });
 }
 for (const [k, label] of Object.entries(ACCESSORIES)) {
   button($('acc'), { label, onClick: () => villager.set({ [k]: !o[k] }), isOn: () => !!o[k] });

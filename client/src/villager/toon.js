@@ -17,9 +17,11 @@ function outlineMaterial(thickness, color) {
   if (!outlineMats.has(key)) {
     const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
     m.onBeforeCompile = (sh) => {
-      sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>',
-        `#include <begin_vertex>
-  transformed += normalize(normal) * ${thickness.toFixed(4)};`);
+      // noLine: 정점마다 외곽선을 줄이는 정도(0~1). 이 속성이 없는 메시는 0으로 읽혀 평소 두께 그대로다
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float noLine;')
+        .replace('#include <begin_vertex>',
+          `#include <begin_vertex>
+  transformed += normalize(normal) * ${thickness.toFixed(4)} * (1.0 - noLine);`);
     };
     m.customProgramCacheKey = () => `outline:${key}`;
     outlineMats.set(key, m);
@@ -29,7 +31,9 @@ function outlineMaterial(thickness, color) {
 
 // 메시에 같은 지오메트리를 쓰는 외곽선 껍질을 자식으로 붙임 (메시와 함께 움직이고 함께 사라짐)
 export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
-  const o = new THREE.Mesh(mesh.geometry, outlineMaterial(thickness, color));
+  // 휘는 메시(스키닝)는 외곽선 껍질도 같은 뼈를 따라 휘어야 한다
+  const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, outlineMaterial(thickness, color)) : new THREE.Mesh(mesh.geometry, outlineMaterial(thickness, color));
+  if (mesh.isSkinnedMesh) o.bind(mesh.skeleton, mesh.bindMatrix);
   o.name = '외곽선';
   o.userData.isOutline = true;
   o.raycast = () => {};
@@ -64,12 +68,12 @@ export function syncToon(root, on, widthScale = 1) {
     if (on) {
       m.userData.pbr = mat;
       m.material = toonOf(mat);
-      if (!m.userData.outline) {
+      if (!m.userData.outline && !m.userData.noOutline) {
         // 얼굴·머리·옷은 0.012, 신발끈·꽃잎 같은 작은 부품은 크기에 맞춰 더 얇게
         if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
         addOutline(m, widthScale * (m.userData.outlineWidth ?? Math.min(0.012, m.geometry.boundingSphere.radius * 0.12)));
       }
-      m.userData.outline.visible = true;
+      if (m.userData.outline) m.userData.outline.visible = true;
     } else {
       m.material = mat;
       if (m.userData.outline) m.userData.outline.visible = false;

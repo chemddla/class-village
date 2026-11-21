@@ -5,7 +5,7 @@ import {
   ANIM, COLORS, TOOLS, LIFE_TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
-import { Character, actTime } from './character.js';
+import { Character, actTime, LAND } from './character.js';
 import { LIFE, findTarget, buildLifeSpots } from './life.js';
 import { createLookEditor } from './look-editor.js';
 import { EQUIPMENT } from './villager/equipment.js';
@@ -120,7 +120,10 @@ let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 든 도구 번호
 const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, last: null, hurt: 0 };
-const HIT_DELAY = 0.45 * 1000; // 휘두르기 시작 → 내려찍는 순간 (clubSmash 0.9초 × hitAt 0.5)
+// 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 2타 0.62초 × 0.5
+const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310 };
+// 1타 중에 한 번 더 누르면 2타로 이어진다. 이어 넘어가는 때: 1타가 왼쪽 아래까지 내려간 직후(왼손을 놓기 전)
+const COMBO_AT = 0.47;
 function getHit(fromX, fromZ) {
   local.act = ANIM.SURPRISE; // 'hit' 피격 모션
   local.actLeft = actTime(ANIM.SURPRISE);
@@ -130,6 +133,7 @@ function getHit(fromX, fromZ) {
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
+  if (action === 'clubSmash2') action = 'clubSmash'; // 2타도 타격 연출은 같다
   const fx = Math.sin(char.targetRot);
   const fz = Math.cos(char.targetRot);
   const gy = char.groundY;
@@ -225,6 +229,22 @@ function renderInv() {
 }
 renderInv();
 
+// 마우스가 가리키는 땅 위 지점을 내 캐릭터에서 바라보는 방향 (마우스가 없거나 너무 가까우면 null)
+const aimRay = new THREE.Raycaster();
+const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const aimHit = new THREE.Vector3();
+function aimRot() {
+  const p = input.pointer;
+  if (!p || !me) return null;
+  const r = canvas.getBoundingClientRect();
+  aimRay.setFromCamera(new THREE.Vector2(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1), camera);
+  aimPlane.constant = -me.groundY; // 내 발밑 높이의 평면
+  if (!aimRay.ray.intersectPlane(aimPlane, aimHit)) return null;
+  const dx = aimHit.x - me.x;
+  const dz = aimHit.z - me.z;
+  return Math.hypot(dx, dz) < 0.25 ? null : Math.atan2(dx, dz);
+}
+
 function startAct(a) {
   if (local.actLeft > 0) return; // 하던 동작이 끝나야 다음 동작
   local.act = a;
@@ -248,7 +268,14 @@ const input = createInput({
     } else if (name === 'inv') {
       ui.inv.classList.toggle('hidden');
     } else if (name === 'attack' || (name === 'life' && TOOLS[local.tool] === 'club')) {
-      if (TOOLS[local.tool] === 'club') startAct(ANIM.SMASH);
+      // 1타를 휘두르는 중에 또 누르면 2타를 예약한다 (2타 중에 누르면 다시 1타)
+      if (TOOLS[local.tool] === 'club' && local.actLeft > 0 && (local.act === ANIM.SMASH || local.act === ANIM.SMASH2)) local.combo = true;
+      if (TOOLS[local.tool] === 'club' && local.actLeft <= 0) {
+        // 마우스가 가리키는 땅 쪽으로 돌아서서 휘두른다 (터치·화면 버튼은 보던 방향 그대로)
+        const rot = aimRot();
+        if (rot !== null) me.setPose(me.x, me.z, rot);
+        startAct(ANIM.SMASH);
+      }
     } else if (name === 'life') {
       if (local.actLeft > 0) return;
       const tool = TOOLS[local.tool];
@@ -445,7 +472,26 @@ function updateMe(dt) {
     me.setPose(nx, nz, Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
     if (local.act !== ANIM.JUMP && local.act !== ANIM.FLIP) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
+    else if (local.actLeft > 0) {
+      // 달리며 뛰었으면 발이 닿자마자 바로 다시 달린다: 착지 뒤 일어서는 자세를 끝까지 틀면 쪼그린 채로 미끄러져 끊겨 보인다
+      const land = local.act === ANIM.JUMP ? LAND.jump : LAND.flip;
+      // 공중제비는 무릎을 굽혀 받아 내는 모습이 보이도록 조금 더 둔다
+      if (actTime(local.act) - local.actLeft >= land + (local.act === ANIM.FLIP ? 0.1 : 0.04)) local.actLeft = 0;
+    }
   }
+  // 연속 공격: 예약해 둔 다음 타로 넘어간다 (1타 → 2타는 관성 끝에서 바로, 2타 → 1타는 2타가 끝날 무렵)
+  if (local.combo && local.actLeft > 0) {
+    const gone = actTime(local.act) - local.actLeft;
+    if (local.act === ANIM.SMASH && gone >= COMBO_AT) {
+      local.combo = false;
+      local.act = ANIM.SMASH2;
+      local.actLeft = actTime(ANIM.SMASH2);
+    } else if (local.act === ANIM.SMASH2 && local.actLeft <= 0.08) {
+      local.combo = false;
+      local.act = ANIM.SMASH;
+      local.actLeft = actTime(ANIM.SMASH);
+    }
+  } else if (local.actLeft <= 0) local.combo = false;
   if (local.actLeft > 0) {
     local.actLeft -= dt;
     anim = local.act;
@@ -470,7 +516,7 @@ function updateOthers(now) {
   const renderT = now - INTERP_DELAY;
   for (const o of others.values()) {
     const { char, buf } = o;
-    const wasSmash = char.anim === ANIM.SMASH;
+    const prevAnim = char.anim;
     while (buf.length >= 2 && buf[1].t <= renderT) buf.shift();
     const a = buf[0];
     const b = buf[1];
@@ -484,7 +530,7 @@ function updateOthers(now) {
       char.setAnim(a.a);
     }
     // 휘두르기 시작을 보면 내려찍는 순간에 내가 앞에 있는지 확인
-    if (char.anim === ANIM.SMASH && !wasSmash) o.hitAt = now + HIT_DELAY;
+    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) o.hitAt = now + HIT_DELAY[char.anim];
     if (o.hitAt && now >= o.hitAt) {
       o.hitAt = 0;
       if (me && inSwing(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z);
