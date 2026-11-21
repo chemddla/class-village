@@ -121,7 +121,7 @@ const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
   castSpell: '마법 시전', hit: '피격', faint: '기절',
   // 몽둥이 휘두르기 시안 (비교용)
-  clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
+  clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubSmash3: '몽둥이 3타(이어 치는 1타)', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
 };
 // 타격 시점 콜백을 눈으로 확인할 수 있도록 잠깐 띄우는 문구
 const HIT_TEXT = {
@@ -185,8 +185,11 @@ for (const [id, list] of [['action', ACTION_LABELS], ['life-action', LIFE_ACTION
 }
 // 1타 → 2타 연속 재생 (게임에서 공격을 두 번 눌렀을 때와 같은 흐름)
 button($('combat-action'), {
-  label: '몽둥이 연속(1→2타)',
-  onClick: () => { villager.setAction('clubSmash', onHit); setTimeout(() => villager.setAction('clubSmash2', onHit), 470); },
+  label: '몽둥이 연속(1→2→3→2타)',
+  onClick: () => {
+    villager.setAction('clubSmash', onHit);
+    [['clubSmash2', 470], ['clubSmash3', 875], ['clubSmash2', 1280]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
+  },
   isOn: () => false,
 });
 for (const [k, e] of Object.entries(EQUIPMENT)) {

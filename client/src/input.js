@@ -12,6 +12,7 @@ const ACTION_KEYS = {
 
 export function createInput({ onAction, onOrbit, onZoom }) {
   const keys = new Set();
+  const held = new Set(); // 누르고 있는 행동 키·화면 버튼 (꾹 누르면 연속 공격)
   const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
   const base = document.getElementById('joy-base');
   const knob = document.getElementById('joy-knob');
@@ -26,10 +27,10 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   addEventListener('keydown', (e) => {
     if (!enabled) return;
     if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); }
-    if (ACTION_KEYS[e.code]) { if (!e.repeat) onAction(ACTION_KEYS[e.code]); e.preventDefault(); }
+    if (ACTION_KEYS[e.code]) { held.add(ACTION_KEYS[e.code]); if (!e.repeat) onAction(ACTION_KEYS[e.code]); e.preventDefault(); }
   });
-  addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
-  addEventListener('blur', () => keys.clear());
+  addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); if (ACTION_KEYS[e.code]) held.delete(ACTION_KEYS[e.code]); });
+  addEventListener('blur', () => { keys.clear(); held.clear(); });
 
   // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
@@ -94,7 +95,9 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   canvas.addEventListener('pointercancel', end);
 
   for (const b of document.querySelectorAll('[data-key]')) {
-    b.addEventListener('pointerdown', (e) => { e.preventDefault(); if (enabled) onAction(ACTION_KEYS[b.dataset.key]); });
+    const name = ACTION_KEYS[b.dataset.key];
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); if (enabled) { held.add(name); onAction(name); } });
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(t, () => held.delete(name));
   }
 
   // iOS 확대 동작 막기
@@ -105,7 +108,8 @@ export function createInput({ onAction, onOrbit, onZoom }) {
 
   return {
     get pointer() { return pointer; },
-    enable(v) { enabled = v; if (!v) { keys.clear(); joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },
+    holding(name) { return enabled && held.has(name); },
+    enable(v) { enabled = v; if (!v) { keys.clear(); held.clear(); joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },
     // 화면 기준 이동 방향: x(오른쪽+), z(아래쪽+), 세기 0~1, 달리기 여부
     read() {
       let x = 0;

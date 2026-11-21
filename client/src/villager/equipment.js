@@ -224,6 +224,14 @@ export function attachEquipment(rig, id) {
 // 두 팔을 IK로 뻗어 오른손은 원래 쥔 곳, 왼손은 자루의 y 지점을 같은 방향으로 감싸 쥔다 (w = 0→1 섞는 비율).
 // 팔꿈치는 몸통 기준 바깥·아래·뒤(pole) 쪽으로 굽는다. 관절의 굽힘축은 로컬 x, 팔은 로컬 -y로 뻗는다.
 const POLE = { R: V(-0.7, -1, -0.3).normalize(), L: V(0.7, -1, -0.3).normalize() };
+// 두 손으로 자루를 쥘 때는 팔꿈치를 옆으로 벌린다: 두 팔이 양옆에서 자루로 모여야 한 손이 반대편 팔을 뚫고 지나가지 않고,
+// 아래팔이 자루와 나란해지지 않아 손목도 꺾이지 않는다
+// 왼팔은 팔꿈치를 위로 치켜들지 않는다: 윗팔(어깨)을 아래로 내려 팔꿈치가 어깨보다 낮게, 몸 옆 아래에서 굽는다
+// (아래로만 굽히면 팔꿈치가 옆구리에 박혀 다시 밀려나면서 손목이 틀어지므로, 아래이면서 바깥쪽으로 둔다)
+// 두 팔 모두 팔꿈치를 손목보다 낮게 둔다: 팔꿈치가 높으면 아래팔이 손으로 내려꽂혀 손목이 위로(손등 쪽으로) 젖혀 보인다
+// 왼팔(자루 끝을 쥔 팔)은 팔꿈치를 옆으로 벌리지 않고 가슴 앞 아래로 떨어뜨린다: 윗팔은 어깨에서 아래로 내려가고
+// 아래팔이 거기서 손으로 올라가는 V자 모양. 팔을 수평으로 가로지르면 손목만 위로 꺾여 자루를 쥐게 된다
+const GRIP_POLE = { R: V(-0.8, -1, -0.1).normalize(), L: V(0.12, -1, 0.2).normalize() };
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
 const m4 = new THREE.Matrix4();
@@ -236,7 +244,9 @@ function aimJoint(o, X, Y, Z, w) {
   blendWorld(o, qA.setFromRotationMatrix(m4.makeBasis(X, Y, Z)), w);
 }
 // 손(소켓)을 grip 위치·handQ 방향에 오도록 어깨·팔꿈치·손을 돌린다
-function armIK(rig, s, grip, handQ, w) {
+// natural: 팔꿈치를 '손이 팔 쪽으로 뻗은 방향' 위에 놓는다 → 아래팔이 손과 한 줄이 되어 손목이 꺾이지 않는다.
+// (손목을 돌려 맞추는 대신 어깨·팔꿈치 각도로 맞추는 것. 그 방향을 못 잡으면 pole 쪽으로 굽힌다)
+function armIK(rig, s, grip, handQ, w, pole = POLE[s], natural = false) {
   const sh = rig[`shoulder${s}`], el = rig[`elbow${s}`], hand = rig[`hand${s}`];
   const sock = s === 'R' ? rig.rightSocket : rig.leftSocket;
   const S = sh.getWorldPosition(V());
@@ -247,8 +257,24 @@ function armIK(rig, s, grip, handQ, w) {
   const ST = sock.position.clone().multiply(hand.getWorldScale(V())).applyQuaternion(handQ).negate().add(grip).sub(S);
   const d = THREE.MathUtils.clamp(ST.length(), Math.abs(a - b) + 1e-4, a + b - 1e-4);
   ST.normalize();
-  const perp = POLE[s].clone().applyQuaternion(sh.parent.getWorldQuaternion(qA));
+  const perp = pole.clone().applyQuaternion(sh.parent.getWorldQuaternion(qA));
   perp.addScaledVector(ST, -perp.dot(ST)).normalize();
+  if (natural) {
+    // 손목에서 손의 +Y(팔 쪽) 방향으로 아래팔 길이만큼 간 곳이 팔꿈치가 있으면 가장 좋은 자리
+    const want = V(0, 1, 0).applyQuaternion(handQ).multiplyScalar(b).addScaledVector(ST, d);
+    want.addScaledVector(ST, -want.dot(ST));
+    // 몸 바깥쪽(pole)과 섞어, 팔꿈치가 몸 안쪽으로 접히는 자세는 피한다
+    if (want.lengthSq() > 1e-6) perp.multiplyScalar(0.35).addScaledVector(want.normalize(), 1).normalize();
+    // 팔꿈치를 위로 치켜들지는 않는다: 굽는 방향에서 위쪽 성분은 버린다 (어깨~손목을 잇는 선보다 위로 올라가지 않게)
+    const upW = V(0, 1, 0).applyQuaternion(sh.parent.getWorldQuaternion(qA));
+    const lift = perp.dot(upW);
+    if (lift > 0) {
+      perp.addScaledVector(upW, -lift * 1.15);
+      perp.addScaledVector(ST, -perp.dot(ST));
+      if (perp.lengthSq() < 1e-4) perp.copy(pole).applyQuaternion(sh.parent.getWorldQuaternion(qA)).addScaledVector(ST, -perp.dot(ST));
+      perp.normalize();
+    }
+  }
   const cosA = (a * a + d * d - b * b) / (2 * a * d);
   const sinA = Math.sqrt(1 - cosA * cosA);
   const u1 = ST.clone().multiplyScalar(cosA).addScaledVector(perp, sinA); // 어깨→팔꿈치
@@ -293,7 +319,9 @@ function toolProbes(sock) {
 //    등 뒤로 밀려나, 프레임에 따라 손이 몸 앞뒤를 오가며 튄다. 앞으로만 빼면 자세가 조금 바뀔 때 결과도 조금만 바뀐다.
 //  - 손에서 먼 점(날·낚싯대 끝)이 박혔으면 쥔 곳을 축으로 도구를 돌려 뺀다.
 const TOOL_MARGIN = 0.014; // 몸 부피는 옷 겉면보다 안쪽이라, 도구는 그만큼 더 띄운다
-const NEAR = 0.2; // 쥔 곳에서 이 거리 안이면 '손 가까운 점'
+// 쥔 곳에서 이 거리 안이면 '손 가까운 점'(주먹과 그 바로 옆 자루). 이보다 먼 자루·머리 부분이 박히면 도구를 돌려 뺀다.
+// (넓게 잡으면 머리 옆을 지나는 자루 때문에 두 손이 통째로 앞으로 밀려나 팔이 일자로 뻗는다)
+const NEAR = 0.07;
 const hitT = { depth: 0, n: V() };
 const rT = V(), pT = V(), bn = V();
 const qT = new THREE.Quaternion();
@@ -304,7 +332,7 @@ function clearTool(colliders, probes, P, Q, scale, fwd, right) {
   const blocked = (ang) => {
     Q.copy(Q0).premultiply(qR.setFromAxisAngle(right, ang));
     for (const s of probes) {
-      if (s.p.length() <= NEAR) continue;
+      if (s.hand || s.p.length() <= NEAR) continue;
       rT.copy(s.p).multiplyScalar(scale).applyQuaternion(Q);
       if (pointHit(colliders, pT.copy(P).add(rT), (s.rad + TOOL_MARGIN) * scale, hitT) > 0.0005 * scale) return true;
     }
@@ -327,7 +355,7 @@ function clearTool(colliders, probes, P, Q, scale, fwd, right) {
   // 2) 손 가까운 점: 도구째 앞으로
   let shift = 0;
   for (const s of probes) {
-    if (s.p.length() > NEAR) continue;
+    if (!s.hand && s.p.length() > NEAR) continue;
     rT.copy(s.p).multiplyScalar(scale).applyQuaternion(Q).add(P);
     const rad = (s.rad + (s.hand ? 0 : TOOL_MARGIN)) * scale;
     if (pointHit(colliders, pT.copy(rT).addScaledVector(fwd, shift), rad, hitT) <= 0) continue;
@@ -345,8 +373,10 @@ const qR = new THREE.Quaternion();
 const ARM_JOINTS = ['shoulderR', 'elbowR', 'handR', 'shoulderL', 'elbowL', 'handL'];
 // 자루를 쥔 손의 방향: 도구 축(손의 +Z)은 그대로 두고, 손이 뻗은 쪽(손의 -Y)이 팔이 오는 방향과 가장 가깝도록
 // 자루 둘레로 손을 돌린다 → 손목이 덜 꺾이고 주먹이 자루를 자연스럽게 감싼다
-function gripQuat(axis, from, to, up) {
-  const y = to.clone().sub(from).normalize();
+// side: 그 팔이 몸 바깥에서 안쪽으로 들어오는 방향. 어깨에서 곧장 오는 방향보다 이쪽을 더 따르게 해,
+// 손이 자루 뒤(반대편 팔이 있는 자리)가 아니라 자기 쪽 옆에서 자루를 감싸게 한다
+function gripQuat(axis, from, to, up, side) {
+  const y = to.clone().sub(from).normalize().multiplyScalar(0.45).addScaledVector(side, 0.9);
   y.addScaledVector(axis, -y.dot(axis));
   if (y.lengthSq() < 1e-4) y.copy(up).addScaledVector(axis, -up.dot(axis));
   y.normalize().negate();
@@ -357,6 +387,7 @@ function gripQuat(axis, from, to, up) {
 // 자루가 팔과 거의 나란할 때(내리친 직후 등) 주먹을 자루에 딱 맞추면 손목이 직각으로 꺾이므로,
 // 주먹이 자루를 비스듬히 쥐는 것으로 나눠 갖는다 (도구 방향은 그대로: 오른손은 소켓을 반대로 돌려 맞춘다)
 const WRIST_MAX = 0.55;
+const WRIST_DROP = 0.42; // 왼손이 아래팔보다 아래로 떨어지는 정도 (기울기)
 function easeWrist(q, f, max = WRIST_MAX) {
   const down = V(0, -1, 0).applyQuaternion(q);
   const ang = down.angleTo(f);
@@ -384,10 +415,12 @@ function twoHandGrip(rig, y, w, dt, aim) {
   const grip2 = () => V(0, 0, y * scale).applyQuaternion(Q).add(P); // 왼손이 쥘 자리
   const SR = rig.shoulderR.getWorldPosition(V()), SL = rig.shoulderL.getWorldPosition(V());
   const up = V(0, 1, 0).applyQuaternion(torsoQ);
+  // 각 팔이 자루로 들어오는 방향: 오른팔은 오른쪽에서 안쪽으로, 왼팔은 왼쪽 아래에서 안쪽 위로 (팔꿈치가 아래에 있으므로)
+  const inward = { R: V(1, 0, 0).applyQuaternion(torsoQ), L: V(-1, 0.35, 0).normalize().applyQuaternion(torsoQ) };
   if (aim) {
     // 1') 액션이 정한 자리·방향 그대로 (몸통을 틀면 함께 돈다). 오른손도 팔이 오는 쪽에 맞춰 자루를 감싼다
     P.copy(torso.localToWorld(V(...aim.pos)));
-    Q.copy(gripQuat(V(...aim.dir).normalize().applyQuaternion(torsoQ), SR, P, up)).multiply(sock.quaternion);
+    Q.copy(gripQuat(V(...aim.dir).normalize().applyQuaternion(torsoQ), SR, P, up, inward.R)).multiply(sock.quaternion);
   } else {
     // 1) 두 손 사이가 몸 한가운데 오도록 옆으로 옮긴다
     const mid = torso.worldToLocal(P.clone().add(grip2()).multiplyScalar(0.5));
@@ -451,14 +484,31 @@ function twoHandGrip(rig, y, w, dt, aim) {
   // 쥐기가 풀려 갈수록(w → 0) 한계를 풀어, 애니메이션 자세로 넘어갈 때 손이 튀지 않게 한다
   const limit = WRIST_MAX + (1 - w) * 1.2;
   const hold = (s, target, hq) => {
-    armIK(rig, s, target, hq, wq);
+    armIK(rig, s, target, hq, wq, GRIP_POLE[s]);
     // 주먹을 되돌리면 손목 자리가 조금 옮겨져 아래팔 방향도 달라지므로 몇 번 되풀이해 맞춘다
     for (let n = 0; n < 3; n++) {
       const f = rig[`hand${s}`].getWorldPosition(V()).sub(rig[`elbow${s}`].getWorldPosition(V())).normalize();
       const w0 = hq.w, x0 = hq.x;
       easeWrist(hq, f, limit);
       if (hq.w === w0 && hq.x === x0) break;
-      armIK(rig, s, target, hq, 1);
+      armIK(rig, s, target, hq, 1, GRIP_POLE[s]);
+    }
+    // 두 손목 모두 위로 젖혀지지 않게 한다: 손이 아래팔이 뻗은 방향보다 위를 향하면(손등 쪽으로 꺾임) 어색하므로,
+    // 아래팔보다 살짝 아래를 향하도록(손이 툭 떨어진 편한 손목) 손을 돌려 다시 쥔다. 자루를 쥔 자리는 그대로다
+    if (w > 0.5) {
+      for (let n = 0; n < 2; n++) {
+        const f = rig[`hand${s}`].getWorldPosition(V()).sub(rig[`elbow${s}`].getWorldPosition(V())).normalize();
+        const down = V(0, -1, 0).applyQuaternion(hq);
+        const want = f.clone().addScaledVector(up, -WRIST_DROP).normalize();
+        if (down.dot(up) <= want.dot(up) + 1e-3) break;
+        hq.premultiply(qR.setFromUnitVectors(down, want));
+        armIK(rig, s, target, hq, 1, GRIP_POLE[s]);
+      }
+      // 아래로도 지나치게 꺾이지는 않게 한 번 더 편다 (같은 쪽에서 한계까지만 되돌리므로 위로 넘어가지 않는다)
+      const f = rig[`hand${s}`].getWorldPosition(V()).sub(rig[`elbow${s}`].getWorldPosition(V())).normalize();
+      const w0 = hq.w, x0 = hq.x;
+      easeWrist(hq, f, WRIST_MAX);
+      if (hq.w !== w0 || hq.x !== x0) armIK(rig, s, target, hq, 1, GRIP_POLE[s]);
     }
     return hq;
   };
@@ -468,7 +518,7 @@ function twoHandGrip(rig, y, w, dt, aim) {
   sock.updateMatrixWorld(true);
   // 왼손은 오른손 방향을 그대로 베끼지 않고, 왼팔이 오는 쪽에 맞춰 자루를 감싼다
   const gL = sock.localToWorld(V(0, 0, y));
-  hold('L', L0.lerp(gL, w).addScaledVector(arc, 1 - w), handL0.slerp(gripQuat(V(0, 0, 1).applyQuaternion(sock.getWorldQuaternion(qA)), SL, gL, up), w));
+  hold('L', L0.lerp(gL, w).addScaledVector(arc, 1 - w), handL0.slerp(gripQuat(V(0, 0, 1).applyQuaternion(sock.getWorldQuaternion(qA)), SL, gL, up, inward.L), w));
 }
 
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
