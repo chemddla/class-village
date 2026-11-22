@@ -197,7 +197,7 @@ button($('combat-action'), {
   label: '목검 연속(1→2→3→1타)',
   onClick: () => {
     villager.setAction('swordSlash1', onHit);
-    [['swordSlash2', 350], ['swordSlash3', 650], ['swordSlash4', 1010]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
+    [['swordSlash2', 384], ['swordSlash3', 719], ['swordSlash4', 1091]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
   },
   isOn: () => false,
 });

@@ -124,7 +124,7 @@ const others = new Map(); // sessionId → { char, buf }
 const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0 };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·3타 0.62초 × 0.5
 const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
-  [ANIM.SLASH1]: 258, [ANIM.SLASH2]: 210, [ANIM.SLASH3]: 270, [ANIM.SLASH4]: 258 }; // 목검: 동작 길이 × hitAt
+  [ANIM.SLASH1]: 282, [ANIM.SLASH2]: 232, [ANIM.SLASH3]: 285, [ANIM.SLASH4]: 282 }; // 목검: 동작 길이 × hitAt
 // 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 2타 → 3타 → …
 // (3타는 2타에서 이어지도록 만든 1타. 2타와 3타가 서로의 끝 자세에서 시작해 끊기지 않고 8자를 그린다)
 const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH2,
@@ -133,7 +133,7 @@ const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANI
 // 다음 타로 넘어가는 때(초): 휘두른 몽둥이가 관성 끝까지 간 직후, 왼손을 놓기 전
 const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.405,
   // 목검: 칼이 관성 끝까지 간 순간 (손을 놓기 전)
-  [ANIM.SLASH1]: 0.347, [ANIM.SLASH2]: 0.3, [ANIM.SLASH3]: 0.36, [ANIM.SLASH4]: 0.347 };
+  [ANIM.SLASH1]: 0.384, [ANIM.SLASH2]: 0.335, [ANIM.SLASH3]: 0.372, [ANIM.SLASH4]: 0.384 };
 // 이어 하는 도끼질: 도끼가 나무에 박혀 멈춘 뒤에도 G를 누르고 있으면, 뽑아서 다시 찍는 동작으로 넘어간다
 const NEXT_CHOP = { [ANIM.CHOP]: ANIM.CHOP2, [ANIM.CHOP2]: ANIM.CHOP3, [ANIM.CHOP3]: ANIM.CHOP2 };
 const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 떨림이 잦아든 뒤, 손을 놓기 전
