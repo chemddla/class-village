@@ -188,6 +188,8 @@ function hitFx(char, action) {
     const rock = action === 'clubSmash' ? village.nearRock(hx, hz, 0.7) : -1;
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
+    // 광장 날개콩 (테스트 서버): 휘두른 범위 안이면 맞는다
+    const monHit = action === 'clubSmash' ? plazaMonsters?.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz)) : null;
     if (victims.length) {
       for (const v of victims) {
         v.shake();
@@ -195,6 +197,9 @@ function hitFx(char, action) {
         burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
         if (v === me) strong = true;
       }
+    } else if (monHit) {
+      // 깃털이 빠지고 찌부되는 건 날개콩이 직접 하고, 여기서는 맞은 자리에 별만 튀긴다
+      burst('star', 8, at(monHit.x, monHit.z, monHit.y), { spread: Math.PI, power: 0.8 });
     } else if (rock >= 0) {
       const r = WORLD.rocks[rock];
       village.shakeRock(rock, fx, fz);
@@ -956,6 +961,7 @@ function updateMe(dt) {
     else if (local.act === ANIM.SMASH_SLAM) speed = glide(SLAM_STEP, SLAM_SPEED);
     if (speed > 0 && local.hurt <= 0) {
       const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
+      if (plazaMonsters) extra.push(...plazaMonsters.colliders()); // 광장 날개콩은 지나갈 수 없음
       for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
       const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
       me.setPose(nx, nz, me.targetRot);
@@ -968,6 +974,7 @@ function updateMe(dt) {
     const wz = -inp.x * sn + inp.z * c;
     const speed = inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag);
     const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
+    if (plazaMonsters) extra.push(...plazaMonsters.colliders()); // 광장 날개콩은 지나갈 수 없음
     for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
     const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
     me.setPose(nx, nz, Math.atan2(wx, wz));
