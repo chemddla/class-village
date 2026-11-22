@@ -13,6 +13,7 @@ import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
 import { setCurveCenter, curveDrop } from './materials.js';
 import { FX } from './fx.js';
+import { createPlazaMonsters } from './monsters/plaza-monsters.js';
 
 const params = new URLSearchParams(location.search);
 const LOW = params.get('q') === 'low';
@@ -264,6 +265,7 @@ function nearDrop(x, z) {
 let invItems = [1, 2, 4]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
+let plazaMonsters = null; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩)
 // 퀵슬롯: 칸마다 장비 번호 또는 null. Q 를 누르면 맨손 → 1칸 → 2칸 → … 차례로 바꿔 든다
 const quick = (() => {
   try {
@@ -769,6 +771,7 @@ function attach(r) {
     renderQuick();
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
+    if (free && !plazaMonsters) plazaMonsters = createPlazaMonsters(scene);
   });
 
   // 과일나무마다 남은 과일: 누가 따거나 다시 열리면 모두의 화면에서 바뀐다
@@ -1109,6 +1112,7 @@ renderer.setAnimationLoop(() => {
   // 둥근 지평선의 중심을 정한 뒤에 캐릭터를 내린다 (한 프레임 늦으면 걸을 때 발이 땅과 어긋남)
   if (me) me.update(dt);
   for (const { char } of others.values()) char.update(dt);
+  plazaMonsters?.update(dt, me);
   FX.update(dt);
   updateShows(dt);
 
