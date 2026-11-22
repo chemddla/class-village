@@ -6,8 +6,9 @@ import { Server, Room } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
-  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, EDGE, isBlocked, toCm, fromCm, cleanLook,
+  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE,
+  RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
 } from '../shared/world.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
@@ -28,7 +29,8 @@ const Player = schema({
   name: 'string',
   color: 'uint8',
   look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
-  bag: { map: 'uint8' }, // 가방에 든 과일: 과일 이름(FRUITS) → 개수. 나중에 상점에 판다
+  bag: { map: 'uint8' }, // 가방: 과일 이름(FRUITS)·물고기 id(FISH) → 개수. 나중에 상점에 판다
+  dex: { map: 'uint16' }, // 도감: 잡아 본 물고기 id → 지금까지 잡은 마릿수
 }, 'Player');
 
 // 땅에 떨어진 과일 (누구나 주울 수 있음)
@@ -130,6 +132,73 @@ class VillageRoom extends Room {
       }
     });
 
+    // ── 낚시: 던지기(cast) → 서버가 물고기와 그 물고기가 오는 흐름(나타남·톡톡·덥석)을 정해 알려 줌(fishOn)
+    //    → 학생이 G를 누르면(reel) 덥석 문 뒤 정해진 시간 안이었는지 서버가 판정한다 (너무 이르면 도망, 늦으면 놓침)
+    this.fishing = new Map(); // sessionId → { id, fish, biteAt, react, timer }
+    this.fishId = 0;
+    const stopFishing = (sid) => {
+      const f = this.fishing.get(sid);
+      if (f) { f.timer?.clear(); this.fishing.delete(sid); }
+    };
+    this.stopFishing = stopFishing;
+    const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
+    // 던지기: [바라보는 방향(0~255)]. 바라보는 쪽 앞에 떨어진 찌가 물속인지 확인하고 기록만 한다
+    // (물고기는 지나가던 물고기가 찌를 알아채야 온다)
+    this.onMessage('cast', (client, dir) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      const x = fromCm(p.x);
+      const z = fromCm(p.z);
+      const rot = byteToAngle(Number(dir) & 255);
+      const where = waterNear(x, z) && waterAt(x + Math.sin(rot) * BOB_AHEAD, z + Math.cos(rot) * BOB_AHEAD);
+      if (!where) return;
+      stopFishing(client.sessionId);
+      this.fishing.set(client.sessionId, { id: 0, where, castAt: Date.now(), fish: null, timer: null });
+    });
+    // 알아챔: [그림자 몸길이(m)]. 찌 앞을 지나던 물고기가 다가오기 시작함 → 그 그림자 크기에 맞는 물고기를 정하고
+    // 오는 흐름(헤엄쳐 옴 → 톡톡 4~5번 → 덥석)을 알려 준다 (물고기 이름은 잡을 때까지 비밀)
+    this.onMessage('interest', (client, len) => {
+      const f = this.fishing.get(client.sessionId);
+      len = Number(len);
+      if (!f || f.fish || !Number.isFinite(len) || Date.now() - f.castAt > 120000) return;
+      const fish = fishForShadow(f.where, Math.max(0.3, Math.min(2.4, sizeOfShadow(len))));
+      const nibbles = [];
+      let t = FISH_APPROACH * 1000;
+      const n = Math.random() < 0.5 ? 4 : 5;
+      for (let k = 0; k < n; k++) {
+        nibbles.push(Math.round(t));
+        t += between(NIBBLE_GAP) * 1000;
+      }
+      const biteAt = Math.round(nibbles[n - 1] + between(BITE_AFTER) * 1000);
+      const react = RARITY[fish.rarity].react;
+      const id = ++this.fishId;
+      Object.assign(f, { id, fish, biteAt: Date.now() + biteAt, react });
+      // 아무도 안 누르면 덥석 문 뒤 잠시 있다가 도망감
+      f.timer = this.clock.setTimeout(() => {
+        if (this.fishing.get(client.sessionId) !== f) return;
+        this.fishing.delete(client.sessionId);
+        client.send('escaped', 'late');
+      }, biteAt + (react + REEL_SLACK + 0.5) * 1000);
+      client.send('fishOn', { id, nibbles, bite: biteAt, react });
+    });
+    this.onMessage('cancelFish', (client) => stopFishing(client.sessionId));
+    // 낚아채기(G): [번호]. 덥석 문 순간부터 react 초 안이면 잡힘, 그 전(톡톡 중)이면 놀라 도망, 지나면 놓침
+    this.onMessage('reel', (client, msg) => {
+      const p = this.state.players.get(client.sessionId);
+      const f = this.fishing.get(client.sessionId);
+      const id = Array.isArray(msg) ? msg[0] : msg;
+      if (!p || !f || !f.id || id !== f.id) return;
+      stopFishing(client.sessionId);
+      const dt = (Date.now() - f.biteAt) / 1000;
+      if (dt < -0.12) { client.send('escaped', 'early'); return; }
+      if (dt > f.react + REEL_SLACK) { client.send('escaped', 'late'); return; }
+      const have = p.bag.get(f.fish.id) ?? 0;
+      if (have >= BAG_MAX) { client.send('escaped', 'full'); return; }
+      p.bag.set(f.fish.id, have + 1);
+      p.dex.set(f.fish.id, Math.min(65535, (p.dex.get(f.fish.id) ?? 0) + 1));
+      this.broadcast('caught', [client.sessionId, f.fish.id]); // 모두의 화면에서 머리 위로 물고기를 들어 보임
+    });
+
     // 떨어진 과일 줍기: [과일 번호]. 가까이 있을 때만 가방에 넣는다
     this.onMessage('grab', (client, id) => {
       const p = this.state.players.get(client.sessionId);
@@ -201,7 +270,7 @@ class VillageRoom extends Room {
     let r = 0;
     const spot = options.spot;
     if (FREE_LOOK && spot && Number.isFinite(spot.x) && Number.isFinite(spot.z)
-      && Math.abs(spot.x) <= EDGE && Math.abs(spot.z) <= EDGE && !isBlocked(spot.x, spot.z)) {
+      && !isBlocked(spot.x, spot.z)) { // 바다·나무 등 갈 수 없는 곳이면 광장에서 시작
       x = spot.x;
       z = spot.z;
       r = Math.max(0, Math.min(255, Number(spot.r) | 0));
@@ -215,6 +284,7 @@ class VillageRoom extends Room {
     p.color = Math.max(0, Math.min(COLORS.length - 1, Number(options.color) | 0));
     p.look = FREE_LOOK ? cleanLook(options.look) : '';
     if (!p.bag) p.bag = new MapSchema();
+    if (!p.dex) p.dex = new MapSchema();
     // 같은 이름으로 새로 들어오면, 연결이 끊겨 기다리던 예전 캐릭터는 바로 지운다 (새 탭·다른 기기로 다시 들어온 경우)
     for (const w of this.waiting.values()) if (w.name === p.name) w.wait.reject(false);
     this.state.players.set(client.sessionId, p);
@@ -244,6 +314,7 @@ class VillageRoom extends Room {
       }
     }
     this.bye.delete(client.sessionId);
+    this.stopFishing?.(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.last.delete(client.sessionId);
     console.log(`퇴장: ${p.name} (현재 ${this.clients.length}명)`);

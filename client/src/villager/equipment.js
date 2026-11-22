@@ -65,21 +65,55 @@ function axe() {
   return grip(g);
 }
 
+// 낚싯대: 짙은 청록 광택의 두 마디 낚싯대(끝으로 갈수록 가늘고, 마디마다 금빛 띠) + 아래쪽 줄 고리 +
+// 코르크 손잡이와 고무 꼭지 + 은빛 릴(손잡이 달린 손잡이대). 대 끝(tip)에서 찌까지 줄이 이어진다
 function fishingRod() {
   const g = new THREE.Group();
   g.name = '낚싯대';
-  part(new THREE.CylinderGeometry(0.0035, 0.008, 0.55, 8), DARK_WOOD(), g, '낚싯대', [0, 0.215, 0]);
-  part(new THREE.CylinderGeometry(0.012, 0.012, 0.13, 10), mat('#d8b07a', { roughness: 0.95 }), g, '손잡이', [0, -0.03, 0]);
-  const reel = part(new THREE.CylinderGeometry(0.018, 0.018, 0.014, 14).rotateZ(PI / 2), mat('#3d6fc4', { roughness: 0.4 }), g, '릴', [0.022, 0.06, 0]);
-  reel.castShadow = false;
+  const BLANK = mat('#24555f', { roughness: 0.18, metalness: 0.15 });
+  const GOLD = mat('#d9b45a', { roughness: 0.25, metalness: 0.6 });
+  const SILVER = mat('#cfd6de', { roughness: 0.25, metalness: 0.7 });
+  // 손잡이: 살짝 볼록한 코르크 + 끝의 검은 고무 꼭지 + 릴을 받치는 은빛 고리
+  const cork = new THREE.CylinderGeometry(0.0105, 0.0115, 0.12, 14);
+  const cp = cork.attributes.position;
+  for (let i = 0; i < cp.count; i++) { const k = 1 + 0.12 * Math.cos((cp.getY(i) / 0.06) * PI * 0.5); cp.setX(i, cp.getX(i) * k); cp.setZ(i, cp.getZ(i) * k); }
+  cork.computeVertexNormals();
+  part(cork, mat('#d6b27c', { roughness: 0.95 }), g, '손잡이', [0, -0.03, 0]);
+  part(new THREE.SphereGeometry(0.0125, 14, 8).scale(1, 0.7, 1), mat('#2b2b2e', { roughness: 0.6 }), g, '고무꼭지', [0, -0.092, 0]);
+  for (const y of [0.04, 0.09]) part(new THREE.CylinderGeometry(0.0095, 0.0095, 0.008, 14), SILVER, g, '릴시트', [0, y, 0]);
+  part(new THREE.CylinderGeometry(0.0085, 0.0085, 0.05, 12), mat('#3a3f46', { roughness: 0.4 }), g, '릴받침', [0, 0.065, 0]);
+  // 낚싯대: 두 마디 (아래 굵게 → 끝 가늘게), 마디·밑동마다 금빛 띠
+  part(new THREE.CylinderGeometry(0.0048, 0.0072, 0.2, 10), BLANK, g, '아랫마디', [0, 0.19, 0]);
+  part(new THREE.CylinderGeometry(0.0022, 0.0048, 0.2, 10), BLANK, g, '윗마디', [0, 0.39, 0]);
+  for (const [y, r] of [[0.092, 0.0078], [0.29, 0.0055]]) part(new THREE.CylinderGeometry(r, r, 0.012, 12), GOLD, g, '금띠', [0, y, 0]);
+  part(new THREE.SphereGeometry(0.0032, 8, 6), mat('#f2ead8', { roughness: 0.3 }), g, '끝마개', [0, 0.49, 0]);
+  // 줄 고리: 낚싯대 아래쪽(+x, 릴 쪽)에 점점 작아지며 4개
+  [[0.15, 0.0075], [0.25, 0.006], [0.35, 0.0048], [0.44, 0.0038]].forEach(([y, r]) => {
+    const ring = part(new THREE.TorusGeometry(r, 0.0011, 6, 14).rotateY(PI / 2), SILVER, g, '줄고리', [0.006 + r, y, 0]);
+    ring.castShadow = false;
+    part(new THREE.CylinderGeometry(0.0009, 0.0009, 0.006 + r, 4).rotateZ(PI / 2), SILVER, g, '고리다리', [(0.006 + r) / 2 + 0.002, y, 0]);
+  });
+  // 릴: 은빛 몸통 + 짙은 남색 줄감개 + 옆으로 뻗은 손잡이대와 동그란 손잡이
+  const reel = new THREE.Group();
+  reel.name = '릴';
+  reel.position.set(0.024, 0.065, 0);
+  g.add(reel);
+  part(new THREE.CylinderGeometry(0.017, 0.017, 0.016, 18).rotateZ(PI / 2), SILVER, reel, '릴몸통');
+  part(new THREE.CylinderGeometry(0.0135, 0.0135, 0.018, 18).rotateZ(PI / 2), mat('#27345a', { roughness: 0.35 }), reel, '줄감개');
+  part(new THREE.BoxGeometry(0.004, 0.01, 0.004), SILVER, reel, '릴다리', [-0.012, 0, 0]);
+  part(new THREE.BoxGeometry(0.003, 0.022, 0.003), SILVER, reel, '손잡이대', [0.011, -0.009, 0]);
+  part(new THREE.SphereGeometry(0.0045, 10, 8).scale(1, 1.3, 1), mat('#e9e3d6', { roughness: 0.5 }), reel, '릴손잡이', [0.011, -0.021, 0]);
+  for (const m of reel.children) m.castShadow = false;
   const tip = new THREE.Object3D();
   tip.position.set(0, 0.49, 0);
   g.add(tip);
-  // 찌: 위는 빨강, 아래는 흰색
+  // 찌: 위는 빨강, 아래는 흰색, 가운데 검은 띠 + 꼭대기에 가는 막대
   const bobber = new THREE.Group();
   bobber.name = '찌';
   part(new THREE.SphereGeometry(0.016, 14, 8, 0, PI * 2, 0, PI / 2), mat('#e2574c', { roughness: 0.4 }), bobber, '찌위');
   part(new THREE.SphereGeometry(0.016, 14, 8, 0, PI * 2, PI / 2, PI / 2), mat('#fffaf0', { roughness: 0.4 }), bobber, '찌아래');
+  part(new THREE.CylinderGeometry(0.0162, 0.0162, 0.003, 16), mat('#2b2b2e'), bobber, '찌띠');
+  part(new THREE.CylinderGeometry(0.0016, 0.0016, 0.016, 6), mat('#e2574c', { roughness: 0.4 }), bobber, '찌막대', [0, 0.022, 0]);
   g.add(bobber);
   const l = line([V(), V()]);
   g.add(l);
@@ -739,10 +773,10 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
         // 찌: 평소엔 낚싯대 끝에 매달리고, 던지면 캐릭터 앞 바닥(물)에 떠서 까딱임
         const tipW = rod.tip.getWorldPosition(v1);
         const goal = fx.bobber === 'water'
-          ? root.localToWorld(v2.set(0.05, 0.016 + Math.sin(t * 3) * 0.005, 0.95))
+          ? root.localToWorld(v2.set(0.05, 0.016 + Math.sin(t * 3) * 0.005 * (1 - (fx.dip ?? 0)) - (fx.dip ?? 0) * 0.04, 0.95)) // dip: 물고기가 건드리면 까딱, 물면 쏙
           : v2.copy(tipW).add(V(0, -0.13, 0));
         if (!rod.bobW) rod.bobW = goal.clone();
-        rod.bobW.lerp(goal, 1 - Math.exp(-7 * dt));
+        rod.bobW.lerp(goal, 1 - Math.exp(-(fx.dip ? 25 : 7) * dt)); // 잠길 때는 재빨리
         rod.bobber.position.copy(o.worldToLocal(rod.bobW.clone()));
         setLine(rod.line, [rod.tip.position, rod.bobber.position]);
       }
