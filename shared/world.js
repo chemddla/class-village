@@ -192,11 +192,16 @@ export const LOOK_BASES = ['boy', 'girl'];
 export const LOOK_HAIRS = ['side', 'bob', 'pony', 'short'];
 export const LOOK_OUTFITS = ['tee', 'street', 'hoodie', 'track', 'layered', 'base'];
 export const LOOK_HATS = ['none', 'beanie', 'cap'];
+// 눈·코·입 모양 이름 (client/src/villager 의 EYE_STYLES·NOSE_STYLES·MOUTH_STYLES 와 같아야 한다)
+export const LOOK_EYES = ['classic', 'basic', 'shine', 'lash', 'sleepy', 'dot', 'bean', 'smile', 'cat', 'droopy', 'ring', 'star', 'heart', 'shadow', 'slit', 'double', 'lower', 'up', 'twotone'];
+export const LOOK_NOSES = ['classic', 'bead', 'button', 'big', 'tri', 'block', 'pointy', 'hook', 'nostril'];
+export const LOOK_MOUTHS = ['classic', 'small', 'wide', 'cat', 'wavy', 'flat', 'open', 'tri', 'teeth', 'fang', 'tongue', 'kiss'];
 const HEX = /^#[0-9a-f]{6}$/i;
 const LOOK_RULES = {
   base: (v) => LOOK_BASES.includes(v),
   hair: (v) => LOOK_HAIRS.includes(v),
   outfit: (v) => LOOK_OUTFITS.includes(v), hat: (v) => LOOK_HATS.includes(v),
+  eyeStyle: (v) => LOOK_EYES.includes(v), noseStyle: (v) => LOOK_NOSES.includes(v), mouthStyle: (v) => LOOK_MOUTHS.includes(v),
   hairColor: (v) => HEX.test(v), top: (v) => HEX.test(v), skin: (v) => HEX.test(v),
   glasses: (v) => typeof v === 'boolean', crown: (v) => typeof v === 'boolean', backpack: (v) => typeof v === 'boolean',
 };

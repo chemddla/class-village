@@ -112,9 +112,21 @@ function faceBase(skin, W, H) {
   return c;
 }
 
+// ── 얼굴 부위 자리 (방위각 phi, 극각 th): 머리 모양과 텍스처가 함께 쓴다 ──
+// 정면 사진 기준 비율 (정수리→턱 높이 H, 얼굴 폭 W): 눈 중심 0.57H·눈 사이 0.52W·지름 0.18W,
+// 코 0.67H(가로로 납작), 입 0.8H(폭 0.24W), 볼 터치는 입 높이 바깥, 귀는 코~입 높이
+export const FACE = {
+  eyePhi: 0.5, eyeTh: Math.PI * 0.54,
+  noseTh: Math.PI * 0.605,
+  mouthTh: Math.PI * 0.685, mouthScale: 1.4,
+  blushPhi: 0.64, blushTh: Math.PI * 0.665,
+  earTh: Math.PI * 0.62,
+};
+
 // ── 얼굴 피부 (볼 터치 + 입). mouth: smile | grin | o | pout ──
 // 머리 메시의 UV: u = (방위각+π)/2π (정면 0.5), v = 위에서부터 θ/π
-export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
+// look: 고른 입 모양(mouthStyle)·코 모양(noseStyle)·코 색(noseColor). 입 모양은 평소 미소일 때만 쓴다.
+export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}, look = {}) {
   const c = tex.image;
   const g = c.getContext('2d');
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -127,8 +139,8 @@ export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
 
   // 볼 터치: 경계 없는 방사형 그라데이션 (표정에 따라 진하기)
   for (const s of [-1, 1]) {
-    const [x, y] = at(s * 0.52, Math.PI * 0.61);
-    const rad = 92;
+    const [x, y] = at(s * FACE.blushPhi, FACE.blushTh);
+    const rad = 80;
     const gr = g.createRadialGradient(x, y, 0, x, y, rad);
     gr.addColorStop(0, `rgba(255,120,110,${Math.min(0.85, 0.55 * blush)})`);
     gr.addColorStop(0.45, `rgba(255,130,118,${Math.min(0.55, 0.32 * blush)})`);
@@ -144,7 +156,22 @@ export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
     g.restore();
   }
 
-  const [mx, my] = at(0, Math.PI * 0.655);
+  // 그려 넣는 코 (도톰한 코 조각 대신)
+  const drawnNose = DRAWN_NOSES[look.noseStyle];
+  if (drawnNose) {
+    const [nx, ny] = at(0, FACE.noseTh);
+    g.save();
+    g.translate(nx, ny);
+    drawnNose(g, shade(css(look.noseColor ?? '#ff8a62'), 0.5));
+    g.restore();
+  }
+
+  const [mx, my] = at(0, FACE.mouthTh);
+  // 입은 모든 모양을 가로로 넓게 (도안은 그대로 두고 입 자리에서 가로로만 늘린다)
+  g.save();
+  g.translate(mx, my);
+  g.scale(FACE.mouthScale, 1);
+  g.translate(-mx, -my);
   const ink = '#5a2e22';
   g.strokeStyle = ink;
   g.lineCap = 'round';
@@ -181,6 +208,11 @@ export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
     g.moveTo(mx - 34, my + 12);
     g.quadraticCurveTo(mx - 8, my - 14, mx + 30, my + 4);
     g.stroke();
+  } else if (MOUTH_STYLES[look.mouthStyle]?.draw) {
+    g.save();
+    g.translate(mx, my);
+    MOUTH_STYLES[look.mouthStyle].draw(g, ink, open);
+    g.restore();
   } else {
     // 기본 미소
     g.lineWidth = 9;
@@ -196,12 +228,242 @@ export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}) {
       g.stroke();
     }
   }
+  g.restore();
   tex.needsUpdate = true;
 }
 
+// ── 그려 넣는 코: 가운데가 (0,0), 텍스처 px 그대로 ──
+const DRAWN_NOSES = {
+  hook(g, c) {
+    g.strokeStyle = c; g.lineWidth = 10; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(-2, -34); g.quadraticCurveTo(-24, 10, 12, 8); g.stroke();
+  },
+  nostril(g, c) {
+    g.fillStyle = c;
+    for (const s of [-1, 1]) { g.beginPath(); g.ellipse(s * 15, 2, 7, 10, s * 0.35, 0, Math.PI * 2); g.fill(); }
+  },
+};
+
+// ── 입 모양 도안: 가운데가 (0,0), 텍스처 px 그대로. open(path, 혀 타원)은 벌린 입 공통 칠하기 ──
+const line = (g, w, f) => { g.lineWidth = w; g.beginPath(); f(); g.stroke(); };
+export const MOUTH_STYLES = {
+  classic: { label: '기존 미소' },
+  small: { label: '작은 미소', draw(g) { line(g, 8, () => { g.moveTo(-26, -6); g.quadraticCurveTo(0, 20, 26, -6); }); } },
+  wide: { label: '넓은 미소', draw(g) { line(g, 8, () => { g.moveTo(-64, -14); g.quadraticCurveTo(0, 30, 64, -14); }); } },
+  cat: {
+    label: '고양이 입',
+    draw(g) { line(g, 8, () => { g.moveTo(-40, -6); g.quadraticCurveTo(-20, 22, 0, -2); g.quadraticCurveTo(20, 22, 40, -6); }); },
+  },
+  wavy: {
+    label: '물결 입',
+    draw(g) { line(g, 8, () => { g.moveTo(-46, 2); g.bezierCurveTo(-30, -14, -16, -14, 0, 2); g.bezierCurveTo(16, 18, 30, 18, 46, 2); }); },
+  },
+  flat: { label: '담담한 입', draw(g) { line(g, 8, () => { g.moveTo(-28, 4); g.quadraticCurveTo(0, 10, 28, 4); }); } },
+  open: {
+    label: '벌린 미소',
+    draw(g, ink, open) {
+      const p = new Path2D();
+      p.moveTo(-34, -8); p.quadraticCurveTo(0, -2, 34, -8); p.bezierCurveTo(30, 34, -30, 34, -34, -8);
+      open(p, [0, 26, 20, 12]);
+    },
+  },
+  tri: {
+    label: '세모 입',
+    draw(g, ink, open) {
+      const p = new Path2D();
+      p.moveTo(-26, -8); p.quadraticCurveTo(0, -12, 26, -8); p.quadraticCurveTo(6, 30, 0, 30); p.quadraticCurveTo(-6, 30, -26, -8);
+      open(p, [0, 26, 14, 9]);
+    },
+  },
+  teeth: {
+    label: '이 보이는 웃음',
+    draw(g, ink) {
+      const p = new Path2D();
+      p.moveTo(-46, -12); p.quadraticCurveTo(0, -4, 46, -12); p.bezierCurveTo(40, 40, -40, 40, -46, -12);
+      g.fillStyle = '#7a2c24'; g.fill(p);
+      g.save(); g.clip(p);
+      g.fillStyle = '#fffdf8'; g.fillRect(-50, -20, 100, 22);
+      g.fillStyle = '#ff8a86'; g.beginPath(); g.ellipse(0, 32, 24, 13, 0, 0, Math.PI * 2); g.fill();
+      g.restore();
+      g.strokeStyle = ink; g.lineWidth = 7; g.stroke(p);
+    },
+  },
+  fang: {
+    label: '덧니 미소',
+    draw(g) {
+      line(g, 8, () => { g.moveTo(-44, -8); g.quadraticCurveTo(0, 30, 44, -8); });
+      // 입선 바로 아래에 붙은 작은 이 하나
+      g.fillStyle = '#fffdf8';
+      g.beginPath(); g.moveTo(8, 11); g.lineTo(30, 5); g.lineTo(22, 28); g.closePath(); g.fill();
+      g.lineWidth = 4; g.stroke();
+    },
+  },
+  tongue: {
+    label: '메롱',
+    draw(g, ink) {
+      g.fillStyle = '#ff7f86';
+      g.beginPath(); g.moveTo(-2, 8); g.lineTo(36, 2); g.quadraticCurveTo(42, 50, 18, 48); g.quadraticCurveTo(-4, 44, -2, 8); g.fill();
+      g.strokeStyle = '#c24a55'; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(18, 10); g.lineTo(18, 32); g.stroke();
+      g.strokeStyle = ink;
+      line(g, 8, () => { g.moveTo(-40, -8); g.quadraticCurveTo(0, 24, 40, -8); });
+    },
+  },
+  kiss: {
+    label: '쪽 입',
+    draw(g) { line(g, 8, () => { g.moveTo(-6, -20); g.quadraticCurveTo(18, -16, 4, -1); g.quadraticCurveTo(20, 14, -4, 20); }); },
+  },
+};
+
+// ── 눈 모양 도안: 가운데가 (0,0), 오른쪽(+x)이 바깥쪽 눈꼬리, 한 칸 = 텍스처 12px ──
+const EYE_INK = '#3a2318';
+const EYE_WHITE = '#fffdf8';
+const EYE_HL = 'rgba(255,255,255,0.95)';
+const ovalPath = (g, x, y, a, b) => { g.beginPath(); g.ellipse(x, y, a, b, 0, 0, Math.PI * 2); };
+const fillAs = (g, color) => { g.fillStyle = color; g.fill(); };
+const strokeAs = (g, color, w) => { g.strokeStyle = color; g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke(); };
+const shine = (g, x, y, r) => { ovalPath(g, x, y, r, r * 1.1); fillAs(g, EYE_HL); };
+const almondPath = (g, up) => {
+  g.beginPath();
+  g.moveTo(-15, 3);
+  g.quadraticCurveTo(-2, -17 - up, 16, -5 - up);
+  g.quadraticCurveTo(6, 14, -15, 3);
+  g.closePath();
+};
+const outerLashes = (g) => {
+  g.beginPath();
+  g.moveTo(9, -12); g.quadraticCurveTo(15, -14, 18, -19);
+  g.moveTo(12, -6); g.quadraticCurveTo(18, -7, 21, -11);
+  strokeAs(g, EYE_INK, 2.6);
+};
+const starPath = (g, x, y, r) => {
+  g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const rr = i % 2 ? r * 0.45 : r;
+    g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  g.closePath();
+};
+const heartPath = (g, s) => {
+  g.beginPath();
+  g.moveTo(0, s * 0.55);
+  g.bezierCurveTo(-s * 1.2, -s * 0.2, -s * 0.6, -s * 1.05, 0, -s * 0.45);
+  g.bezierCurveTo(s * 0.6, -s * 1.05, s * 1.2, -s * 0.2, 0, s * 0.55);
+};
+// 흰자 모양 안에 눈동자를 가둬 그린다
+const insideWhite = (g, path, drawIris) => {
+  path(); fillAs(g, EYE_WHITE);
+  g.save(); path(); g.clip(); drawIris(); g.restore();
+};
+
+export const EYE_STYLES = {
+  classic: { label: '기존 눈' },
+  basic: { label: '콩눈', draw(g, iris) { ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3); } },
+  shine: { label: '반짝 큰 눈', draw(g, iris) { ovalPath(g, 0, 0, 12.5, 15.5); fillAs(g, iris); shine(g, 4, -6, 4); shine(g, -4, 6, 1.8); } },
+  lash: { label: '속눈썹', draw(g, iris) { ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3); outerLashes(g); } },
+  sleepy: {
+    label: '졸린 눈',
+    draw(g, iris) {
+      g.save(); g.beginPath(); g.rect(-20, -3, 40, 30); g.clip();
+      ovalPath(g, 0, 0, 10.5, 13); fillAs(g, iris); shine(g, 4, 1, 2.2);
+      g.restore();
+      g.beginPath(); g.moveTo(-12, -3); g.quadraticCurveTo(0, -6, 12, -3); strokeAs(g, EYE_INK, 3.2);
+    },
+  },
+  dot: { label: '점 눈', draw(g) { ovalPath(g, 0, 0, 5.5, 6); fillAs(g, EYE_INK); shine(g, 2, -2, 1.4); } },
+  bean: { label: '가는 콩눈', draw(g) { ovalPath(g, 0, 0, 5.5, 11); fillAs(g, EYE_INK); shine(g, 1.5, -5, 1.6); } },
+  smile: { label: '눈웃음', draw(g) { g.beginPath(); g.ellipse(0, 5, 11, 10, 0, Math.PI * 1.08, Math.PI * 1.92); strokeAs(g, EYE_INK, 3.6); } },
+  cat: {
+    label: '고양이 눈',
+    draw(g, iris) {
+      insideWhite(g, () => almondPath(g, 5), () => { ovalPath(g, 1, -3, 8, 10); fillAs(g, iris); shine(g, 4, -7, 2.4); });
+      g.beginPath(); g.moveTo(-15, 3); g.quadraticCurveTo(-2, -22, 19, -12); strokeAs(g, EYE_INK, 3.4);
+    },
+  },
+  droopy: {
+    label: '순한 눈',
+    draw(g, iris) {
+      const path = () => {
+        g.beginPath(); g.moveTo(-14, -6); g.quadraticCurveTo(4, -15, 15, 3); g.quadraticCurveTo(2, 13, -12, 6); g.closePath();
+      };
+      insideWhite(g, path, () => { ovalPath(g, -1, 0, 8, 10); fillAs(g, iris); shine(g, 2, -4, 2.4); });
+      g.beginPath(); g.moveTo(-14, -6); g.quadraticCurveTo(4, -15, 16, 4); strokeAs(g, EYE_INK, 3.2);
+    },
+  },
+  // 동공을 키우고 테를 가늘게 해서 놀란 얼굴처럼 보이지 않게
+  ring: {
+    label: '동그란 흰자',
+    draw(g, iris) {
+      ovalPath(g, 0, 0, 11.5, 12.5); fillAs(g, EYE_WHITE); strokeAs(g, EYE_INK, 1.8);
+      ovalPath(g, 0.5, 1, 6.5, 7.5); fillAs(g, iris); ovalPath(g, 0.5, 1.5, 3.4, 4); fillAs(g, '#1e120c');
+      shine(g, 2.8, -2.2, 2);
+      g.beginPath(); g.ellipse(0, 0, 11.5, 12.5, 0, Math.PI * 1.15, Math.PI * 1.85); strokeAs(g, EYE_INK, 3);
+    },
+  },
+  star: { label: '별 반짝', draw(g, iris) { ovalPath(g, 0, 0, 11, 14); fillAs(g, iris); starPath(g, 2.5, -4, 5.5); fillAs(g, EYE_HL); shine(g, -4, 6, 1.5); } },
+  heart: {
+    label: '하트 눈',
+    draw(g) {
+      ovalPath(g, 0, 0, 12, 13); fillAs(g, EYE_WHITE); strokeAs(g, EYE_INK, 2.2);
+      g.save(); g.translate(0, 1); heartPath(g, 8.5); fillAs(g, '#d0476a'); g.restore();
+      shine(g, 2.5, -3, 1.6);
+    },
+  },
+  shadow: {
+    label: '아이섀도',
+    draw(g, iris) {
+      // 피부의 볼터치와 섞이지 않게 진한 분홍으로 눈 위를 넓게 덮는다
+      g.beginPath(); g.ellipse(0, -1, 16, 19, 0, Math.PI, Math.PI * 2); g.closePath(); fillAs(g, '#e57f96');
+      ovalPath(g, 0, 1, 10, 13); fillAs(g, iris); shine(g, 3.5, -4, 3);
+      g.beginPath(); g.ellipse(0, 1, 12, 14.5, 0, Math.PI * 1.1, Math.PI * 1.9); strokeAs(g, EYE_INK, 2.6);
+    },
+  },
+  // 가늘게 뜬 눈: 납작한 렌즈 모양 + 바깥쪽 속눈썹 한 가닥
+  slit: {
+    label: '가는 실눈',
+    draw(g) {
+      g.beginPath(); g.moveTo(-11, 1); g.quadraticCurveTo(0, -6, 11, -1); g.quadraticCurveTo(0, 4, -11, 1); g.closePath();
+      fillAs(g, EYE_INK);
+      g.beginPath(); g.moveTo(10, -1.5); g.quadraticCurveTo(14, -3, 16, -6); strokeAs(g, EYE_INK, 2.2);
+    },
+  },
+  double: {
+    label: '쌍꺼풀',
+    draw(g, iris) {
+      insideWhite(g, () => almondPath(g, 0), () => { ovalPath(g, 0, -2, 8, 10); fillAs(g, iris); shine(g, 3, -6, 2.4); });
+      g.beginPath(); g.moveTo(-15, 3); g.quadraticCurveTo(-2, -17, 16, -5); strokeAs(g, EYE_INK, 3);
+      g.beginPath(); g.moveTo(-11, -8); g.quadraticCurveTo(0, -17, 14, -12); strokeAs(g, EYE_INK, 1.4);
+    },
+  },
+  lower: {
+    label: '아래 속눈썹',
+    draw(g, iris) {
+      ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3);
+      g.beginPath(); g.moveTo(2, 12); g.lineTo(3, 16); g.moveTo(6, 10.5); g.lineTo(8.5, 14.5); g.moveTo(9, 8); g.lineTo(12.5, 11);
+      strokeAs(g, EYE_INK, 2);
+    },
+  },
+  up: {
+    label: '올려다보는 눈',
+    draw(g, iris) {
+      insideWhite(g, () => ovalPath(g, 0, 0, 11, 13.5), () => { ovalPath(g, 0, -3.5, 8.5, 10); fillAs(g, iris); shine(g, 3, -7, 2.4); });
+      g.beginPath(); g.ellipse(0, 0, 11, 13.5, 0, Math.PI * 1.1, Math.PI * 1.9); strokeAs(g, EYE_INK, 3);
+    },
+  },
+  twotone: {
+    label: '두 톤 눈',
+    draw(g, iris) {
+      ovalPath(g, 0, 0, 11, 14); fillAs(g, iris);
+      g.save(); ovalPath(g, 0, 0, 11, 14); g.clip(); ovalPath(g, 0, 9, 11, 9); fillAs(g, shade(iris, 1.6)); g.restore();
+      ovalPath(g, 0, -1, 5, 6.5); fillAs(g, '#1e120c'); shine(g, 4, -6, 3.2); shine(g, -3, 7, 1.5);
+    },
+  },
+};
+
 // ── 눈: 세로 1.25배 타원. mode: open | round | happy | closed | angry ──
 // 눈 조각은 실제 크기가 정사각형이므로 그린 비율이 그대로 보인다. 텍스처 오른쪽(+u)이 바깥쪽 눈꼬리.
-export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
+export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'classic' }) {
   const c = tex.image;
   const g = c.getContext('2d');
   // 캔버스 실제 크기와 상관없이 512×512 기준으로 그린다 (선 굵기가 그대로 유지됨)
@@ -209,6 +471,17 @@ export function drawEye(tex, { iris, lash = false, mode = 'open' }) {
   const H = 512;
   g.setTransform(c.width / W, 0, 0, c.height / H, 0, 0);
   g.clearRect(0, 0, W, H);
+  // 눈 모양을 고른 경우: 평소(뜬 눈)일 때만 그 모양으로, 웃음·감음·놀람·화남은 아래 공통 표정을 쓴다
+  const styled = EYE_STYLES[style];
+  if (styled?.draw && mode === 'open') {
+    g.save();
+    g.translate(W / 2, H * 0.52);
+    g.scale(12, 12); // 도안은 눈 하나를 가로세로 약 ±20 칸 안에 그렸다
+    styled.draw(g, css(iris));
+    g.restore();
+    tex.needsUpdate = true;
+    return;
+  }
   const cx = W / 2;
   const cy = H * 0.52;
   const rx = W * 0.3;

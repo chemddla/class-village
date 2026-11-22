@@ -1,6 +1,7 @@
 // 테스트 서버 전용 외형 꾸미기 창: 고른 값만 담은 look 객체를 onChange 로 넘긴다
 import { COLORS, LOOK_BASES } from '../../shared/world.js';
-import { HAIRSTYLES, OUTFITS, HATS } from './villager/villager.js';
+import { HAIRSTYLES, OUTFITS, HATS, NOSE_STYLES } from './villager/villager.js';
+import { EYE_STYLES, MOUTH_STYLES } from './villager/textures.js';
 import { HAIR_COLORS, lookFor } from './character.js';
 
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
@@ -43,6 +44,10 @@ export function createLookEditor({ panel, button, getColor, onChange }) {
   for (const [k, h] of Object.entries(HATS)) add(hats, { label: h.label, patch: () => ({ hat: cur().hat === k ? 'none' : k }), isOn: () => cur().hat === k });
   const skin = row('피부');
   for (const c of SKINS) add(skin, { label: c, color: c, patch: { skin: c }, isOn: () => cur().skin === c });
+  for (const [title, key, list] of [['눈', 'eyeStyle', EYE_STYLES], ['코', 'noseStyle', NOSE_STYLES], ['입', 'mouthStyle', MOUTH_STYLES]]) {
+    const r = row(title);
+    for (const [k, e] of Object.entries(list)) add(r, { label: e.label, patch: { [key]: k }, isOn: () => (cur()[key] ?? 'classic') === k });
+  }
   const acc = row('소품');
   for (const [k, label] of Object.entries(TOGGLES)) add(acc, { label, patch: () => ({ [k]: !cur()[k] }), isOn: () => !!cur()[k] });
 

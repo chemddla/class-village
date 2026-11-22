@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
   aoGradient, liveTexture, drawFace, drawEye, hairTexture, clothTexture, clothBump,
-  plaidTexture, soleBump, pocketTexture, shade, logoTexture, canvasTexture,
+  plaidTexture, soleBump, pocketTexture, shade, logoTexture, canvasTexture, FACE,
 } from './textures.js';
 import { ACTIONS, createAnimator } from './actions.js';
 import { EQUIPMENT, attachEquipment, updateEquipment, straightenWrists } from './equipment.js';
@@ -21,21 +21,21 @@ export function dir(phi, th, out = V()) {
 }
 
 export function headShape(n, out = V()) {
-  const p = 2.6; // 2보다 크면 둥근 사각형(스쿼클)
-  const k = (Math.abs(n.x) ** p + Math.abs(n.y) ** p + Math.abs(n.z) ** p) ** (1 / p);
-  // 위쪽은 둥근 사각형, 아래(턱)로 갈수록 구에 가깝게 완만하게
+  // 정면에서 본 윤곽은 가로·세로가 거의 같은 둥근 사각형(찹쌀떡 모양):
+  // 정수리는 둥근 돔, 옆면은 곧게 내려오고, 턱은 뾰족하지 않고 넓고 납작한 U자.
+  // 아래로 갈수록 지수를 키워 턱 모서리를 더 각지게(넓게) 만든다
   const lower = Math.max(0, -n.y);
-  out.copy(n).divideScalar(k).lerp(n, 0.35 + 0.4 * lower);
-  out.x *= 1.12;
+  const upper = Math.max(0, n.y);
+  const p = 2.7 + 0.9 * lower;
+  const k = (Math.abs(n.x) ** p + Math.abs(n.y) ** p + Math.abs(n.z) ** p) ** (1 / p);
+  out.copy(n).divideScalar(k).lerp(n, 0.12);
+  out.x *= 0.97 - 0.04 * upper; // 정수리 쪽은 볼보다 살짝 좁게
   out.y *= 0.95;
-  out.z *= 0.97;
-  if (out.y < 0) {
-    // 아래쪽 볼살: 옆과 앞으로 통통하게 (턱은 거의 납작하게 누르지 않음)
-    const t = -out.y;
-    out.x *= 1 + 0.09 * t;
-    out.z *= 1 + 0.06 * t;
-    out.y *= 1 - 0.025 * t;
-  }
+  out.z *= 0.95;
+  // 볼: 코~입 높이가 가장 넓고 앞으로도 도톰하게
+  const cheek = gauss(n.y + 0.35, 0.35);
+  out.x *= 1 + 0.025 * cheek;
+  out.z *= 1 + 0.03 * cheek;
   return out.multiplyScalar(HEAD_R);
 }
 
@@ -382,29 +382,34 @@ function buildHead(head, o, live) {
     const mat = new THREE.MeshStandardMaterial({
       map: live.eyes[i], transparent: true, roughness: 0.22, polygonOffset: true, polygonOffsetFactor: -2,
     });
-    const geo = facePatch(s * 0.38, PI * 0.54, 0.235, 0.275, { flipU: s < 0, bulge: 0.008 });
+    // 눈은 크고 동그랗게, 얼굴 폭의 절반쯤 벌어지게 (옆으로 돌아가는 만큼 가로 폭을 더 준다)
+    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.29, 0.28, { flipU: s < 0, bulge: 0.008 });
     const m = mesh(geo, mat, eyes, '눈');
     m.castShadow = false;
   }
   // 눈 깜빡임용: 눈 높이를 기준점으로
-  const eyeY = surf(0, PI * 0.535).y;
+  const eyeY = surf(0, FACE.eyeTh - PI * 0.005).y;
   eyes.position.y = eyeY;
   eyes.children.forEach((c) => c.position.y -= eyeY);
 
-  // 코: 피부보다 진한 주황빛 타원이 도톰하게 튀어나옴
-  const nose = mesh(ellipsoid(0.022, 0.017, 0.018), new THREE.MeshPhysicalMaterial({
-    color: shade(o.nose, 1), roughness: 0.45, sheen: 0.4, sheenColor: new THREE.Color('#ffd0b0'),
-  }), head, '코');
-  const np = surf(0, PI * 0.585);
-  nose.position.copy(np).addScaledVector(surfNormal(0, PI * 0.585), 0.008);
-  nose.castShadow = false; // 코 그림자가 어깨에 초승달처럼 떨어지는 것 방지
+  // 코: 피부보다 진한 주황빛 조각이 도톰하게 튀어나옴 (그려 넣는 코는 얼굴 텍스처가 맡는다)
+  const noseGeo = NOSE_STYLES[o.noseStyle] ? NOSE_STYLES[o.noseStyle].geo : NOSE_STYLES.classic.geo;
+  if (noseGeo) {
+    const nose = mesh(noseGeo(), new THREE.MeshPhysicalMaterial({
+      color: shade(o.nose, 1), roughness: 0.45, sheen: 0.4, sheenColor: new THREE.Color('#ffd0b0'),
+    }), head, '코');
+    const np = surf(0, FACE.noseTh);
+    nose.position.copy(np).addScaledVector(surfNormal(0, FACE.noseTh), 0.008);
+    nose.castShadow = false; // 코 그림자가 어깨에 초승달처럼 떨어지는 것 방지
+  }
 
   // 귀
   // (얼굴 재질을 그대로 쓰면 얼굴 그림 전체가 귀에도 작게 입혀져 볼 발그레와 입이 귀에 찍힌다: 그림 없는 살색 재질을 쓴다)
   const earSkin = new THREE.MeshPhysicalMaterial({ color: shade(o.skin, 1), roughness: 0.55, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c2), sheenRoughness: 0.8 });
   for (const s of [-1, 1]) {
-    const ear = mesh(ellipsoid(0.022, 0.04, 0.03), earSkin, head, '귀');
-    ear.position.copy(surf(s * PI * 0.5, PI * 0.56)).multiplyScalar(0.97);
+    // 귀는 코 높이쯤, 머리 옆면에 붙어 옆으로 살짝 튀어나온다
+    const ear = mesh(ellipsoid(0.027, 0.05, 0.03), earSkin, head, '귀');
+    ear.position.copy(surf(s * PI * 0.5, FACE.earTh)).multiplyScalar(0.99);
     ear.rotation.z = s * 0.15;
     ear.castShadow = false;
   }
@@ -420,18 +425,19 @@ const ty = (pts) => pts.map(([r, y]) => [r, y * TY]);
 // 목: 옷 윗단(NECK_Y)을 내리고 머리(HEAD_Y)는 그 위로 띄워, 턱과 옷 사이에 피부색 목 기둥이 또렷이 보인다
 // (옷이 턱까지 올라오면 목이 파묻혀 어깨가 승모근처럼 솟아 보인다)
 export const NECK_Y = 0.218 * TY; // 상의 목둘레 높이
-export const HEAD_Y = 0.245 * TY + 0.188; // 머리 중심 높이 (머리 아래쪽 반지름 약 0.185): 목은 짧게, 옷깃 위로 2cm쯤만 보인다
+export const HEAD_Y = 0.245 * TY + 0.206; // 머리 중심 높이 (머리 아래쪽 반지름 약 0.19): 턱 아래로 가는 목이 옷깃 위 2cm쯤 보인다
 
 // 상의 단면 [반지름, 높이] (세로 TY배 전): 목둘레 → 밑단, 끝 세 점은 안쪽으로 접힌 밑단 두께.
 // 맨몸 몸통(BODY)을 천 두께만큼만 띄워 그대로 따라간다: 어깨는 둥글게 넘어가고, 겨드랑이 아래로는 종처럼 벌어지지 않고
 // 거의 곧게 내려가 밑단만 살짝 여유를 둔다. 옷을 입혀도 몸통 옆선이 다리 바깥선으로 이어지는 맨몸의 실루엣이 그대로 남는다.
 const SHIRT = [
-  [0.046, 0.2], [0.052, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.081, 0.208], [0.087, 0.198], [0.091, 0.184],
+  [0.042, 0.2], [0.049, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.081, 0.208], [0.087, 0.198], [0.091, 0.184],
   [0.094, 0.165], [0.0975, 0.145], [0.101, 0.125], [0.1045, 0.1], [0.1075, 0.065], [0.1095, 0.02], [0.1115, -0.02],
   [0.1125, -0.031], [0.1065, -0.032], [0.1015, -0.02],
 ];
 // 목 단면 (몸통 기준 높이): 머리 속에서 넓게 시작해 목둘레까지
-const NECK = [[0.072, HEAD_Y - 0.13], [0.058, HEAD_Y - 0.158], [0.047, HEAD_Y - 0.178], [0.044, HEAD_Y - 0.195], [0.044, NECK_Y + 0.012]];
+// 목은 머리 폭의 5분의 1쯤으로 가늘게
+const NECK = [[0.072, HEAD_Y - 0.13], [0.058, HEAD_Y - 0.158], [0.045, HEAD_Y - 0.178], [0.039, HEAD_Y - 0.2], [0.039, NECK_Y + 0.012]];
 // 맨몸 몸통 단면: 어깨까지는 상의와 같고, 겨드랑이 아래로는 벌어지지 않고 곧게 내려가 골반·다리 바깥선으로 그대로 이어진다
 const BODY = [
   [0.046, 0.2], [0.052, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.081, 0.208], [0.087, 0.198], [0.091, 0.184],
@@ -511,16 +517,10 @@ export const HATS = {
   cap: { label: '스트릿 볼캡', front: 0.36, back: 0.47, fit: (th) => 1.14 + 0.012 * Math.max(0, Math.cos(th)) },
 };
 
-// 손목에서 끊김 없이 이어지는 통통한 벙어리장갑 (위는 둥근 단면, 아래로 갈수록 납작)
+// 손목에서 끊김 없이 이어지는 동그란 손
 function mittenGeometry() {
-  const g = lathe([[0.0285, 0.006], [0.031, -0.006], [0.037, -0.024], [0.0415, -0.044], [0.0405, -0.06], [0.034, -0.076], [0.022, -0.086], [0, -0.09]], 32);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const k = Math.min(1, Math.max(0, -p.getY(i) / 0.035));
-    p.setZ(i, p.getZ(i) * (1 - 0.24 * k));
-  }
-  g.computeVertexNormals();
-  return g;
+  // 엄지 없는 동그란 주먹: 손목에서 둥글게 부풀었다가 끝이 둥글게 닫힌다 (앞뒤로 누르지 않아 어느 쪽에서 봐도 동그랗다)
+  return lathe([[0.0285, 0.006], [0.031, -0.006], [0.037, -0.024], [0.0415, -0.044], [0.0405, -0.06], [0.034, -0.076], [0.022, -0.086], [0, -0.09]], 32);
 }
 
 // 도톰한 꽃: 두께 있는 꽃잎이 바깥쪽으로 살짝 들려 컵 모양을 이루고, 가운데 꽃술이 봉긋
@@ -590,8 +590,8 @@ function buildGlasses(head) {
   const R = 0.054;
   const inner = [];
   for (const s of [-1, 1]) {
-    const phi = s * 0.38;
-    const th = PI * 0.54;
+    const phi = s * FACE.eyePhi;
+    const th = FACE.eyeTh;
     const n = surfNormal(phi, th);
     const c = surf(phi, th).addScaledVector(n, 0.032);
     const q = new THREE.Quaternion().setFromUnitVectors(Z, n.clone().lerp(Z, 0.6).normalize());
@@ -636,7 +636,7 @@ function buildBackpack(torso, color) {
 // 팔이 파고들면 안 되는 몸 부피 (collision.js): 겉옷보다 조금 안쪽으로 잡아,
 // 소매·팔꿈치가 옷에 살짝 스치는 기본 자세는 그대로 두고 눈에 띄게 박히는 것만 밀어낸다
 const COLLIDER_INSET = 0.012;
-const HEAD_COLLIDER = [0.215, 0.18, 0.185];
+const HEAD_COLLIDER = [0.2, 0.19, 0.19];
 const inset = (pts, d = COLLIDER_INSET) => pts.map(([r, y]) => [Math.max(0.02, r - (typeof d === 'function' ? d(y) : d)), y]);
 // 셔츠 아랫단·바지는 부드러운 천이라 더 깊이 허용: 내려 둔 손이 엉덩이 옆에 살짝 스쳐도 팔을 벌려 밀어내지 않게
 const HEM_INSET = (y) => THREE.MathUtils.lerp(0.025, COLLIDER_INSET, THREE.MathUtils.smoothstep(y, 0.02 * TY, 0.1 * TY));
@@ -759,7 +759,7 @@ function buildBody(root, o, live, detail) {
   // 맨몸은 목까지 한 조각으로 잇는다: 목과 몸통을 따로 만들면 만나는 자리에 외곽선이 한 줄 그어진다
   const bodyProf = style.bare
     // 목에서 어깨로 넘어가는 곳은 외곽선 두께(1.2cm)보다 크게 둥글린다: 좁게 꺾이면 외곽선 껍질이 접혀 목에 줄이 생긴다
-    ? [...[...NECK.slice(0, 3), [0.0445, 0.222], [0.0455, 0.213], [0.048, 0.2055], [0.053, 0.1995], [0.06, 0.1962]].map(([r, y]) => [r, y / TY]), ...BODY.slice(3)]
+    ? [...[...NECK.slice(0, 3), [0.0395, 0.222], [0.041, 0.213], [0.045, 0.2055], [0.051, 0.1995], [0.06, 0.1962]].map(([r, y]) => [r, y / TY]), ...BODY.slice(3)]
     : SHIRT;
   const bodyGeo = lathe(ty(bodyProf), 56, style.bare ? 1 : 0.78);
   if (style.bare) {
@@ -781,7 +781,7 @@ function buildBody(root, o, live, detail) {
     mesh(lathe(ty([[0.05, 0.2], [0.057, 0.224], [0.0575, 0.244], [0.054, 0.248], [0.0505, 0.243], [0.05, 0.222]]), 56, 0.88), trim, torso, '세운깃');
   } else {
     const tube = outfit === 'hoodie' ? 0.0125 : 0.0085;
-    const rib = mesh(new THREE.TorusGeometry(0.0445 + tube, tube, 14, 56).rotateX(PI / 2).scale(1, 1, 0.88),
+    const rib = mesh(new THREE.TorusGeometry(0.0405 + tube, tube, 14, 56).rotateX(PI / 2).scale(1, 1, 0.88),
       outfit === 'layered' ? ribMat('trimIn', accent) : trim, torso, '넥시보리');
     rib.position.y = NECK_Y + tube * 0.25;
   }
@@ -864,7 +864,7 @@ function buildBody(root, o, live, detail) {
   // 목: 턱 아래로 또렷이 보이는 피부색 기둥. 위쪽은 머리 안으로 넓게 퍼지며 스며듦 (맨몸은 몸통과 한 조각이라 따로 만들지 않는다)
   if (!style.bare) {
     const neckMat = skinMat(aoGradient('neck3', o.skin, [[0, 1], [0.3, 0.88], [0.6, 0.96], [1, 0.85]]), o.skin);
-    mesh(lathe([...NECK, [0.046, NECK_Y - 0.03]], 32), neckMat, torso, '목');
+    mesh(lathe([...NECK, [0.041, NECK_Y - 0.03]], 32), neckMat, torso, '목');
   }
 
   // 머리 (목 위)
@@ -939,9 +939,6 @@ function buildBody(root, o, live, detail) {
     mesh(mittenGeometry(), handMat, hand, '손');
     // 손목: 도구를 쥐느라 손을 크게 꺾어도 아래팔과 손 사이가 벌어지지 않게
     mesh(ellipsoid(0.0287, 0.0287, 0.0287, 16), handMat, hand, '손목');
-    const thumb = mesh(ellipsoid(0.014, 0.022, 0.014), handMat, hand, '엄지');
-    thumb.position.set(-s * 0.03, -0.03, 0.01);
-    thumb.rotation.z = -s * 0.45;
     // 도구 소켓: 주먹 한가운데 (equipment.js 가 여기에 도구를 붙인다)
     hand.name = s < 0 ? 'RightHand' : 'LeftHand';
     const socket = new THREE.Group();
@@ -1165,16 +1162,46 @@ function buildShoe(foot, o, covered = false) {
 // 프리셋은 모든 커스터마이징 키를 빠짐없이 가진다 (프리셋을 바꾸면 이전 선택이 남지 않도록)
 export const PRESETS = {
   boy: {
-    skin: '#ffd3b4', nose: '#ff8a62', hair: 'side', hairColor: '#a65a2e', iris: '#6a4a33', lash: false,
+    skin: '#ffd3b4', nose: '#ff8a62', noseStyle: 'classic', mouthStyle: 'classic', hair: 'side', hairColor: '#a65a2e', iris: '#6a4a33', lash: false, eyeStyle: 'classic',
     top: '#f3efe6', bottom: 'shorts', bottomColor: '#3f5f8f', shoes: '#e2574c',
     plaid: ['#e7b74a', '#b9502f', '#3a2a22'], collar: null, crown: false, glasses: false, backpack: false,
     outfit: 'tee', hat: 'none',
   },
   girl: {
-    skin: '#ffd6b8', nose: '#ff8f6a', hair: 'bob', hairColor: '#e4b660', iris: '#3d6fc4', lash: true,
+    skin: '#ffd6b8', nose: '#ff8f6a', noseStyle: 'classic', mouthStyle: 'classic', hair: 'bob', hairColor: '#e4b660', iris: '#3d6fc4', lash: true, eyeStyle: 'classic',
     top: '#f28aa0', bottom: 'skirt', bottomColor: '#fff3dc', shoes: '#7b5bd6', plaid: null,
     collar: '#fffaf2', crown: true, glasses: false, backpack: false, outfit: 'tee', hat: 'none',
   },
+};
+
+// 코 모양: geo가 있으면 도톰한 조각, 없으면 얼굴에 그려 넣는다 (textures.js DRAWN_NOSES)
+export const NOSE_STYLES = {
+  classic: { label: '기존 코', geo: () => ellipsoid(0.022, 0.012, 0.016) }, // 가로로 납작한 작은 타원
+  bead: { label: '작은 구슬', geo: () => ellipsoid(0.013, 0.012, 0.013) },
+  button: { label: '납작 단추', geo: () => ellipsoid(0.03, 0.013, 0.012) },
+  big: { label: '동글 큰 코', geo: () => ellipsoid(0.028, 0.024, 0.024) },
+  tri: {
+    label: '세모 코',
+    geo: () => {
+      // 아래가 넓고 위가 뾰족한 세모: 얼굴 쪽으로 납작하게 눌러 붙인다
+      const g = new THREE.ConeGeometry(0.019, 0.05, 32);
+      g.scale(1, 1, 0.7);
+      g.translate(0, 0.006, 0);
+      return g;
+    },
+  },
+  block: { label: '네모 코', geo: () => new RoundedBoxGeometry(0.044, 0.022, 0.02, 4, 0.008) },
+  pointy: {
+    label: '뾰족 코',
+    geo: () => {
+      const g = new THREE.ConeGeometry(0.015, 0.034, 32);
+      g.rotateX(PI / 2); // 끝이 앞으로
+      g.translate(0, 0, 0.01);
+      return g;
+    },
+  },
+  hook: { label: '선 코' },
+  nostril: { label: '콧구멍 코' },
 };
 
 // 표정 = 눈 두 개(캐릭터의 오른쪽, 왼쪽) + 입 + 볼터치 진하기
@@ -1188,7 +1215,7 @@ export const EXPRESSIONS = {
 };
 
 // 이 키가 바뀌면 얼굴·눈 텍스처를 다시 그린다
-const FACE_KEYS = ['skin', 'iris', 'lash'];
+const FACE_KEYS = ['skin', 'nose', 'iris', 'lash', 'eyeStyle', 'noseStyle', 'mouthStyle'];
 
 // texScale: 표정 텍스처 해상도 배율 (마을처럼 여러 명이 동시에 보일 때는 낮춰 메모리를 아낀다)
 // hairSegs: 머리 곡면 해상도 (기본 720, 마을은 낮춤)
@@ -1208,8 +1235,8 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
 
   function redrawFace() {
     const e = EXPRESSIONS[state.expression] ?? EXPRESSIONS.smile;
-    drawFace(live.face, o.skin, e);
-    e.eyes.forEach((mode, i) => drawEye(live.eyes[i], { iris: o.iris, lash: o.lash, mode }));
+    drawFace(live.face, o.skin, e, { mouthStyle: o.mouthStyle, noseStyle: o.noseStyle, noseColor: o.nose });
+    e.eyes.forEach((mode, i) => drawEye(live.eyes[i], { iris: o.iris, lash: o.lash, mode, style: o.eyeStyle }));
   }
 
   // 재질만 버리고 텍스처는 남긴다 (캐시·실시간 텍스처를 계속 재사용)

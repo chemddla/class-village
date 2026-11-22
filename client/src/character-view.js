@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES, OUTFITS, HATS } from './villager/villager.js';
+import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES, OUTFITS, HATS, NOSE_STYLES } from './villager/villager.js';
 import { EQUIPMENT } from './villager/equipment.js';
-import { contactShadow, canvasTexture, setMaxAnisotropy } from './villager/textures.js';
+import { contactShadow, canvasTexture, setMaxAnisotropy, EYE_STYLES, MOUTH_STYLES } from './villager/textures.js';
 import { syncToon } from './villager/toon.js';
 
 // 쇼룸 밖에서도 쓰던 외곽선 도우미는 공용 모듈에서 그대로 내보냄
@@ -210,6 +210,14 @@ for (const tab of document.querySelectorAll('.tab')) {
 }
 for (const [k, h] of Object.entries(HAIRSTYLES)) {
   button($('hair'), { label: h.label, onClick: () => villager.set({ hair: k }), isOn: () => o.hair === k });
+}
+for (const [id, key, list] of [['noseStyle', 'noseStyle', NOSE_STYLES], ['mouthStyle', 'mouthStyle', MOUTH_STYLES]]) {
+  for (const [k, e] of Object.entries(list)) {
+    button($(id), { label: e.label, onClick: () => villager.set({ [key]: k }), isOn: () => (o[key] ?? 'classic') === k });
+  }
+}
+for (const [k, e] of Object.entries(EYE_STYLES)) {
+  button($('eyeStyle'), { label: e.label, onClick: () => villager.set({ eyeStyle: k }), isOn: () => (o.eyeStyle ?? 'classic') === k });
 }
 SKINS.forEach((s, i) => button($('skin'), { label: `피부색 ${i + 1}`, color: s.skin, onClick: () => villager.set(s), isOn: () => o.skin === s.skin }));
 for (const [id, key, list] of [['hairColor', 'hairColor', HAIR_COLORS], ['top-color', 'top', TOP_COLORS], ['bottomColor', 'bottomColor', BOTTOM_COLORS]]) {
