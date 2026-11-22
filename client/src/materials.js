@@ -68,6 +68,23 @@ wDir = transpose(mat3(instanceMatrix)) * wDir / dot(instanceMatrix[0].xyz, insta
 transformed += wDir;
 transformed.y -= wGust * wGust * wH * wH * 0.25;`;
 
+// 나무 흔들림: 잎 덩어리가 줄기 위(1m)부터 높이에 비례해 살짝 기울었다 돌아옴. 자리마다 박자가 달라 숲이 물결치듯
+// 꼭대기에서도 몇 cm 정도만 움직여 자연스럽게. 외곽선도 같은 식으로 움직여야 어긋나지 않는다
+const SWAY_GLSL = `
+#ifdef USE_INSTANCING
+vec3 sIP = instanceMatrix[3].xyz;
+#else
+vec3 sIP = vec3(0.0);
+#endif
+float sH = max(transformed.y - 1.0, 0.0);
+float sPh = uTime * 1.1 - sIP.x * 0.21 - sIP.z * 0.17;
+float sG = sin(sPh) * 0.7 + sin(sPh * 2.3 + sIP.x) * 0.3;
+vec3 sDir = vec3(1.0, 0.0, 0.45) * sG * sH * 0.05;
+#ifdef USE_INSTANCING
+sDir = transpose(mat3(instanceMatrix)) * sDir / dot(instanceMatrix[0].xyz, instanceMatrix[0].xyz);
+#endif
+transformed += sDir;`;
+
 // pre: 정점 위치를 휘기 전에 끼워 넣을 셰이더 코드 (외곽선 부풀리기 등)
 // clouds: 구름 그림자를 드리울지 (빛을 받는 툰 재질만)
 function addCurve(material, pre = '', key = 'curved', { clouds = false } = {}) {
@@ -115,6 +132,11 @@ export function windToon(color, opts = {}) {
   return addCurve(new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...opts }), WIND_GLSL, 'curved-wind', { clouds: true });
 }
 
+// 바람에 살짝 흔들리는 나무 잎 (도형은 뿌리가 y=0)
+export function swayToon(color, opts = {}) {
+  return addCurve(new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...opts }), SWAY_GLSL, 'curved-sway', { clouds: true });
+}
+
 export function basic(color, opts = {}) {
   return addCurve(new THREE.MeshBasicMaterial({ color, ...opts }));
 }
@@ -122,12 +144,14 @@ export function basic(color, opts = {}) {
 // ── 외곽선: 법선 방향으로 부풀린 뒷면 껍질 (캐릭터와 같은 갈색, 둥근 지평선도 똑같이 적용) ──
 const OUTLINE_COLOR = 0x4a3525;
 const outlineMats = new Map();
-function outlineMaterial(t) {
-  if (!outlineMats.has(t)) {
+function outlineMaterial(t, sway = false) {
+  const key = `${t}:${sway}`;
+  if (!outlineMats.has(key)) {
     const m = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
-    outlineMats.set(t, addCurve(m, `transformed += normalize(normal) * ${t.toFixed(4)};`, `curved-outline:${t}`));
+    const pre = `${sway ? SWAY_GLSL : ''}\ntransformed += normalize(normal) * ${t.toFixed(4)};`;
+    outlineMats.set(key, addCurve(m, pre, `curved-outline:${key}`));
   }
-  return outlineMats.get(t);
+  return outlineMats.get(key);
 }
 // 각진 도형(상자·다면체)은 면마다 법선이 갈라져 껍질에 틈이 생기므로, 꼭짓점을 합쳐 매끈한 법선으로 부풀린다
 const hullCache = new WeakMap();
@@ -142,9 +166,10 @@ function hullGeometry(geo) {
   }
   return hullCache.get(geo);
 }
-export function addOutline(mesh, thickness = 0.035) {
+// sway: 흔들리는 나무 잎(swayToon)에 두를 때 true — 외곽선도 함께 흔들린다
+export function addOutline(mesh, thickness = 0.035, { sway = false } = {}) {
   const geo = hullGeometry(mesh.geometry);
-  const mat = outlineMaterial(thickness);
+  const mat = outlineMaterial(thickness, sway);
   let o;
   if (mesh.isInstancedMesh) {
     o = new THREE.InstancedMesh(geo, mat, mesh.count);

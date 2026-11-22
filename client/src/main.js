@@ -196,9 +196,7 @@ function hitFx(char, action) {
     }
   } else if (action === 'gather') {
     const t = findTarget('none', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 0.6, z: char.z + fz * 0.6 };
-    const bush = spotIdx('bush', t.x, t.z, 0.5);
-    if (bush >= 0) { shakeSpot(bush); burst('leaf', 6, at(t.x, t.z, 0.5), { spread: Math.PI, power: 0.7 }); }
-    else burst('petal', 7, at(t.x, t.z, 0.3), { spread: Math.PI, power: 0.8 });
+    burst('petal', 7, at(t.x, t.z, 0.3), { spread: Math.PI, power: 0.8 });
     burst('sparkle', 8, at(t.x, t.z, 0.45), { spread: Math.PI });
   } else if (action === 'fish') {
     const t = findTarget('rod', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 1.5, z: char.z + fz * 1.5 };
@@ -219,7 +217,7 @@ const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟' };
 const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
 const QUICK_SLOTS = 4;
 let invItems = [1, 2, 4]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
-let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무·연못·덤불
+let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
 // 퀵슬롯: 칸마다 장비 번호 또는 null. Q 를 누르면 맨손 → 1칸 → 2칸 → … 차례로 바꿔 든다
 const quick = (() => {
@@ -392,7 +390,7 @@ const input = createInput({
       // 손에 무엇을 들었든, 가장 가까운 생활 대상에 맞는 도구를 꺼내 들고 한다 (끝나면 고른 장비로 돌아온다)
       if (local.actLeft > 0) return;
       const t = findLife(me.x, me.z, lifeSpots);
-      if (!t) { toast('나무·물가·꽃이나 덤불 가까이에서 G를 눌러 보세요'); return; }
+      if (!t) { toast('나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
       holdTool(TOOLS.indexOf(t.tool));
       me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 대상 쪽으로 돌아섬
       startAct(LIFE[t.tool].anim);
@@ -490,6 +488,9 @@ function attach(r) {
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
   });
 
+  // 마을 주된 과일: 과일나무에 그 과일이 열린다
+  $(r.state).listen('fruit', (v) => village.setFruit(v));
+
   // 서버가 이상한 이동이라고 판단하면 되돌림
   r.onMessage('fix', ([x, z]) => {
     if (!me) return;
@@ -555,6 +556,9 @@ ui.form.addEventListener('submit', async (e) => {
     ui.joinBtn.disabled = false;
   }
 });
+
+// 화면을 닫거나 다른 곳으로 갈 때: 서버에 알려 내 캐릭터가 오래 남아 있지 않게 (새로고침이면 곧바로 돌아온다)
+addEventListener('pagehide', () => { try { room?.send('bye'); } catch { /* 이미 끊김 */ } });
 
 // 새로고침·화면 꺼짐 뒤에는 자동으로 원래 자리로 돌아감
 (async () => {
