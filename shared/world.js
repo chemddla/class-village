@@ -319,6 +319,15 @@ export function inSwing(ax, az, rot, bx, bz) {
   return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < 1.0;
 }
 
+// 찌르기(목검 3타)에 맞았는지: 앞으로 길고 폭이 좁은 범위 (보는 방향으로 2.4m, 옆으로 0.5m)
+export function inThrust(ax, az, rot, bx, bz) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const ahead = dx * Math.sin(rot) + dz * Math.cos(rot);
+  const side = dx * Math.cos(rot) - dz * Math.sin(rot);
+  return ahead > -0.1 && ahead < 2.4 && Math.abs(side) < 0.5;
+}
+
 // 네트워크용 압축: m → cm 정수, 각도 → 0~255
 export const toCm = (m) => Math.round(m * 100);
 export const fromCm = (cm) => cm / 100;

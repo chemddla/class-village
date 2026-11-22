@@ -587,40 +587,132 @@ function twoHandGrip(rig, y, w, dt, aim) {
 }
 
 // ── 한 손 쥐기: 한손검처럼 오른손 하나로 휘두르는 동작 ──
-// aim: { pos, dir } 오른손이 쥘 자리와 칼이 뻗는 방향 (몸통 기준). 왼손은 건드리지 않는다 (동작이 관절 값으로 정한다)
+// aim: { pos, dir, pole, wrist } 오른손이 쥘 자리, 칼이 뻗는 방향, 팔꿈치가 굽는 쪽 (몸통 기준), 손목을 꺾는 한계(없으면 WRIST_BEND). 왼손은 건드리지 않는다 (동작이 관절 값으로 정한다)
 // w: 0 → 1 로 애니메이션 자세에서 쥘 자리로 섞는 비율. 손 자리를 섞어야 두 자세가 많이 달라도 팔이 휙 뒤집히지 않는다
+// 주먹과 칼 사이 각도는 평소 들고 다닐 때(소켓의 carry 각) 그대로 둔다: 칼이 손 안에서 돌지 않고, 칼을 겨누는 방향은 손목을 꺾어 맞춘다.
+// (주먹을 아래팔과 한 줄로 펴고 칼만 손 안에서 돌려 맞추면, 칼이 주먹을 가로지르지 않고 손끝에서 뻗어 나온 것처럼 보인다)
+// 그래서 찌르기처럼 아래팔과 칼이 같은 쪽을 향하면 손목이 새끼손가락 쪽으로 크게 꺾인다
+const WRIST_BEND = 1.3; // 이보다 더 꺾어야 하면 넘친 만큼만 주먹을 팔 쪽으로 되돌린다 (칼끝도 그만큼 덜 겨눠진다)
 function oneHandGrip(rig, w, aim) {
   const torso = rig.shoulderR.parent;
   const sock = rig.rightSocket;
+  // tilt: 손 안의 칼 각도를 평소 들고 다니는 각도에서 이만큼 더 앞으로 기울여 쥔다 (찌르기: 손목을 덜 꺾고 칼을 앞으로 겨누게)
+  if (aim.tilt) { sock.rotation.x += aim.tilt * w; sock.updateMatrixWorld(true); }
   const torsoQ = torso.getWorldQuaternion(new THREE.Quaternion());
   const SR = rig.shoulderR.getWorldPosition(V());
-  const P = torso.localToWorld(V(...aim.pos));
+  // body: 방향들이 몸통이 아니라 몸이 서 있는 방향(골반 위 root, 허리를 틀거나 숙이기 전) 기준이고, 손 자리는 지금 어깨에서 뻗은 벡터(arm)
+  const frameQ = aim.body ? rig.pelvis.parent.getWorldQuaternion(new THREE.Quaternion()) : torsoQ;
+  const P = aim.body
+    ? V(...aim.arm).multiplyScalar(torso.getWorldScale(V()).x).applyQuaternion(frameQ).add(SR)
+    : torso.localToWorld(V(...aim.pos));
+  // level: 쥔 자리의 높이를 몸 기준(발밑 root)으로 고정한다. 상체를 숙여 어깨가 내려가도 손은 같은 높이로 곧게 나간다 (찌르기)
+  if (aim.level != null) {
+    const root = rig.pelvis.parent;
+    const L = root.worldToLocal(P.clone());
+    L.y += (aim.level - L.y) * (aim.levelW ?? 1);
+    P.copy(root.localToWorld(L));
+  }
   const up = V(0, 1, 0).applyQuaternion(torsoQ);
-  const want = gripQuat(V(...aim.dir).normalize().applyQuaternion(torsoQ), SR, P, up, V(1, 0, 0).applyQuaternion(torsoQ));
+  // 칼(소켓)의 월드 회전 → 손 안의 칼 각도를 빼면 그 칼을 쥔 주먹의 회전
+  // 칼 둘레로 주먹을 돌리는 각: 손가락 쪽이 어깨→손 방향(팔이 뻗은 쪽)에 가장 가깝게 → 손목이 가장 덜 꺾인다
+  // 팔꿈치 방향을 정해 둔 동작(fixPole)은 실제 아래팔이 들어오는 쪽(그쪽으로 벌린 팔꿈치 → 손)에 맞춰 주먹을 돌린다
+  const poleW = !aim.pole ? POLE.R.clone().applyQuaternion(torsoQ)
+    : V(...aim.pole).normalize().applyQuaternion(aim.body ? frameQ : torsoQ);
+  const from = aim.fixPole ? SR.clone().addScaledVector(poleW, 0.09 * torso.getWorldScale(V()).x) : SR;
+  const axisW = V(...aim.dir).normalize().applyQuaternion(frameQ);
+  const inHand = sock.quaternion.clone().invert(); // 손 안의 칼 각도를 빼는 회전
+  // roll: 주먹(손가락 쪽)이 향할 쪽을 동작이 정한다 (몸 기준). 칼 둘레로 주먹을 그쪽으로 돌린다 → 손목이 그쪽으로 꺾인다
+  const rollW = aim.roll ? V(...aim.roll).normalize().applyQuaternion(frameQ) : null;
+  const fist = (rollW ? gripQuat(axisW, P, P, up, rollW) : gripQuat(axisW, from, P, up, V())).multiply(inHand);
   const P0 = sock.getWorldPosition(V());
   const Q0 = rig.handR.getWorldQuaternion(new THREE.Quaternion());
-  const Qs = sock.getWorldQuaternion(new THREE.Quaternion()); // 애니메이션 자세의 칼 방향
   const Pw = P0.lerp(P, w);
-  const hq = Q0.clone().slerp(want, w);
+  const hq = Q0.clone().slerp(fist, w);
   const wq = Math.min(1, w * 5);
-  armIK(rig, 'R', Pw, hq, wq, POLE.R, true);
-  // 손목 펴기: 아래팔과 주먹이 한 줄이 되도록 주먹을 돌리고, 돌린 만큼 소켓을 반대로 돌려 칼 방향은 그대로 둔다
-  const limit = WRIST_MAX + 0.35 + (1 - w) * 0.4; // 한손검은 손목을 조금 꺾어 쥐는 게 자연스럽다
+  // 팔꿈치가 굽는 쪽: 동작이 정한 방향(aim.pole)을 바탕으로, 손목이 손등·손바닥 쪽으로 꺾이지 않는 자리를 고른다 (elbowPole)
+  // armIK 는 팔꿈치 방향을 몸통 기준으로 받는다
+  // fixPole: 팔꿈치를 동작이 정한 쪽에 그대로 둔다 (찌르기: 팔꿈치를 바깥으로 벌려야 칼끝이 수평으로 선다)
+  let poleUse = poleW;
+  if (aim.fixPole) {
+    // 정해 둔 굽는 쪽을 앞 장면 자리로 기억해 둔다: 다음 동작에서 팔꿈치 자리를 고를 때 여기서 이어지게 (한 장면 만에 튀지 않게)
+    const ax = Pw.clone().sub(SR).normalize();
+    rig.elbowPrev = poleW.clone().addScaledVector(ax, -poleW.dot(ax)).normalize();
+  } else poleUse = elbowPole(rig, Pw, hq, poleW);
+  const pole = poleUse.clone().applyQuaternion(torsoQ.clone().invert());
+  armIK(rig, 'R', Pw, hq, wq, pole);
+  if (aim.fixPole && !rollW) {
+    // 팔을 뻗어 본 뒤 실제 아래팔(팔꿈치 → 손목) 방향에 맞춰 주먹을 칼 둘레로 다시 돌리고 다시 뻗는다:
+    // 짐작한 팔꿈치 자리로 돌린 주먹은 실제 아래팔과 어긋나, 손목이 필요 이상 꺾여 한계에 걸리고 칼끝이 비껴난다
+    for (let n = 0; n < 2; n++) {
+      const E = rig.elbowR.getWorldPosition(V());
+      const Wp = rig.handR.getWorldPosition(V());
+      hq.copy(Q0).slerp(gripQuat(axisW, E, Wp, up, V()).multiply(inHand), w);
+      armIK(rig, 'R', Pw, hq, wq, pole);
+    }
+  }
+  // 손목 한계: 아래팔에 견줘 손목이 한계보다 꺾였으면 넘친 만큼만 주먹을 팔 쪽으로 되돌리고 다시 뻗는다.
+  // 되풀이할 때마다 원래 쥐려던 주먹(want)에서 새로 계산한다: 돌린 각을 쌓아 가면, 다시 뻗어 여유가 생겨도 주먹이 돌아오지 않아 칼끝이 비껴난다
+  const want = hq.clone();
+  const limit = (aim.wrist ?? WRIST_BEND) + (1 - w) * 0.4; // aim.wrist: 동작이 정한 손목 한계 (찌르기는 더 꺾는다)
   for (let n = 0; n < 3; n++) {
     const f = rig.handR.getWorldPosition(V()).sub(rig.elbowR.getWorldPosition(V())).normalize();
-    const w0 = hq.w, x0 = hq.x;
-    easeWrist(hq, f, limit);
-    if (hq.w === w0 && hq.x === x0) break;
-    armIK(rig, 'R', Pw, hq, 1, POLE.R, true);
+    const next = easeWrist(want.clone(), f, limit);
+    if (next.angleTo(hq) < 1e-4) break;
+    hq.copy(next);
+    armIK(rig, 'R', Pw, hq, 1, pole);
   }
-  // 소켓 월드 회전의 +Z(칼 축)가 dir 을 향하게: 쥔 주먹(want)과 같은 회전
-  sock.quaternion.copy(hq).invert().multiply(Qs.slerp(want, w));
-  sock.updateMatrixWorld(true);
+  rig.oneFist = hq.clone();
+}
+
+// 한 손 쥐기의 팔꿈치 자리 고르기: 어깨와 손목 자리가 정해지면 팔꿈치는 둘을 잇는 축 둘레의 원 위 어디든 놓일 수 있다.
+// 그중 아래팔이 주먹의 손등·손바닥 방향(손의 X축)으로 비껴 들어오지 않는 자리를 고른다 → 손목은 엄지·새끼 쪽으로만 꺾이고
+// 손등 쪽으로 젖혀지거나 손바닥 쪽으로 접히지 않는다. 동작이 정한 굽는 쪽(poleW)과 앞 장면의 자리에서 크게 벗어나지 않게 해
+// 팔꿈치가 한 장면 만에 뒤집히지 않게 하고, 팔꿈치를 위로 치켜드는 자리는 피한다. 돌려주는 값은 그 굽는 쪽(월드, 축에 수직)
+const ELBOW_STEPS = 48;
+function elbowPole(rig, grip, hq, poleW) {
+  const S = rig.shoulderR.getWorldPosition(V());
+  const E0 = rig.elbowR.getWorldPosition(V());
+  const a = S.distanceTo(E0);
+  const b = E0.distanceTo(rig.handR.getWorldPosition(V()));
+  // 손목 자리 = 쥘 곳에서 손 안의 소켓 오프셋만큼 되돌린 곳 (armIK 와 같은 계산)
+  const W = rig.rightSocket.position.clone().multiply(rig.handR.getWorldScale(V())).applyQuaternion(hq).negate().add(grip);
+  const ax = W.clone().sub(S);
+  const d = THREE.MathUtils.clamp(ax.length(), Math.abs(a - b) + 1e-4, a + b - 1e-4);
+  ax.normalize();
+  const x = (a * a - b * b + d * d) / (2 * d);
+  const rho = Math.sqrt(Math.max(0, a * a - x * x));
+  const C = S.clone().addScaledVector(ax, x);
+  const u = poleW.clone().addScaledVector(ax, -poleW.dot(ax));
+  if (u.lengthSq() < 1e-6) u.set(0, -1, 0).addScaledVector(ax, ax.y);
+  u.normalize();
+  const v = V().crossVectors(ax, u);
+  const hx = V(1, 0, 0).applyQuaternion(hq);
+  const hd = V(0, -1, 0).applyQuaternion(hq);
+  const up = V(0, 1, 0).applyQuaternion(rig.shoulderR.parent.getWorldQuaternion(new THREE.Quaternion()));
+  const prev = rig.elbowPrev;
+  let best = null, bestCost = Infinity;
+  const p = V(), E = V(), f = V();
+  for (let i = 0; i < ELBOW_STEPS; i++) {
+    const t = (i / ELBOW_STEPS) * Math.PI * 2;
+    p.copy(u).multiplyScalar(Math.cos(t)).addScaledVector(v, Math.sin(t));
+    E.copy(C).addScaledVector(p, rho);
+    f.copy(W).sub(E).normalize();
+    const side = f.dot(hx); // 손등·손바닥 쪽으로 비껴 들어오는 정도
+    let cost = side * side * 4 + (1 - f.dot(hd)) * 0.3 + (1 - Math.cos(t)) * 0.35;
+    if (prev) cost += (1 - p.dot(prev)) * 0.6;
+    const lift = p.dot(up) - 0.3;
+    if (lift > 0) cost += lift * 2;
+    if (cost < bestCost) { bestCost = cost; best = p.clone(); }
+  }
+  rig.elbowPrev = best;
+  return best;
 }
 
 // 몸 충돌 보정(collision.js)이 팔꿈치를 비튼 뒤에 한 번 더 손목을 편다: 팔꿈치만 옮겨지면 손은 그대로라 손목이 다시 꺾인다.
 // 오른손은 돌린 만큼 소켓을 반대로 돌려 도구 방향을 지킨다
 export function straightenWrists(rig) {
+  // 한 손 쥐기: 충돌 보정이 팔꿈치를 비틀면 거기 매달린 주먹도 같이 돌아 칼끝이 비껴나므로, 쥔 주먹 방향을 되돌려 놓는다
+  if (rig.oneFist && (rig.oneHandW ?? 0) > 0.001) blendWorld(rig.handR, rig.oneFist, 1);
   const w = rig.twoHandW ?? 0;
   if (w < 0.001) return;
   const limit = WRIST_MAX + (1 - w) * 0.4;
@@ -673,7 +765,7 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   const w1 = fx.oneHand ? 1 : 0;
   rig.oneHandW = (rig.oneHandW ?? 0) + (w1 - (rig.oneHandW ?? 0)) * (1 - Math.exp(-(w1 ? 40 : 14) * dt));
   if (rig.oneAim && rig.oneHandW > 0.001) oneHandGrip(rig, rig.oneHandW, rig.oneAim);
-  else rig.oneAim = null;
+  else { rig.oneAim = null; rig.elbowPrev = null; rig.oneFist = null; }
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
       const { rod, bow: b, staff: st } = o.userData;

@@ -14,6 +14,9 @@ export default defineConfig({
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         character: fileURLToPath(new URL('./character.html', import.meta.url)),
         outfits: fileURLToPath(new URL('./outfits.html', import.meta.url)),
+        // 몬스터 시안 화면 (쪼렙 몬스터 모음, 날개콩 동작)
+        monsters: fileURLToPath(new URL('./monsters.html', import.meta.url)),
+        nalgaekong: fileURLToPath(new URL('./nalgaekong.html', import.meta.url)),
       },
     },
   },
