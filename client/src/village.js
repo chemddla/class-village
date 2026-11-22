@@ -171,54 +171,160 @@ function foamTexture() {
 }
 
 // 강 모양을 따라가는 띠. from→to: 강 가운데에서 떨어진 거리(v 0→1), u는 흐르는 방향 길이(m)
-function riverStrip(from, to, y, uScale) {
+// rows: 폭 방향 칸 수, colorAt(v): 주면 폭 방향 위치에 따라 꼭짓점 색을 칠함
+function riverStrip(from, to, y, uScale, rows = 1, colorAt = null) {
   const pts = [];
   const uv = [];
+  const col = [];
   const idx = [];
   const n = 160;
+  const R = rows + 1;
   for (let i = 0; i <= n; i++) {
     const x = -48 + (96 * i) / n;
     const zc = riverCenterZ(x);
-    pts.push(x, y, zc + from, x, y, zc + to);
-    uv.push(x / uScale, 0, x / uScale, 1);
+    for (let r = 0; r <= rows; r++) {
+      const v = r / rows;
+      pts.push(x, y, zc + from + (to - from) * v);
+      uv.push(x / uScale, v);
+      if (colorAt) { const c = colorAt(v); col.push(c.r, c.g, c.b); }
+    }
     if (i < n) {
-      const a = i * 2;
-      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      for (let r = 0; r < rows; r++) {
+        const a = i * R + r;
+        idx.push(a, a + 1, a + R, a + 1, a + R + 1, a + R);
+      }
     }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  if (colorAt) geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   if (geo.attributes.normal.getY(0) < 0) geo.attributes.normal.array.forEach((_, i, arr) => { if (i % 3 === 1) arr[i] = 1; });
   return geo;
 }
 
+// 물살 무늬: 투명 바탕에 흐르는 방향으로 가늘고 부드럽게 굽이치는 하얀 줄
+function flowTexture(seed, count) {
+  const W = 512;
+  const H = 128;
+  const cv = document.createElement('canvas');
+  cv.width = W;
+  cv.height = H;
+  const g = cv.getContext('2d');
+  const rand = seeded(seed);
+  g.lineCap = 'round';
+  g.filter = 'blur(0.8px)';
+  for (let i = 0; i < count; i++) {
+    g.strokeStyle = `rgba(255,255,255,${0.25 + rand() * 0.45})`;
+    g.lineWidth = 1.2 + rand() * 2.2;
+    const y = 8 + rand() * (H - 16);
+    const x = rand() * W;
+    const len = 40 + rand() * 120;
+    const amp = 2 + rand() * 4;
+    for (const dx of [0, -W, W]) {
+      g.beginPath();
+      g.moveTo(x + dx, y);
+      g.bezierCurveTo(x + dx + len * 0.33, y - amp, x + dx + len * 0.66, y + amp, x + dx + len, y);
+      g.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// 강 속 돌과 연잎 (다리 근처는 비움)
+function buildRiverDecor(group) {
+  const rand = seeded(23);
+  const W = RIVER_HALF_WIDTH;
+  const rockMat = toon(0xa9a59b);
+  const ringMat = basic(0xffffff, { transparent: true, opacity: 0.6, depthWrite: false });
+  const rocks = [];
+  for (const [x, side] of [[-21, 1], [-12, -1], [-6.5, 1], [7, -1], [15, 1], [23, -1]]) {
+    const zc = riverCenterZ(x) + side * (W - 0.55 - rand() * 0.4);
+    for (let k = 0; k < 2; k++) {
+      const s = k ? 0.18 + rand() * 0.08 : 0.3 + rand() * 0.12;
+      const rx = x + (k ? 0.4 + rand() * 0.2 : 0);
+      const rz = zc + (k ? (rand() - 0.5) * 0.4 : 0);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 7).scale(s * 1.3, s * 0.7, s), rockMat);
+      m.position.set(rx, -0.08, rz);
+      m.rotation.y = rand() * Math.PI;
+      group.add(addOutline(m, 0.02));
+      // 돌을 감도는 물거품 고리
+      const ring = new THREE.Mesh(new THREE.RingGeometry(s * 1.25, s * 1.55, 20).rotateX(-Math.PI / 2), ringMat);
+      ring.position.set(rx, -0.045, rz);
+      group.add(ring);
+      rocks.push({ ring, s, ph: rand() * 6 });
+    }
+  }
+  // 연잎: 물살이 느린 강가에 몇 장씩, 가끔 분홍 꽃
+  const padMat = toon(0x6fbf5a);
+  const padMat2 = toon(0x86cf68);
+  const flowerMat = toon(0xf6a8c8);
+  const pads = [];
+  for (const [x, side] of [[-25, -1], [-16, 1], [-3.5, -1], [11, 1], [19, -1]]) {
+    const n = 3 + Math.floor(rand() * 3);
+    for (let k = 0; k < n; k++) {
+      const px = x + (rand() - 0.5) * 2.2;
+      const pz = riverCenterZ(px) + side * (W - 0.35 - rand() * 0.6);
+      const r = 0.18 + rand() * 0.12;
+      const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 16, 0.3, Math.PI * 2 - 0.6).rotateX(-Math.PI / 2), k % 2 ? padMat : padMat2);
+      pad.position.set(px, -0.04, pz);
+      pad.rotation.y = rand() * Math.PI * 2;
+      group.add(pad);
+      if (rand() < 0.3) {
+        const fl = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.08, 6), flowerMat);
+        fl.position.set(px, 0.0, pz);
+        group.add(fl);
+      }
+      pads.push({ pad, y: -0.04, ph: rand() * 6 });
+    }
+  }
+  return (t) => {
+    for (const r of rocks) r.ring.scale.setScalar(1 + Math.sin(t * 2.2 + r.ph) * 0.08);
+    for (const p of pads) p.pad.position.y = p.y + Math.sin(t * 1.3 + p.ph) * 0.006;
+  };
+}
+
 function buildRiver() {
   const w = RIVER_HALF_WIDTH + 0.15;
   const group = new THREE.Group();
-  // 바닥 물: 물결 무늬가 천천히 흐름
-  const water = waterTexture();
-  group.add(new THREE.Mesh(riverStrip(-w, w, -0.06, 7), toon(0xffffff, { map: water, side: THREE.DoubleSide })));
-  // 위 겹 반짝임: 같은 무늬를 다른 크기·빠르기로 겹쳐 물살이 일렁여 보이게
-  const glint = water.clone();
-  glint.repeat.set(1.7, 1.3);
-  group.add(new THREE.Mesh(riverStrip(-w, w, -0.05, 7), basic(0xffffff, {
-    map: glint, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-  })));
+  // 바닥 물: 강가는 얕은 청록, 가운데로 갈수록 깊은 파랑
+  const SHALLOW = new THREE.Color(0x9fdcd6);
+  const MID = new THREE.Color(0x63b8e0);
+  const DEEP = new THREE.Color(0x3f93cc);
+  const c = new THREE.Color();
+  const depthColor = (v) => {
+    const d = 1 - Math.abs(v * 2 - 1); // 0 강가 → 1 가운데
+    return d < 0.45 ? c.copy(SHALLOW).lerp(MID, d / 0.45) : c.copy(MID).lerp(DEEP, (d - 0.45) / 0.55);
+  };
+  group.add(new THREE.Mesh(riverStrip(-w, w, -0.06, 7, 8, depthColor), toon(0xffffff, { vertexColors: true, side: THREE.DoubleSide })));
+  // 물살: 강 전체에 느린 줄 + 가운데에 더 빠른 줄 (가운데가 더 빨리 흐르는 것처럼)
+  const flowMat = (tex, opacity) => basic(0xffffff, { map: tex, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+  const slow = flowTexture(7, 40);
+  slow.repeat.set(1, 1.6);
+  group.add(new THREE.Mesh(riverStrip(-w, w, -0.055, 9), flowMat(slow, 0.45)));
+  const fast = flowTexture(9, 26);
+  group.add(new THREE.Mesh(riverStrip(-w * 0.55, w * 0.55, -0.05, 6), flowMat(fast, 0.55)));
   // 강둑 물거품: 둑 아래로 들어간 부분은 땅에 가려져, 물과 둑이 만나는 곳에만 하얀 줄이 보인다
   const foam = foamTexture();
   const foamMat = basic(0xffffff, { map: foam, transparent: true, depthWrite: false, side: THREE.DoubleSide });
-  const inner = RIVER_HALF_WIDTH - 0.5;
+  const inner = RIVER_HALF_WIDTH - 0.35;
   const outer = RIVER_HALF_WIDTH + 0.6;
-  group.add(new THREE.Mesh(riverStrip(inner, outer, -0.04, 5), foamMat));
-  group.add(new THREE.Mesh(riverStrip(-inner, -outer, -0.04, 5), foamMat));
+  group.add(new THREE.Mesh(riverStrip(inner, outer, -0.045, 5), foamMat));
+  group.add(new THREE.Mesh(riverStrip(-inner, -outer, -0.045, 5), foamMat));
+  const decor = buildRiverDecor(group);
   const update = (t) => {
-    water.offset.set(t * 0.045, Math.sin(t * 0.6) * 0.015);
-    glint.offset.set(t * 0.075, -t * 0.01);
+    slow.offset.set(t * 0.05, Math.sin(t * 0.4) * 0.02);
+    fast.offset.set(t * 0.11, Math.sin(t * 0.7 + 1) * 0.015);
     foam.offset.set(t * 0.02, 0);
-    foamMat.opacity = 0.8 + Math.sin(t * 1.6) * 0.15; // 밀려왔다 빠지는 느낌
+    foamMat.opacity = 0.6 + Math.sin(t * 1.6) * 0.12; // 밀려왔다 빠지는 느낌
+    decor(t);
   };
   return { group, update };
 }
@@ -668,16 +774,10 @@ function buildPlaza(group) {
     paint(new THREE.CylinderGeometry(T.top.r, 0.18, 0.2, 24).translate(f.x, T.top.y, f.z), 0xd8cfc0),
     paint(new THREE.SphereGeometry(0.08, 10, 6).translate(f.x, T.top.y + 0.12, f.z), 0xe2dacb),
   ];
-  // 벤치: 나무 앉음판 + 등받이 + 돌 다리 (rot 쪽을 바라봄)
+  // 벤치 (rot 쪽을 바라봄)
   const wood = [];
   for (const b of PLAZA.benches) {
-    const parts = [
-      paint(new THREE.BoxGeometry(1.4, 0.08, 0.42).translate(0, 0.42, 0), 0xc9965f),
-      paint(new THREE.BoxGeometry(1.4, 0.32, 0.07).translate(0, 0.7, -0.2), 0xbf8b55),
-      paint(new THREE.BoxGeometry(0.12, 0.4, 0.38).translate(-0.58, 0.2, 0), 0x9c8f7a),
-      paint(new THREE.BoxGeometry(0.12, 0.4, 0.38).translate(0.58, 0.2, 0), 0x9c8f7a),
-    ];
-    for (const g of parts) wood.push(g.rotateY(b.rot).translate(b.x, 0, b.z));
+    for (const g of benchParts()) wood.push(g.rotateY(b.rot).translate(b.x, 0, b.z));
   }
   // 가로등: 진한 기둥 + 등 (등불은 그림자 없이 밝게)
   const lampBulbs = [];
@@ -691,6 +791,34 @@ function buildPlaza(group) {
   group.add(addOutline(new THREE.Mesh(mergeGeometries([...fountain, ...wood]), vertexColorToon), 0.02));
   group.add(new THREE.Mesh(mergeGeometries(lampBulbs), basic(0xfff1b0)));
   return buildFountainWater(group, f);
+}
+
+// 공원 벤치 한 개 (+z 를 바라봄): 나무 살 앉음판·뒤로 살짝 누운 등받이 + 짙은 초록 쇠 다리·끝이 동그랗게 말린 팔걸이
+function benchParts() {
+  const W = 1.5;
+  const WOOD = [0xd9a066, 0xc98f55];
+  const IRON = 0x3d5a4a;
+  const parts = [];
+  // 앉음판 나무 살 4줄
+  [-0.18, -0.06, 0.06, 0.18].forEach((z, i) => {
+    parts.push(paint(new THREE.BoxGeometry(W, 0.05, 0.1).translate(0, 0.46, z), WOOD[i % 2]));
+  });
+  // 등받이 나무 살 3줄 (위로 갈수록 뒤로)
+  [0.63, 0.76, 0.89].forEach((y, i) => {
+    const z = -0.25 - (y - 0.5) * 0.22;
+    parts.push(paint(new THREE.BoxGeometry(W, 0.09, 0.04).rotateX(-0.22).translate(0, y, z), WOOD[(i + 1) % 2]));
+  });
+  for (const x of [-0.66, 0.66]) {
+    const iron = (g) => parts.push(paint(g.translate(x, 0, 0), IRON));
+    iron(new THREE.BoxGeometry(0.06, 0.44, 0.06).translate(0, 0.22, 0.18)); // 앞다리
+    iron(new THREE.BoxGeometry(0.06, 1.0, 0.06).rotateX(-0.22).translate(0, 0.5, -0.26)); // 뒷다리 = 등받이 기둥
+    iron(new THREE.BoxGeometry(0.05, 0.05, 0.5).translate(0, 0.42, -0.02)); // 앉음판 받침
+    iron(new THREE.BoxGeometry(0.05, 0.22, 0.05).translate(0, 0.57, 0.18)); // 팔걸이 기둥
+    iron(new THREE.BoxGeometry(0.07, 0.04, 0.46).translate(0, 0.68, -0.03)); // 팔걸이
+    iron(new THREE.TorusGeometry(0.05, 0.018, 6, 12).rotateY(Math.PI / 2).translate(0, 0.66, 0.21)); // 말린 끝
+    for (const z of [0.18, -0.15]) iron(new THREE.SphereGeometry(0.05, 8, 5).scale(1, 0.5, 1).translate(0, 0.01, z)); // 발
+  }
+  return parts;
 }
 
 // 분수 2단 접시 높이·반지름 (접시 윗면 = y + 0.13)
