@@ -94,20 +94,10 @@ function faceBase(skin, W, H) {
   c.width = W;
   c.height = H;
   const g = c.getContext('2d');
+  // 얼굴 바탕은 몸(목·팔·다리)과 똑같은 살색 한 가지: 결 무늬나 턱 밑 그늘을 그려 넣으면
+  // 얼굴만 색이 달라져 턱과 목 사이에 경계가 보인다 (그늘은 조명·툰 명암이 맡는다)
   g.fillStyle = css(skin);
   g.fillRect(0, 0, W, H);
-  // 아주 옅은 피부 결
-  const r = rng(7);
-  for (let i = 0; i < 9000; i++) {
-    g.fillStyle = `rgba(255,${200 + r() * 40},${170 + r() * 40},${0.03 + r() * 0.03})`;
-    g.fillRect(r() * W, r() * H, 2, 2);
-  }
-  // 턱 밑(목과 닿는 곳) 어둡게
-  const grad = g.createLinearGradient(0, H * 0.78, 0, H);
-  grad.addColorStop(0, 'rgba(150,70,50,0)');
-  grad.addColorStop(1, 'rgba(150,70,50,0.22)');
-  g.fillStyle = grad;
-  g.fillRect(0, H * 0.78, W, H * 0.22);
   faceBases.set(key, c);
   return c;
 }
