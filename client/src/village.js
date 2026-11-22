@@ -657,13 +657,16 @@ function buildPlaza(group) {
       stone.push(paint(g, edge ? 0xb3a58e : STONES[Math.floor(rand() * STONES.length)]));
     }
   }
-  // 분수: 둥근 돌 수반 + 가운데 기둥 + 위 접시
+  // 분수: 둥근 돌 수반 + 기둥 + 아래 접시(1단) + 가는 기둥 + 위 접시(2단) + 물 나오는 꼭지
   const f = PLAZA.fountain;
+  const T = FOUNTAIN;
   const fountain = [
     paint(new THREE.CylinderGeometry(f.r, f.r + 0.1, 0.5, 32).translate(f.x, 0.25, f.z), 0xcfc4b2),
-    paint(new THREE.CylinderGeometry(0.28, 0.36, 1.2, 16).translate(f.x, 0.6, f.z), 0xd8cfc0),
-    paint(new THREE.CylinderGeometry(0.65, 0.3, 0.22, 24).translate(f.x, 1.25, f.z), 0xd8cfc0),
-    paint(new THREE.SphereGeometry(0.14, 12, 8).translate(f.x, 1.45, f.z), 0xe2dacb),
+    paint(new THREE.CylinderGeometry(0.24, 0.32, T.low.y - 0.5, 16).translate(f.x, (T.low.y + 0.5) / 2, f.z), 0xd8cfc0),
+    paint(new THREE.CylinderGeometry(T.low.r, 0.38, 0.26, 32).translate(f.x, T.low.y, f.z), 0xd8cfc0),
+    paint(new THREE.CylinderGeometry(0.13, 0.18, T.top.y - T.low.y, 12).translate(f.x, (T.top.y + T.low.y) / 2, f.z), 0xe2dacb),
+    paint(new THREE.CylinderGeometry(T.top.r, 0.18, 0.2, 24).translate(f.x, T.top.y, f.z), 0xd8cfc0),
+    paint(new THREE.SphereGeometry(0.08, 10, 6).translate(f.x, T.top.y + 0.12, f.z), 0xe2dacb),
   ];
   // 벤치: 나무 앉음판 + 등받이 + 돌 다리 (rot 쪽을 바라봄)
   const wood = [];
@@ -687,13 +690,107 @@ function buildPlaza(group) {
   group.add(new THREE.Mesh(mergeGeometries(stone), vertexColorToon));
   group.add(addOutline(new THREE.Mesh(mergeGeometries([...fountain, ...wood]), vertexColorToon), 0.02));
   group.add(new THREE.Mesh(mergeGeometries(lampBulbs), basic(0xfff1b0)));
-  // 분수 물: 아래 수반과 위 접시
-  const water = toon(0x7cc8f0);
-  const low = new THREE.Mesh(new THREE.CircleGeometry(f.r - 0.14, 32).rotateX(-Math.PI / 2), water);
-  low.position.set(f.x, 0.46, f.z);
-  const top = new THREE.Mesh(new THREE.CircleGeometry(0.55, 24).rotateX(-Math.PI / 2), water);
-  top.position.set(f.x, 1.37, f.z);
-  group.add(low, top);
+  return buildFountainWater(group, f);
+}
+
+// 분수 2단 접시 높이·반지름 (접시 윗면 = y + 0.13)
+const FOUNTAIN = { low: { y: 1.0, r: 0.95 }, top: { y: 1.62, r: 0.5 } };
+
+// 떨어지는 물줄기 무늬: 세로로 긴 하얀 줄이 섞인 반투명 물빛
+function fallTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = 64;
+  cv.height = 128;
+  const g = cv.getContext('2d');
+  g.fillStyle = 'rgba(140,210,245,0.55)';
+  g.fillRect(0, 0, 64, 128);
+  const rand = seeded(5);
+  for (let i = 0; i < 22; i++) {
+    g.fillStyle = `rgba(255,255,255,${0.3 + rand() * 0.5})`;
+    const x = rand() * 64;
+    const y = rand() * 128;
+    const h = 20 + rand() * 50;
+    g.fillRect(x, y, 1.5 + rand() * 2, h);
+    g.fillRect(x, y - 128, 1.5 + rand() * 2, h); // 위아래 이어지게
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// 움직이는 분수 물: 접시마다 일렁이는 물 + 접시 가장자리로 넘쳐 흐르는 물줄기 + 꼭대기 물보라 + 수반의 물결
+function buildFountainWater(group, f) {
+  const { low, top } = FOUNTAIN;
+  const surf = waterTexture();
+  surf.repeat.set(0.35, 0.35);
+  const surfMat = toon(0xffffff, { map: surf });
+  const pool = (r, y) => {
+    const m = new THREE.Mesh(new THREE.CircleGeometry(r, 32).rotateX(-Math.PI / 2), surfMat);
+    m.position.set(f.x, y, f.z);
+    group.add(m);
+  };
+  pool(f.r - 0.14, 0.46);
+  pool(low.r - 0.08, low.y + 0.11);
+  pool(top.r - 0.07, top.y + 0.09);
+
+  // 넘쳐 흐르는 물줄기: 접시 가장자리에서 아래로 살짝 퍼지며 떨어지는 열린 원통
+  const fall = fallTexture();
+  fall.repeat.set(6, 1);
+  const fallMat = basic(0xffffff, { map: fall, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  const curtain = (rTop, rBot, yTop, yBot) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, yTop - yBot, 32, 1, true), fallMat);
+    m.position.set(f.x, (yTop + yBot) / 2, f.z);
+    group.add(m);
+  };
+  curtain(top.r + 0.02, top.r + 0.12, top.y + 0.1, low.y + 0.11);
+  curtain(low.r + 0.02, low.r + 0.16, low.y + 0.12, 0.46);
+
+  // 꼭대기 물보라: 꼭지에서 솟았다가 위 접시로 떨어지는 물방울들
+  const DROPS = 36;
+  const dropMat = basic(0xe6f6ff);
+  const drops = new THREE.InstancedMesh(new THREE.SphereGeometry(0.035, 6, 4), dropMat, DROPS);
+  drops.frustumCulled = false;
+  group.add(drops);
+  const UP = 2.8; // 솟는 빠르기 (m/초)
+  // 물방울마다 솟는 힘(s)이 조금씩 달라 퍼져 보인다. life: 솟았다가 위 접시 물에 닿을 때까지(초)
+  const seeds = Array.from({ length: DROPS }, (_, i) => {
+    const s = 0.7 + ((i * 37) % 10) / 30;
+    const v = UP * s;
+    return { ph: i / DROPS, a: i * 2.399, s, life: (v + Math.sqrt(v * v + 4 * 4.9 * 0.07)) / 9.8 };
+  });
+  const m4 = new THREE.Matrix4();
+
+  // 수반 물결: 물줄기가 떨어지는 자리에서 바깥으로 퍼지는 고리
+  const rings = [0, 1, 2].map((i) => {
+    const mat = basic(0xffffff, { transparent: true, depthWrite: false });
+    const m = new THREE.Mesh(new THREE.RingGeometry(low.r + 0.14, low.r + 0.2, 40).rotateX(-Math.PI / 2), mat);
+    m.position.set(f.x, 0.47, f.z);
+    group.add(m);
+    return { m, mat, ph: i / 3 };
+  });
+  const maxS = (f.r - 0.16) / (low.r + 0.2);
+
+  return (t) => {
+    surf.offset.set(t * 0.03, t * 0.02);
+    fall.offset.y = t * 1.6;
+    for (let i = 0; i < DROPS; i++) {
+      const d = seeds[i];
+      const k = ((t / d.life + d.ph) % 1) * d.life; // 솟은 뒤 지난 시간
+      const out = 0.4 * d.s * (k / d.life); // 바깥으로 퍼진 거리
+      const y = top.y + 0.16 + UP * d.s * k - 4.9 * k * k;
+      m4.makeTranslation(f.x + Math.cos(d.a) * out, y, f.z + Math.sin(d.a) * out);
+      drops.setMatrixAt(i, m4);
+    }
+    drops.instanceMatrix.needsUpdate = true;
+    for (const r of rings) {
+      const p = (t * 0.6 + r.ph) % 1;
+      const s = 1 + (maxS - 1) * p;
+      r.m.scale.set(s, 1, s);
+      r.mat.opacity = 0.55 * (1 - p);
+    }
+  };
 }
 
 export function buildVillage(scene, { low = false } = {}) {
@@ -708,7 +805,7 @@ export function buildVillage(scene, { low = false } = {}) {
   buildMeadow(group, { low });
   buildFence(group);
   buildPlots(group, labels);
-  buildPlaza(group);
+  const fountain = buildPlaza(group);
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)
@@ -734,6 +831,7 @@ export function buildVillage(scene, { low = false } = {}) {
     update(dt, t) {
       TIME.value = t;
       river.update(t);
+      fountain(t);
       trees.update(dt);
       rocks.update(dt);
     },
