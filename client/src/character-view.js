@@ -120,9 +120,9 @@ const LIFE_ACTIONS = { gather: '채집', chop: '벌목', chopAgain: '벌목(이�
 const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
   castSpell: '마법 시전', hit: '피격', faint: '기절',
-  swordSlash1: '목검 1타 · 대각선 베기', swordSlash2: '목검 2타 · 가로 되베기', swordSlash3: '목검 3타 · 찌르기',
+  swordSlash1: '목검 1타 · 대각선 베기', swordSlash2: '목검 2타 · 가로 되베기', swordSlash3: '목검 3타 · 찌르기', swordAir: '목검 점프 공격', swordSlam: '목검 내려베기(더블 점프)', swordDash: '목검 대시 공격',
   // 몽둥이 휘두르기 시안 (비교용)
-  clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubSmash3: '몽둥이 3타(이어 치는 1타)', clubAir: '몽둥이 공중 공격', clubSlam: '몽둥이 내리찍기(더블 점프)', clubDash: '몽둥이 대시 공격', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
+  clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubSmash3: '몽둥이 3타(야구 스윙)', clubSmash4: '몽둥이 4타(이어 치는 1타)', clubAir: '몽둥이 공중 공격', clubSlam: '몽둥이 내리찍기(더블 점프)', clubDash: '몽둥이 대시 공격', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
 };
 // 타격 시점 콜백을 눈으로 확인할 수 있도록 잠깐 띄우는 문구
 const HIT_TEXT = {
@@ -186,10 +186,10 @@ for (const [id, list] of [['action', ACTION_LABELS], ['life-action', LIFE_ACTION
 }
 // 1타 → 2타 연속 재생 (게임에서 공격을 두 번 눌렀을 때와 같은 흐름)
 button($('combat-action'), {
-  label: '몽둥이 연속(1→2→3→2타)',
+  label: '몽둥이 연속(1→2→3→4→2타)',
   onClick: () => {
     villager.setAction('clubSmash', onHit);
-    [['clubSmash2', 470], ['clubSmash3', 875], ['clubSmash2', 1280]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
+    [['clubSmash2', 470], ['clubSmash3', 875], ['clubSmash4', 1425], ['clubSmash2', 1830]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
   },
   isOn: () => false,
 });
@@ -197,7 +197,7 @@ button($('combat-action'), {
   label: '목검 연속(1→2→3→1타)',
   onClick: () => {
     villager.setAction('swordSlash1', onHit);
-    [['swordSlash2', 384], ['swordSlash3', 719], ['swordSlash4', 1091]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
+    [['swordSlash2', 384], ['swordSlash3', 719], ['swordSlash4', 1277]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
   },
   isOn: () => false,
 });

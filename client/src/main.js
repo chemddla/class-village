@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
-  ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
+  ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
 import { Character, actTime, LAND } from './character.js';
@@ -125,30 +125,36 @@ const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 지금 손에 든 도구 번호,
 // equip: 퀵슬롯에서 고른 장비 번호 (생활 행동 중에는 그 일에 맞는 도구를 잠깐 들었다가, 끝나면 다시 이것으로 돌아온다)
 const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0 };
-// 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·3타 0.62초 × 0.5
-const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
-  [ANIM.SLASH1]: 282, [ANIM.SLASH2]: 232, [ANIM.SLASH3]: 285, [ANIM.SLASH4]: 282 }; // 목검: 동작 길이 × hitAt
-// 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 2타 → 3타 → …
-// (3타는 2타에서 이어지도록 만든 1타. 2타와 3타가 서로의 끝 자세에서 시작해 끊기지 않고 8자를 그린다)
-const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH2,
+// 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·4타 0.62초 × 0.5, 3타(야구 스윙) 0.78초 × 0.5
+const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 390, [ANIM.SMASH4]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
+  [ANIM.SLASH1]: 282, [ANIM.SLASH2]: 232, [ANIM.SLASH3]: 264, [ANIM.SLASH4]: 282, // 목검: 동작 길이 × hitAt
+  [ANIM.SLASH_AIR]: 190, [ANIM.SLASH_SLAM]: 400, [ANIM.SLASH_DASH]: 300 }; // 목검 공중·내려베기·대시 (몽둥이와 같은 때)
+// 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 4타 → 2타 → 3타 → …
+// (3타는 야구 배트처럼 수평으로 크게 휘두르고, 4타는 3타에서 이어지도록 만든 1타. 서로의 끝 자세에서 시작해 끊기지 않는다)
+const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH4, [ANIM.SMASH4]: ANIM.SMASH2,
   // 목검: 1타 → 2타 → 3타(찌르기) → 이어 치는 1타 → 2타 → …
   [ANIM.SLASH1]: ANIM.SLASH2, [ANIM.SLASH2]: ANIM.SLASH3, [ANIM.SLASH3]: ANIM.SLASH4, [ANIM.SLASH4]: ANIM.SLASH2 };
 // 다음 타로 넘어가는 때(초): 휘두른 몽둥이가 관성 끝까지 간 직후, 왼손을 놓기 전
-const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.405,
+const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.55, [ANIM.SMASH4]: 0.405, // 3타는 크게 휘둘러 끝까지 넘긴 뒤에 이어진다
   // 목검: 칼이 관성 끝까지 간 순간 (손을 놓기 전)
-  [ANIM.SLASH1]: 0.384, [ANIM.SLASH2]: 0.335, [ANIM.SLASH3]: 0.372, [ANIM.SLASH4]: 0.384 };
+  [ANIM.SLASH1]: 0.384, [ANIM.SLASH2]: 0.335, [ANIM.SLASH3]: 0.558, [ANIM.SLASH4]: 0.384 }; // 3타는 찌른 자세로 버틴 뒤에 이어진다
 // 이어 하는 도끼질: 도끼가 나무에 박혀 멈춘 뒤에도 G를 누르고 있으면, 뽑아서 다시 찍는 동작으로 넘어간다
 const NEXT_CHOP = { [ANIM.CHOP]: ANIM.CHOP2, [ANIM.CHOP2]: ANIM.CHOP3, [ANIM.CHOP3]: ANIM.CHOP2 };
 const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 떨림이 잦아든 뒤, 손을 놓기 전
 // 떠 있는 동안의 동작: 움직여도 끊기지 않는다
-const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM]);
+const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SLASH_AIR, ANIM.SLASH_SLAM]);
 // 공격 동작: 하는 동안에는 방향키로 움직이지 못한다 (떠서 하는 공중 공격·내리찍기도 마찬가지)
-const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
-  ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4]);
+const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
+  ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH]);
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
+// 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
+const THRUST_STEP = [0.17, 0.33];
+const THRUST_SPEED = 9.8; // 0.1초에 1m 안쪽이라 서버 이동 검사(0.1초에 1.3m)도 통과한다
 // 더블 점프 내리찍기: 내려오며 찍는 동안(초) 보는 쪽으로 살짝 나아간다. 가장 빠를 때 SLAM_SPEED, 모두 0.55m쯤
 // (제자리에 곧장 떨어지면 몸을 실어 찍는 느낌이 나지 않는다)
 const SLAM_STEP = [0.42, 0.72];
+// 점프·더블 점프 공격 중 방향키를 누르고 있을 때 앞으로 나아가는 빠르기 (걷기·달리기 빠르기의 배수)
+const AIR_ATTACK_BOOST = 1.3;
 const SLAM_SPEED = 2.9;
 function getHit(fromX, fromZ) {
   local.act = ANIM.SURPRISE; // 'hit' 피격 모션
@@ -159,8 +165,9 @@ function getHit(fromX, fromZ) {
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
-  const slam = action === 'clubSlam';
-  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
+  const slam = action === 'clubSlam' || action === 'swordSlam';
+  const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
+  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
   if (action === 'chopAgain' || action === 'chopAgain2') action = 'chop';
   const fx = Math.sin(char.targetRot);
   const fz = Math.cos(char.targetRot);
@@ -174,9 +181,11 @@ function hitFx(char, action) {
 
   if (action === 'clubSmash' || action === 'chop') {
     // 몽둥이: 사람 → 바위 → 나무 → 땅 순서로 맞은 것을 찾는다 · 도끼: 나무
-    const hx = char.x + fx * 0.95;
-    const hz = char.z + fz * 0.95;
-    const victims = action === 'clubSmash' ? [me, ...[...others.values()].map((o) => o.char)].filter((c) => c && c !== char && inSwing(char.x, char.z, char.targetRot, c.x, c.z)) : [];
+    const reach = thrust ? 1.9 : 0.95;
+    const hx = char.x + fx * reach;
+    const hz = char.z + fz * reach;
+    const hits = thrust ? inThrust : inSwing;
+    const victims = action === 'clubSmash' ? [me, ...[...others.values()].map((o) => o.char)].filter((c) => c && c !== char && hits(char.x, char.z, char.targetRot, c.x, c.z)) : [];
     const rock = action === 'clubSmash' ? village.nearRock(hx, hz, 0.7) : -1;
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
@@ -368,32 +377,30 @@ const input = createInput({
     } else if (name === 'attack') {
       // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 꾹 누르고 있을 때만)
       if (local.hurt > 0) return;
-      if (TOOLS[local.tool] === 'woodSword') {
-        // 목검은 한 손으로 베기만 한다 (공중·대시 공격 없이 그 자리에서). 계속 누르면 아래에서 다음 타로 이어진다
-        if (local.actLeft > 0) return;
-        const rot = aimRot();
-        if (rot !== null) me.setPose(me.x, me.z, rot);
-        startAct(ANIM.SLASH1);
-        return;
-      }
-      if (TOOLS[local.tool] !== 'club') return;
+      // 몽둥이와 목검은 같은 흐름: 점프 중이면 공중 공격, 더블 점프 중이면 착지하며 내리치기, 달리는 중이면 대시 공격, 아니면 1타
+      // (계속 누르면 아래에서 다음 타로 이어진다)
+      const sword = TOOLS[local.tool] === 'woodSword';
+      if (!sword && TOOLS[local.tool] !== 'club') return;
+      const A = sword
+        ? { air: ANIM.SLASH_AIR, slam: ANIM.SLASH_SLAM, dash: ANIM.SLASH_DASH, first: ANIM.SLASH1 }
+        : { air: ANIM.SMASH_AIR, slam: ANIM.SMASH_SLAM, dash: ANIM.SMASH_DASH, first: ANIM.SMASH };
       const el = actTime(local.act) - local.actLeft; // 지금 동작이 흐른 시간
       const rot = aimRot(); // 마우스가 가리키는 땅 쪽으로 돌아서서 휘두른다 (터치·화면 버튼은 보던 방향 그대로)
       if (local.act === ANIM.JUMP && local.actLeft > 0 && el > 0.08 && el < 0.5) {
         // 공중 공격: 뛰어오른 높이를 그대로 이어받아 공중에서 휘두른다 (길이가 점프와 같아 남은 시간도 그대로)
         if (rot !== null) me.setPose(me.x, me.z, rot);
-        local.act = ANIM.SMASH_AIR;
+        local.act = A.air;
       } else if (local.act === ANIM.FLIP && local.actLeft > 0 && el < 0.5) {
-        // 더블 점프 뒤 공격: 착지하며 땅을 내리찍는다
+        // 더블 점프 뒤 공격: 착지하며 땅을 내리찍는다 (목검은 내려벤다)
         if (rot !== null) me.setPose(me.x, me.z, rot);
-        local.act = ANIM.SMASH_SLAM;
-        local.actLeft = actTime(ANIM.SMASH_SLAM) - el;
+        local.act = A.slam;
+        local.actLeft = actTime(A.slam) - el;
       } else if (local.actLeft <= 0) {
         const inp = input.read();
-        if (inp.run && inp.mag > 0) startAct(ANIM.SMASH_DASH); // 달리던 방향 그대로 뛰어들며 내리친다
+        if (inp.run && inp.mag > 0) startAct(A.dash); // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
         else {
           if (rot !== null) me.setPose(me.x, me.z, rot);
-          startAct(ANIM.SMASH);
+          startAct(A.first);
         }
       }
     } else if (name === 'life') {
@@ -621,13 +628,22 @@ function updateMe(dt) {
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
   // 공격하는 동안은 방향키로 움직이지 못한다. 동작이 스스로 나아가는 만큼만 보는 쪽으로 움직인다:
-  // 대시 공격은 뛰어들었다가 내리친 뒤 멈추고, 더블 점프 내리찍기는 정해진 구간에만 살짝 나아간다
+  // 대시 공격은 뛰어들었다가 내리친 뒤 멈추고, 목검 찌르기와 더블 점프 내리찍기는 정해진 구간에만 살짝 나아간다
   if (ATTACKS.has(local.act) && local.actLeft > 0) {
     const sec = actTime(local.act) - local.actLeft;
     const glide = ([s0, s1], top) => (sec > s0 && sec < s1 ? top * Math.sin(Math.PI * (sec - s0) / (s1 - s0)) : 0);
     let speed = 0;
-    if (local.act === ANIM.SMASH_DASH) speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(ANIM.SMASH_DASH), 0.35, 0.6));
-    else if (local.act === ANIM.SMASH_SLAM) speed = glide(SLAM_STEP, SLAM_SPEED);
+    if (local.act === ANIM.SMASH_DASH || local.act === ANIM.SLASH_DASH) speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(local.act), 0.35, 0.6));
+    else if (local.act === ANIM.SLASH3) speed = glide(THRUST_STEP, THRUST_SPEED);
+    else if (local.act === ANIM.SMASH_SLAM || local.act === ANIM.SLASH_SLAM) {
+      // 더블 점프 공격: 착지하며 내리찍을 때 살짝 나아가고, 방향키를 누르고 있으면 착지할 때까지 보는 쪽으로 힘차게 나아간다
+      speed = glide(SLAM_STEP, SLAM_SPEED);
+      if (inp.mag > 0 && sec < LAND.flip) speed = Math.max(speed, (inp.run ? RUN_SPEED : WALK_SPEED) * AIR_ATTACK_BOOST);
+    }
+    // 점프 공격: 방향키를 누르고 있으면 착지할 때까지 보는 쪽으로 힘차게 나아가며 휘두른다 (걷기·달리기보다 빠르게)
+    else if ((local.act === ANIM.SMASH_AIR || local.act === ANIM.SLASH_AIR) && inp.mag > 0 && sec < LAND.jump) {
+      speed = (inp.run ? RUN_SPEED : WALK_SPEED) * AIR_ATTACK_BOOST;
+    }
     if (speed > 0 && local.hurt <= 0) {
       const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
       for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
@@ -737,10 +753,10 @@ function updateOthers(now) {
       char.setAnim(a.a);
     }
     // 휘두르기 시작을 보면 내려찍는 순간에 내가 앞에 있는지 확인
-    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) o.hitAt = now + HIT_DELAY[char.anim];
+    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) { o.hitAt = now + HIT_DELAY[char.anim]; o.hitAnim = char.anim; }
     if (o.hitAt && now >= o.hitAt) {
       o.hitAt = 0;
-      if (me && inSwing(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z);
+      if (me && (o.hitAnim === ANIM.SLASH3 ? inThrust : inSwing)(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z);
     }
   }
 }

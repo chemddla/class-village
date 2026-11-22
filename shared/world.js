@@ -16,6 +16,8 @@ export const ANIM = {
   CHOP2: 15, CHOP3: 16, // 이어 하는 도끼질 (같은 동작, 번갈아 재생)
   SMASH_AIR: 17, SMASH_SLAM: 18, SMASH_DASH: 19, // 몽둥이 공중 공격 · 더블 점프 뒤 내리찍기 · 대시 공격
   SLASH1: 20, SLASH2: 21, SLASH3: 22, SLASH4: 23, // 목검(한손검) 대각선 베기 · 가로 되베기 · 찌르기 · 3타에 이어 치는 1타
+  SLASH_AIR: 25, SLASH_SLAM: 26, SLASH_DASH: 27, // 목검 점프 공격 · 더블 점프 뒤 내려베기 · 대시 공격
+  SMASH4: 24, // 몽둥이 3타(야구 스윙, SMASH3)에 이어 치는 1타
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
@@ -207,6 +209,15 @@ export function inSwing(ax, az, rot, bx, bz) {
   if (Math.hypot(dx, dz) > 1.4) return false;
   const d = Math.atan2(dx, dz) - rot;
   return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < 1.0;
+}
+
+// 찌르기(목검 3타)에 맞았는지: 앞으로 길고 폭이 좁은 범위 (보는 방향으로 2.4m, 옆으로 0.5m)
+export function inThrust(ax, az, rot, bx, bz) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const ahead = dx * Math.sin(rot) + dz * Math.cos(rot);
+  const side = dx * Math.cos(rot) - dz * Math.sin(rot);
+  return ahead > -0.1 && ahead < 2.4 && Math.abs(side) < 0.5;
 }
 
 // 네트워크용 압축: m → cm 정수, 각도 → 0~255

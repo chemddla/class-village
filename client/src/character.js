@@ -59,12 +59,13 @@ const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 // 잠깐 하는 동작: 번호 → 주민 액션 이름. 길이는 일회성은 액션 길이, 반복형은 정해 둔 시간
 const ACTS = {
   [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
-  [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3',
+  [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3', [ANIM.SMASH4]: 'clubSmash4',
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
+  [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash',
   [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
-const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP };
+const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5 };
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
@@ -212,11 +213,11 @@ export class Character {
     // 점프: 도약하는 순간 쭉 늘어나고, 착지하는 순간 납작 → 탄성 복원 + 발밑 먼지
     const cur = this.current;
     const M = this.marks;
-    if (cur === 'jump' || cur === 'clubAir') {
+    if (cur === 'jump' || cur === 'clubAir' || cur === 'swordAir') {
       if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
       // 발이 땅에 닿는 순간(진행도 0.78 = 0.74초)에 맞춘다: 더 이르면 아직 공중에서 납작해지고 먼지가 난다
       if (!M.down && this.actSec >= LAND.jump) { M.down = 1; this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
-    } else if (cur === 'flip' || cur === 'clubSlam') {
+    } else if (cur === 'flip' || cur === 'clubSlam' || cur === 'swordSlam') {
       if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
       if (!M.down && this.actSec >= LAND.flip) { M.down = 1; this.footPuff(12, 1.2, true); }
       // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
@@ -249,7 +250,7 @@ export class Character {
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)
     let leanX = run * 0.16 + (cur === 'flip' ? 0.2 * (1 - Math.min(1, this.actSec / 0.5)) : 0);
-    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip' && cur !== 'clubDash') leanX = 0; // 생활·공격 동작 중에는 똑바로
+    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip' && cur !== 'clubDash' && cur !== 'swordDash') leanX = 0; // 생활·공격 동작 중에는 똑바로
     const leanZ = THREE.MathUtils.clamp(-turn * 0.035, -0.22, 0.22) * run;
     const a = 1 - Math.exp(-dt * 10);
     this.body.rotation.x += (leanX - this.body.rotation.x) * a;

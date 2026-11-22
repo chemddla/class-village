@@ -441,22 +441,31 @@ export const HEAD_Y = 0.245 * TY + 0.188; // 머리 중심 높이 (머리 아래
 // 상의 단면 [반지름, 높이] (세로 TY배 전): 목둘레 → 밑단, 끝 세 점은 안쪽으로 접힌 밑단 두께.
 // 맨몸 몸통(BODY)을 천 두께만큼만 띄워 그대로 따라간다: 어깨는 둥글게 넘어가고, 겨드랑이 아래로는 종처럼 벌어지지 않고
 // 거의 곧게 내려가 밑단만 살짝 여유를 둔다. 옷을 입혀도 몸통 옆선이 다리 바깥선으로 이어지는 맨몸의 실루엣이 그대로 남는다.
+// 어깨 끝(목 옆 평평한 윗면 → 옆구리)은 둥근 호(중심 0.073, 0.145)로 채운다: 좁게 꺾이면 팔을 들거나 몸을 틀어
+// 소매가 비켜날 때 어깨가 상자 모서리처럼 드러난다
 const SHIRT = [
+  [0.042, 0.2], [0.049, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.0793, 0.2121], [0.0853, 0.2052], [0.0903, 0.1941],
+  [0.0942, 0.1797], [0.0967, 0.163], [0.0975, 0.145], [0.101, 0.125], [0.1045, 0.1], [0.1075, 0.065], [0.1095, 0.02], [0.1115, -0.02],
+  [0.1125, -0.031], [0.1065, -0.032], [0.1015, -0.02],
+];
+// 몸 충돌 검사용 상의 단면: 둥글리기 전 모양 그대로 둔다 (두 손 쥐기·팔 밀어내기가 이 모양에 맞춰져 있다)
+const SHIRT_FIT = [
   [0.042, 0.2], [0.049, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.081, 0.208], [0.087, 0.198], [0.091, 0.184],
   [0.094, 0.165], [0.0975, 0.145], [0.101, 0.125], [0.1045, 0.1], [0.1075, 0.065], [0.1095, 0.02], [0.1115, -0.02],
-  [0.1125, -0.031], [0.1065, -0.032], [0.1015, -0.02],
 ];
 // 목 단면 (몸통 기준 높이): 머리 속에서 넓게 시작해 목둘레까지
 // 목은 머리 폭의 5분의 1쯤으로 가늘게
 const NECK = [[0.072, HEAD_Y - 0.13], [0.058, HEAD_Y - 0.158], [0.045, HEAD_Y - 0.178], [0.039, HEAD_Y - 0.2], [0.039, NECK_Y + 0.012]];
 // 맨몸 몸통 단면: 어깨까지는 상의와 같고, 겨드랑이 아래로는 벌어지지 않고 곧게 내려가 골반·다리 바깥선으로 그대로 이어진다
 const BODY = [
-  [0.046, 0.2], [0.052, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.081, 0.208], [0.087, 0.198], [0.091, 0.184],
-  [0.093, 0.165], [0.094, 0.145], [0.097, 0.125], [0.1, 0.1], [0.102, 0.065], [0.103, 0.02], [0.103, -0.03], [0.09, -0.05],
+  [0.046, 0.2], [0.052, 0.218], [0.063, 0.2175], [0.073, 0.2145], [0.0793, 0.2121], [0.0853, 0.2052], [0.0903, 0.1941],
+  [0.0925, 0.18],
+  // 허리 아래(속옷 속에 숨는 곳)는 조금 안으로 넣는다: 속옷과 간격이 거의 없어 앞면을 눌러 다리로 이을 때 맨살이 비쳐 나온다
+  [0.093, 0.165], [0.094, 0.145], [0.097, 0.125], [0.1, 0.1], [0.102, 0.065], [0.103, 0.02], [0.098, -0.03], [0.086, -0.05],
 ];
 // 높이 y(세로 배율 적용 전)에서 셔츠 겉 반지름
 function shirtRadius(y) {
-  const side = SHIRT.slice(1, 15);
+  const side = SHIRT.slice(1, 16);
   for (let i = 1; i < side.length; i++) {
     const [r1, y1] = side[i];
     if (y >= y1) {
@@ -479,6 +488,11 @@ export const SHOULDER = { x: 0.076 * BODY_K, y: 0.184 * TY };
 // 몸통 어깨선과 팔 윗면 사이의 오목한 꺾임을 둥글게 메운다
 const CAP_R = 0.027;
 const SHOULDER_CAP = [0, 20, 40, 60, 78, 90].map((d) => [CAP_R * Math.sin((d * PI) / 180), CAP_R * Math.cos((d * PI) / 180)]);
+// 어깨 둥근 마감의 외곽선: 몸통과 맞닿는 쪽(몸 안쪽 반쪽)은 선을 긋지 않는다.
+// 선이 남으면 팔을 들거나 몸을 틀 때 몸통 위에 소매 테두리가 그어져 어깨가 따로 붙은 공처럼 끊겨 보인다.
+// (바깥쪽 꼭대기는 남긴다: 차렷 자세에서 어깨 윗선이 이 마감의 윤곽이다)
+// s: 팔 방향(-1 오른팔, 1 왼팔). 반환값 0 = 선 그대로, 1 = 선 없음
+const capLine = (s) => (x, y) => smooth(0.004, -0.012, x * s) * smooth(-0.05, -0.025, y);
 
 // 셔츠 겉면을 따라가는 세로 단면 조각 (아래→위, off만큼 띄움): 로고·지퍼·주머니 같은 덧댐에 쓴다
 function shirtProf(y0, y1, off = 0.002, n = 8) {
@@ -689,7 +703,7 @@ const HEM_INSET = (y) => THREE.MathUtils.lerp(0.025, COLLIDER_INSET, THREE.MathU
 export function bodyColliders(o, hips, torso) {
   const list = [
     // 상의: 어깨 관절 바로 아래부터 밑단까지 (어깨 위는 팔이 붙는 곳이라 뺌)
-    { joint: torso, zs: 0.78, prof: slimProf(inset(ty(SHIRT.slice(8, 14)), HEM_INSET)) },
+    { joint: torso, zs: 0.78, prof: slimProf(inset(ty(SHIRT_FIT.slice(8, 14)), HEM_INSET)) },
     // 바지·치마 (골반 공간)
     o.bottom === 'skirt'
       ? { joint: hips, zs: 0.82, prof: slimProf(inset([[0.1, 0.015], [0.106, -0.012], [0.124, -0.055], [0.148, -0.108], [0.152, -0.118]], 0.03)) }
@@ -810,7 +824,16 @@ function buildBody(root, o, live, detail) {
   // 목은 둥글고 몸통은 앞뒤로 납작하다: 목에서 가슴까지 납작한 정도가 부드럽게 바뀐다 (sideDepth)
   const bodyZs = style.bare ? 1 : 0.78;
   const shirtMesh = mesh(fitTorso(lathe(ty(bodyProf), 56, bodyZs), bodyZs), shirtMat, torso, '상의');
-  if (style.bare) fadeLine(shirtMesh, (x, y) => smooth(HEAD_Y - 0.186, HEAD_Y - 0.174, y)); // 맨몸 목 윗끝도 머리 속에서 외곽선 없이
+  // 어깨 관절 둘레의 바깥쪽(어깨 끝·옆구리)은 몸통 외곽선을 긋지 않는다: 팔을 들거나 몸을 틀면 몸통 어깨 끝 옆선이
+  // 소매 위로 비쳐 어깨와 몸통 사이에 세로 줄이 그어지고, 팔이 따로 끼운 것처럼 끊겨 보인다.
+  // 목에서 관절까지의 어깨 윗선은 남긴다 (차렷 자세의 어깨 윤곽. 관절 바깥쪽 윤곽은 소매 마감이 그린다).
+  // (아직 몸을 줄이기 전(slimBody) 좌표라 관절의 가로 자리는 BODY_K로 나눠 둔다)
+  const jx = SHOULDER.x / BODY_K;
+  // 아래로는 차렷 자세에서 소매가 덮는 높이(관절 아래 약 8cm)까지
+  const armSeam = (x, y, z) => smooth(0.085, 0.055, Math.hypot(Math.abs(x) - jx, y - SHOULDER.y, z)) * smooth(jx - 0.012, jx + 0.004, Math.abs(x));
+  fadeLine(shirtMesh, style.bare
+    ? (x, y, z) => Math.max(smooth(HEAD_Y - 0.186, HEAD_Y - 0.174, y), armSeam(x, y, z)) // 맨몸 목 윗끝도 머리 속에서 외곽선 없이
+    : armSeam);
   P.colliders = bodyColliders(o, hips, torso);
   const ribMat = (key, color) => clothMat(clothTexture(key, color, { ao: [[0, 0.9], [0.5, 1], [1, 0.9]] }), clothBump(key), { bumpScale: 1.6 });
   const trim = ribMat('trim', shade(top, 0.9));
@@ -926,7 +949,7 @@ function buildBody(root, o, live, detail) {
   // 도구는 목·어깨 위쪽도 지나가면 안 된다 (팔은 거기 붙어 있으므로 팔 검사에는 넣지 않는다)
   P.toolColliders = [...P.colliders, {
     joint: torso, zs: 0.78,
-    prof: [[0.05, HEAD_Y - 0.17], [0.05, NECK_Y], ...slimProf(inset(ty(SHIRT.slice(1, 9)), 0.006))],
+    prof: [[0.05, HEAD_Y - 0.17], [0.05, NECK_Y], ...slimProf(inset(ty(SHIRT_FIT.slice(1, 9)), 0.006))],
   }];
 
   // 팔: 어깨 → 팔꿈치 → 손
@@ -952,13 +975,13 @@ function buildBody(root, o, live, detail) {
     if (style.sleeve === 'short') {
       const len = outfit === 'tee' ? 0.074 : 0.084; // 오버핏은 팔꿈치 바로 위까지
       const r = CAP_R + 0.05 * len;
-      mesh(lathe([...SHOULDER_CAP, [r, -len], [r - 0.003, -len - 0.0008], [r - 0.0045, -len + 0.007]], 48),
-        sleeveMat, arm, '소매');
+      fadeLine(mesh(lathe([...SHOULDER_CAP, [r, -len], [r - 0.003, -len - 0.0008], [r - 0.0045, -len + 0.007]], 48),
+        sleeveMat, arm, '소매'), capLine(s));
     }
     if (long) {
       // 긴소매: 어깨에서 손목까지 한 통 (팔꿈치에서 통째로 휜다)
       const up = style.inner ? [[0.0215, -0.03], [rE, -0.09]] : [...SHOULDER_CAP, [rE, -0.09]];
-      limb([...up, [rE + 0.0008, -0.13], [rE + 0.0008, -0.156], [rE - 0.0004, -0.1655], [0.0242, -0.165], [0.0236, -0.158]], 48, innerMat, arm, elbow, '긴소매');
+      fadeLine(limb([...up, [rE + 0.0008, -0.13], [rE + 0.0008, -0.156], [rE - 0.0004, -0.1655], [0.0242, -0.165], [0.0236, -0.158]], 48, innerMat, arm, elbow, '긴소매'), capLine(s));
       if (!style.inner) {
         // 소맷부리 시보리
         mesh(lathe([[rE, -0.058], [rE + 0.0024, -0.062], [rE + 0.0024, -0.0765], [0.0242, -0.0775]], 48), trim, elbow, '소맷부리');
@@ -975,7 +998,7 @@ function buildBody(root, o, live, detail) {
       fadeLine(limb([[0.0205, -0.034], [0.021, -0.06], [0.0215, -0.09], [0.0218, -0.11], [0.0225, -0.135], [0.0232, -0.155], [0.0238, -0.168]], 24, handMat, arm, elbow, '팔'),
         (x, y) => Math.max(smooth(-0.05, -0.036, y), smooth(-0.15, -0.165, y)));
       // 맨몸: 소매 대신 같은 둥근 어깨를 피부로 (몸통과 맞닿는 안쪽은 외곽선 없이)
-      if (style.bare) fadeLine(mesh(lathe([...SHOULDER_CAP, [0.0222, -0.05]], 48), handMat, arm, '어깨'), (x) => smooth(0.004, -0.012, x * s));
+      if (style.bare) fadeLine(mesh(lathe([...SHOULDER_CAP, [0.0222, -0.05]], 48), handMat, arm, '어깨'), capLine(s));
     }
     const hand = new THREE.Group();
     hand.position.y = -0.078;
@@ -990,10 +1013,12 @@ function buildBody(root, o, live, detail) {
     socket.position.set(0, -0.05, 0.004);
     hand.add(socket);
     P[s < 0 ? 'rightSocket' : 'leftSocket'] = socket;
+    anchorShoulder(arm, torso);
     P[`shoulder${SIDE[s]}`] = arm;
     P[`elbow${SIDE[s]}`] = elbow;
     P[`hand${SIDE[s]}`] = hand;
   }
+  if (bottom !== 'skirt') tuckFront(hips, torso, 0.058, bottom === 'bare' ? 0.045 : 0.051);
   slimBody(hips, torso, P);
   bendWaist(root, hips, torso);
   bindLimbs(root);
@@ -1018,6 +1043,44 @@ function bakeScale(c, k) {
   c.position.set(0, 0, 0);
   c.rotation.set(0, 0, 0);
   c.scale.set(1, 1, 1);
+}
+// 아랫배 → 다리: 몸통·허리는 앞뒤로 다리보다 훨씬 두꺼워, 옆에서 보면 허리 밑에서 다리로 넘어갈 때 앞쪽이 턱처럼 튀어나온다.
+// 배 아래부터 앞면(z>0)만 점점 눌러 허리 밑단에서는 다리 앞선과 같은 두께가 되게 한다 → 배에서 허벅지 앞으로 한 줄로 흘러내린다.
+// 상의·밑단 띠·바지 허리를 같은 높이에서 같은 비율로 누르므로 겹친 순서(상의가 바지 허리를 덮음)는 그대로다.
+// 치마는 A라인으로 퍼지는 모양이라 누르지 않는다 (상의만 누르면 치마 허리가 상의 밑단을 뚫고 나온다)
+const TUCK_HI = 0.05; // 여기 위는 그대로
+const TUCK_LO = -0.065; // 여기 아래는 다리 앞선 두께까지 눌린다
+const TUCK_K = 0.58; // 맨 아래에서 앞쪽 두께 비율 (허리 앞 0.08 → 다리 앞 0.045 쯤)
+// legR: 다리 뿌리(엉덩이 관절 구) 반지름. 눌린 앞면이 그보다 안으로 들어가면 다리 뿌리가 옷을 뚫고 비쳐 나오므로 그 앞선에서 멈춘다
+function tuckFront(hips, torso, legX, legR) {
+  const v = new THREE.Vector3();
+  // 같은 (x, y) 자리의 모든 층(맨살·상의·바지 허리)을 같은 비율로 눌러야 겹친 순서가 그대로 남는다.
+  // 그래서 "허리 앞면이 다리 앞선에서 멈추는" 비율을 허리 단면(반지름 0.1045, 앞뒤 0.8배) 기준으로 구해 아래 한계로 쓴다
+  const minK = (x) => {
+    const d = Math.abs(x) - legX;
+    if (d * d >= legR * legR) return 0;
+    const waist = 0.8 * Math.sqrt(Math.max(1e-6, 0.1045 * 0.1045 - x * x));
+    return Math.min(1, (Math.sqrt(legR * legR - d * d) + 0.004) / waist);
+  };
+  for (const c of [...hips.children, ...torso.children]) {
+    if (!c.isMesh) continue;
+    c.updateMatrix();
+    const inv = c.matrix.clone().invert();
+    const p = c.geometry.attributes.position;
+    let changed = false;
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(c.matrix); // 몸통 기준 위치로 바꿔 높이를 잰다
+      if (v.z <= 0 || v.y >= TUCK_HI) continue;
+      v.z *= Math.max(1 - (1 - TUCK_K) * smooth(TUCK_HI, TUCK_LO, v.y), minK(v.x));
+      v.applyMatrix4(inv);
+      p.setXYZ(i, v.x, v.y, v.z);
+      changed = true;
+    }
+    if (changed) {
+      p.needsUpdate = true;
+      c.geometry.computeVertexNormals();
+    }
+  }
 }
 function slimBody(hips, torso, P) {
   const kTorso = (y) => BODY_K + (1 - BODY_K) * smooth(NECK_Y - 0.025, NECK_Y, y);
@@ -1072,6 +1135,126 @@ function limb(points, segs, mat, joint, child, name, blend = 0.03) {
   pendingSkins.push([m, [joint, child]]);
   return m;
 }
+// ───────────── 어깨 잇기 ─────────────
+// 소매·어깨 윗부분의 둥근 마감은 어깨 관절을 감싼 반구라, 팔과 통째로 돌면 팔을 가슴 앞으로 크게 돌릴 때
+// 그 둥근 면이 몸통 밖(등 쪽)으로 공처럼 드러난다. 관절 위쪽은 몸통을 따르고 아래로 내려갈수록 팔을 따르도록 섞어
+// 둥근 마감은 늘 몸통 속에 머물고 소매가 몸통에서 팔로 부드럽게 늘어나며 이어지게 한다.
+const ANCHOR_LO = -0.03; // 여기 아래(팔 관절 기준)는 팔 그대로
+const ANCHOR_HI = 0.02; // 여기 위는 몸통 그대로
+// 어깨 뼈 두 개: 자리는 팔 관절에 두고, 팔을 들어 수평(앞·가슴 쪽)에 가까워질수록 '몸 옆 방향'으로 납작하게 누른다.
+// 관절이 몸통 옆 끝에 있어 팔을 앞으로 뻗으면 관절을 감싼 둥근 마감과 소매 통이 몸통 옆으로 1.5cm쯤 비어져 나와
+// 공처럼 튀어나와 보인다. 누르는 방향은 팔이 뻗은 방향과 수직으로 잡아, 팔을 옆으로 벌릴 때 팔 길이가 줄지 않게 한다.
+//  - 마감 뼈(spin 0): 팔과 함께 돌지 않고 몸통을 따른다 (관절 위 둥근 마감)
+//  - 소매 뼈(spin 1): 팔과 함께 돈다 (어깨 쪽 소매 통·윗팔)
+const CAP_SQUASH = 0.55; // 팔이 앞으로 수평일 때 옆으로 줄이는 몫
+const ARM_DOWN = new THREE.Vector3();
+const SQ_AXIS = new THREE.Vector3();
+const SQ_M = new THREE.Matrix4();
+const REST_SQ = new THREE.Quaternion();
+const SQ_Q = new THREE.Quaternion();
+function shoulderBone(arm, torso, spin, name) {
+  const b = new THREE.Object3D();
+  b.name = name;
+  b.updateMatrix = function updateShoulderBone() {
+    ARM_DOWN.set(0, -1, 0).applyQuaternion(arm.quaternion);
+    // 팔이 수평에 가까울수록, 그리고 옆이 아니라 앞·가슴 쪽을 향할수록 많이 누른다
+    const lift = Math.min(1, Math.max(0, 1 + ARM_DOWN.y));
+    const k = CAP_SQUASH * lift * lift * (3 - 2 * lift) * (1 - ARM_DOWN.x * ARM_DOWN.x);
+    // 누르는 축: 몸 옆(x)에서 팔 방향 성분을 뺀 방향
+    SQ_AXIS.set(1, 0, 0).addScaledVector(ARM_DOWN, -ARM_DOWN.x);
+    const n2 = SQ_AXIS.lengthSq();
+    SQ_Q.slerpQuaternions(REST_SQ, arm.quaternion, spin);
+    this.matrix.makeRotationFromQuaternion(SQ_Q);
+    if (n2 > 1e-6 && k > 1e-4) {
+      SQ_AXIS.divideScalar(Math.sqrt(n2));
+      const { x, y, z } = SQ_AXIS;
+      // 축 방향으로만 (1 - k)배: I - k·n·nᵀ
+      SQ_M.set(1 - k * x * x, -k * x * y, -k * x * z, 0, -k * y * x, 1 - k * y * y, -k * y * z, 0, -k * z * x, -k * z * y, 1 - k * z * z, 0, 0, 0, 0, 1);
+      this.matrix.premultiply(SQ_M);
+    }
+    this.matrix.setPosition(arm.position);
+    this.matrixWorldNeedsUpdate = true;
+  };
+  torso.add(b);
+  return b;
+}
+// 팔을 앞(가슴 쪽)으로 뻗을수록 어깨 관절을 안쪽으로 옮긴다 (사람도 팔을 앞으로 뻗으면 어깨가 몸 앞쪽으로 모인다).
+// (앞뒤 자리는 동작이 정하는 값(shoulder.pz)이 있어 건드리지 않는다)
+// 관절이 몸통 옆 끝에 그대로 있으면 앞으로 뻗은 팔이 몸통 옆에서 튀어나와, 뒤에서 볼 때 어깨에 공이 붙은 것처럼 보인다.
+// 두 손으로 쥐는 동작은 팔 각도가 IK로 정해지므로 바로 앞 장의 팔 방향(rig.armDir)으로 정하고, 부드럽게 따라가게 한다
+const SHOULDER_IN = 0.024; // 안쪽으로 옮기는 최대 거리
+function followShoulders(rig, dt) {
+  const a = 1 - Math.exp(-14 * dt);
+  for (const s of ['R', 'L']) {
+    const arm = rig[`shoulder${s}`];
+    const rest = arm.userData.rest;
+    if (!rest) continue;
+    const d = rig.armDir?.[s] ?? new THREE.Vector3(0, -1, 0).applyQuaternion(arm.quaternion);
+    const lift = Math.min(1, Math.max(0, 1 + d.y)); // 0: 내림 → 1: 수평 이상
+    const fwd = Math.min(1, Math.max(0, d.z * 1.2)); // 앞을 향한 정도
+    const k = lift * lift * (3 - 2 * lift) * fwd;
+    const st = (rig.shoulderShift ??= { R: 0, L: 0 });
+    st[s] += (k - st[s]) * a;
+    const side = s === 'R' ? -1 : 1;
+    arm.position.x = rest.x - side * SHOULDER_IN * st[s];
+  }
+}
+const SLEEVE_LO = -0.09; // 여기 아래(팔 관절 기준)는 소매 뼈의 영향을 받지 않는다
+const SLEEVE_HI = -0.035; // 여기 위는 소매 뼈를 그대로 따른다
+function anchorShoulder(arm, torso) {
+  const cap = shoulderBone(arm, torso, 0, '어깨마감');
+  const sleeve = shoulderBone(arm, torso, 1, '어깨소매');
+  for (const c of [...arm.children]) {
+    if (!c.isMesh) continue;
+    const g = c.geometry;
+    const pos = g.attributes.position;
+    let top = -Infinity;
+    for (let i = 0; i < pos.count; i++) top = Math.max(top, pos.getY(i));
+    if (top < SLEEVE_LO) continue; // 어깨에 닿지 않는 조각
+    const capW = (i) => smooth(ANCHOR_LO, ANCHOR_HI, pos.getY(i));
+    const sleeveW = (i) => (1 - capW(i)) * smooth(SLEEVE_LO, SLEEVE_HI, pos.getY(i));
+    const pending = pendingSkins.find(([m]) => m === c);
+    if (pending) {
+      // 이미 팔꿈치에서 휘는 팔·긴소매: 세 번째·네 번째 뼈로 마감 뼈·소매 뼈를 더한다
+      const idx = g.attributes.skinIndex;
+      const wt = g.attributes.skinWeight;
+      for (let i = 0; i < pos.count; i++) {
+        const a = capW(i);
+        const b = sleeveW(i);
+        const rest = 1 - a - b;
+        wt.setXYZW(i, wt.getX(i) * rest, wt.getY(i) * rest, a, b);
+        idx.setXYZW(i, 0, 1, 2, 3);
+      }
+      pending[1].push(cap, sleeve);
+      continue;
+    }
+    const idx = new Uint16Array(pos.count * 4);
+    const wt = new Float32Array(pos.count * 4);
+    for (let i = 0; i < pos.count; i++) {
+      const a = capW(i);
+      const b = sleeveW(i);
+      idx[i * 4 + 1] = 1;
+      idx[i * 4 + 2] = 2;
+      wt[i * 4] = 1 - a - b;
+      wt[i * 4 + 1] = a;
+      wt[i * 4 + 2] = b;
+    }
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wt, 4));
+    const m = new THREE.SkinnedMesh(g, c.material);
+    m.name = c.name;
+    m.castShadow = c.castShadow;
+    m.receiveShadow = c.receiveShadow;
+    Object.assign(m.userData, c.userData);
+    m.position.copy(c.position);
+    m.quaternion.copy(c.quaternion);
+    m.scale.copy(c.scale);
+    arm.remove(c);
+    arm.add(m);
+    pendingSkins.push([m, [arm, cap, sleeve]]);
+  }
+}
+
 // 관절이 모두 제자리에 놓인 뒤(기본 자세) 한꺼번에 뼈에 묶는다
 function bindLimbs(root) {
   root.updateWorldMatrix(true, true);
@@ -1084,9 +1267,31 @@ function bindLimbs(root) {
 // 벌어지지 않고 한 덩어리로 부드럽게 휜다.
 const WAIST_LO = -0.035; // 여기 아래는 골반 그대로
 const WAIST_HI = 0.135; // 여기 위는 상체 그대로 (어깨 관절보다 아래)
+// 골반과 상체 사이에 "사이 뼈"를 여러 개 둔다: 각각 상체 회전의 1/6, 2/6, … 만큼만 돈다.
+// 두 뼈만으로 섞으면 허리를 크게 틀 때(야구 스윙처럼 80도 넘게) 가운데 정점들이 두 회전의 평균 자리, 곧 안쪽으로 모여
+// 허리가 비틀린 사탕 껍질처럼 홀쭉해진다. 사이 뼈가 적으면(가운데 하나) 굵기는 지켜도, 몸통 단면이 앞뒤로 납작해서
+// 뼈와 뼈 사이 구간이 곧은 면으로 이어지고 구간 경계마다 옆선이 꺾여 각져 보인다.
+// 뼈를 촘촘히 두면 한 구간에서 도는 각이 작아져 비틀림이 높이를 따라 고르게 퍼지고 옆선이 매끈하게 휜다
+const WAIST_STEPS = 6; // 골반 → 상체 사이 구간 수
+const REST_Q = new THREE.Quaternion();
+function waistBone(hips, torso, f) {
+  const b = new THREE.Object3D();
+  b.name = '허리사이';
+  b.updateMatrix = function updateWaistBone() {
+    this.position.copy(torso.position);
+    this.quaternion.slerpQuaternions(REST_Q, torso.quaternion, f);
+    this.scale.set(1, 1, 1).lerp(torso.scale, f);
+    THREE.Object3D.prototype.updateMatrix.call(this);
+  };
+  hips.add(b);
+  return b;
+}
 function bendWaist(root, hips, torso) {
+  const bones = [hips];
+  for (let i = 1; i < WAIST_STEPS; i++) bones.push(waistBone(hips, torso, i / WAIST_STEPS));
+  bones.push(torso);
   root.updateWorldMatrix(true, true);
-  const skeleton = new THREE.Skeleton([hips, torso]);
+  const skeleton = new THREE.Skeleton(bones);
   // 바지 허리·치마도 상의와 똑같이 휘게 한다: 골반에만 붙여 두면 허리를 틀거나 숙일 때 상의 밑단만 따라 돌아
   // 그 속의 바지 허리가 상의를 뚫고 나온다 (같은 뼈·같은 비율로 휘면 둘 사이 간격이 그대로 유지된다)
   for (const c of hips.children.filter((m) => m.isMesh && (m.name === '바지허리' || m.name === '치마'))) torso.add(c);
@@ -1103,10 +1308,14 @@ function bendWaist(root, hips, torso) {
     const idx = new Uint16Array(pos.count * 4);
     const wt = new Float32Array(pos.count * 4);
     for (let i = 0; i < pos.count; i++) {
-      const k = smooth(WAIST_LO, WAIST_HI, pos.getY(i));
-      idx[i * 4 + 1] = 1;
-      wt[i * 4] = 1 - k;
-      wt[i * 4 + 1] = k;
+      // 0 골반 → … 사이 뼈들 … → 1 상체. 양 끝은 부드럽게 시작·마무리하고(smoothstep), 사이는 이웃한 두 뼈를 곧게 섞는다
+      const k = smooth(WAIST_LO, WAIST_HI, pos.getY(i)) * WAIST_STEPS;
+      const j = Math.min(WAIST_STEPS - 1, Math.floor(k));
+      const w = k - j;
+      idx[i * 4] = j;
+      idx[i * 4 + 1] = j + 1;
+      wt[i * 4] = 1 - w;
+      wt[i * 4 + 1] = w;
     }
     g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
     g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wt, 4));
@@ -1386,9 +1595,11 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
     if (state.action !== player.action) setAction(state.action); // state.action 을 직접 바꾼 경우도 받아 줌
     const fx = player.update(rig, t, dt);
     trailOn = !!fx.trail;
+    followShoulders(rig, dt); // 팔을 앞으로 뻗은 만큼 어깨를 안쪽으로 (두 손 쥐기 계산보다 먼저: 손은 옮긴 어깨에서 다시 뻗는다)
     updateEquipment(rig, root, fx, t, dt, state);
     resolveArmCollision(rig); // 팔이 몸·옷 속으로 들어가지 않게 (장비 IK까지 끝난 뒤)
     straightenWrists(rig); // 팔꿈치가 옮겨진 뒤에도 손목은 아래팔과 한 줄로
+    for (const s of ['R', 'L']) (rig.armDir ??= {})[s] = new THREE.Vector3(0, -1, 0).applyQuaternion(rig[`shoulder${s}`].quaternion); // 다음 장의 어깨 위치에 쓴다
     // 간헐적 눈 깜빡임
     blinkT -= dt;
     let sy = 1;
