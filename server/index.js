@@ -7,7 +7,7 @@ import { Server, Room } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema } from '@colyseus/schema';
 import {
-  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook, FRUITS, FRUIT_NAMES,
+  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, EDGE, isBlocked, toCm, fromCm, cleanLook, FRUITS, FRUIT_NAMES,
 } from '../shared/world.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
@@ -139,10 +139,20 @@ class VillageRoom extends Room {
       const tz = SPAWN.z + (Math.random() * 2 - 1) * 3;
       if (!isBlocked(tx, tz)) { x = tx; z = tz; break; }
     }
+    // 테스트 서버: 서버가 다시 켜져 새로 들어오는 경우 원래 있던 자리·방향으로 되돌려 준다 (화면이 보낸 spot).
+    // 갈 수 있는 곳일 때만 받아 준다. 실제 수업 서버(FREE_LOOK 꺼짐)에서는 늘 광장에서 시작
+    let r = 0;
+    const spot = options.spot;
+    if (FREE_LOOK && spot && Number.isFinite(spot.x) && Number.isFinite(spot.z)
+      && Math.abs(spot.x) <= EDGE && Math.abs(spot.z) <= EDGE && !isBlocked(spot.x, spot.z)) {
+      x = spot.x;
+      z = spot.z;
+      r = Math.max(0, Math.min(255, Number(spot.r) | 0));
+    }
     const p = new Player();
     p.x = toCm(x);
     p.z = toCm(z);
-    p.r = 0;
+    p.r = r;
     p.a = ANIM.IDLE;
     p.name = cleanName(options.name);
     p.color = Math.max(0, Math.min(COLORS.length - 1, Number(options.color) | 0));

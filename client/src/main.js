@@ -68,6 +68,9 @@ const camTarget = new THREE.Vector3(0, 0, 3);
 let camScale = 1;
 // 시점: 마우스 왼쪽 끌기로 돌리기(yaw)·기울기(pitch), 휠로 거리(zoom). 처음 값은 예전 고정 시점과 같음
 const cam = { yaw: 0, pitch: Math.atan2(12.5, 13.5), dist: Math.hypot(12.5, 13.5), zoom: 1 };
+// 새로고침해도 카메라 각도·거리는 그대로 (이 탭에만 기억)
+try { Object.assign(cam, JSON.parse(store.get(sessionStorage, 'cam') ?? '{}')); } catch { /* 처음 */ }
+const saveCam = () => store.set(sessionStorage, 'cam', JSON.stringify({ yaw: cam.yaw, pitch: cam.pitch, zoom: cam.zoom }));
 const camOffset = new THREE.Vector3();
 
 function resize() {
@@ -399,9 +402,11 @@ const input = createInput({
   onOrbit(dx, dy) {
     cam.yaw -= dx * 0.006;
     cam.pitch = THREE.MathUtils.clamp(cam.pitch + dy * 0.004, 0.3, 1.3);
+    saveCam();
   },
   onZoom(dy) {
     cam.zoom = THREE.MathUtils.clamp(cam.zoom * Math.exp(dy * 0.0012), 0.4, 1.6);
+    saveCam();
   },
 });
 
@@ -505,26 +510,60 @@ function attach(r) {
   });
 }
 
-async function tryReconnect() {
-  const token = store.get(sessionStorage, 'reconnect');
-  if (!token) { location.reload(); return; }
+// 한 번 들어온 탭은 새로고침하거나 서버가 다시 켜져도 입장 화면 없이 그대로 돌아온다 (클래스 아레나처럼).
+// 1) 원래 자리가 아직 남아 있으면(와이파이가 잠깐 끊김·새로고침) 그 자리로 다시 접속
+// 2) 서버가 다시 켜져 자리가 없어졌으면, 기억해 둔 이름·색·외형·위치로 새로 들어간다
+// 3) 둘 다 안 되면(서버가 켜지는 중·인터넷 끊김) 2초마다 다시 해 본다
+function joinVillage(spot = null) {
+  const name = (store.get(localStorage, 'name') ?? ui.name.value).trim().slice(0, 10);
+  return client.joinOrCreate('village', { name, color: chosenColor, look: lookEditor.look, ...(spot ? { spot } : {}) });
+}
+function savedSpot() {
+  try { return JSON.parse(store.get(sessionStorage, 'spot') ?? 'null'); } catch { return null; }
+}
+// 돌아오기: 다시 접속했으면 'back', 새로 들어갔으면 'rejoined'
+async function resume() {
   input.enable(false);
-  ui.reconnect.classList.remove('hidden');
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
+  // 바로 돌아오면(새로고침) "연결이 끊겼어요" 안내는 띄우지 않는다
+  const notice = setTimeout(() => ui.reconnect.classList.remove('hidden'), 800);
+  try {
+    return await retryResume();
+  } finally {
+    clearTimeout(notice);
+  }
+}
+async function retryResume() {
+  for (;;) {
+    const token = store.get(sessionStorage, 'reconnect');
+    if (token) {
+      try {
+        const r = await client.reconnect(token);
+        clearPlayers();
+        attach(r);
+        return 'back';
+      } catch { /* 자리가 없어졌거나 아직 연결이 안 됨 */ }
+    }
     try {
-      const r = await client.reconnect(token);
+      const r = await joinVillage(savedSpot());
       clearPlayers();
       attach(r);
-      ui.reconnect.classList.add('hidden');
-      input.enable(true);
-      return;
+      return 'rejoined';
     } catch {
       await new Promise((ok) => setTimeout(ok, 2000));
     }
   }
-  store.del(sessionStorage, 'reconnect');
-  ui.reconnect.querySelector('.card').textContent = '다시 연결하지 못했어요. 화면을 새로고침해 주세요.';
+}
+function resumed() {
+  ui.reconnect.classList.add('hidden');
+  enterGame();
+}
+
+async function tryReconnect() {
+  const how = await resume();
+  // 서버가 다시 켜졌다 = 새 버전이 올라왔을 수 있다: 화면도 새로 불러 새 코드를 받는다
+  // (방금 잡은 자리로 곧바로 다시 접속하고, 위치·카메라는 기억해 둔 그대로라 화면이 그대로 이어진다)
+  if (how === 'rejoined') { location.reload(); return; }
+  resumed();
 }
 
 function enterGame() {
@@ -546,8 +585,10 @@ ui.form.addEventListener('submit', async (e) => {
   ui.joinBtn.disabled = true;
   ui.error.textContent = '';
   try {
-    const r = await client.joinOrCreate('village', { name, color: chosenColor, look: lookEditor.look });
+    store.del(sessionStorage, 'spot'); // 입장 화면에서 새로 들어가면 광장에서 시작
+    const r = await joinVillage();
     attach(r);
+    store.set(sessionStorage, 'joined', '1');
     enterGame();
   } catch (err) {
     console.error(err);
@@ -560,18 +601,12 @@ ui.form.addEventListener('submit', async (e) => {
 // 화면을 닫거나 다른 곳으로 갈 때: 서버에 알려 내 캐릭터가 오래 남아 있지 않게 (새로고침이면 곧바로 돌아온다)
 addEventListener('pagehide', () => { try { room?.send('bye'); } catch { /* 이미 끊김 */ } });
 
-// 새로고침·화면 꺼짐 뒤에는 자동으로 원래 자리로 돌아감
-(async () => {
-  const token = store.get(sessionStorage, 'reconnect');
-  if (!token) return;
-  try {
-    const r = await client.reconnect(token);
-    attach(r);
-    enterGame();
-  } catch {
-    store.del(sessionStorage, 'reconnect');
-  }
-})();
+// 새로고침·화면 꺼짐·서버 재시작 뒤에는 입장 화면 없이 자동으로 원래 자리로 돌아감 (이 탭에서 한 번 들어왔으면)
+// (새로고침 때는 위에서 자리를 비우므로, 기억해 둔 이름·외형·위치로 새로 들어간다)
+if (store.get(sessionStorage, 'joined') && store.get(localStorage, 'name')) {
+  ui.join.classList.add('hidden');
+  resume().then(resumed);
+}
 
 // ── 내 캐릭터 움직이기 ──
 function updateMe(dt) {
@@ -668,6 +703,8 @@ function updateMe(dt) {
     if (!l || msg.some((v, i) => v !== l[i])) {
       room.send('m', msg);
       local.last = msg;
+      // 서버가 다시 켜져 새로 들어갈 때 이 자리·방향으로 돌아오도록 기억 (이 탭에만)
+      store.set(sessionStorage, 'spot', JSON.stringify({ x: me.x, z: me.z, r: msg[2] }));
     }
   }
 }
