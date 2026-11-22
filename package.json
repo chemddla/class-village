@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -n server,client -c green,cyan \"npm:server\" \"npm:client\"",
+    "live": "node tools/live-server.cjs",
     "server": "node --watch-path=server --watch-path=shared server/index.js",
     "client": "vite client --host",
     "bots": "node tools/bots.js",

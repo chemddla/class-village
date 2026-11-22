@@ -12,6 +12,18 @@ npm run dev
 - 화면: http://localhost:5173
 - 게임 서버: 포트 2567 (`GAME_PORT` 환경 변수로 변경 가능)
 
+## 늘 켜 두는 테스트 서버 (내 컴퓨터)
+
+작업 스케줄러 `ClassVillage live test server`가 로그인할 때, 그리고 2분마다 `tools/live-server.cjs`를 확인해 꺼져 있으면 켭니다.
+따로 `npm run dev`를 켜지 않아도 http://localhost:5173 에 늘 접속할 수 있습니다.
+
+- 작업 폴더를 그대로 보여 줍니다. 화면 코드(`client`)를 고치면 브라우저가 곧바로 새로 그리고, 게임 서버 코드(`server`·`shared`)를 고치면 게임 서버가 저절로 다시 켜집니다.
+- 화면 서버나 게임 서버가 멈추면 4초 뒤 다시 켭니다. 포트를 다른 곳에서 쓰고 있으면 비워질 때까지 기다렸다가 켭니다.
+- 기록: `%LOCALAPPDATA%\ClassVillage\live-server.log`
+- 처음 등록하거나 설정을 바꿀 때: `powershell -NoProfile -ExecutionPolicy Bypass -File tools\install-live-server.ps1`
+- 끄려면: `Unregister-ScheduledTask -TaskName 'ClassVillage live test server' -Confirm:$false`를 실행한 뒤 남은 `node tools\live-server.cjs`를 끕니다.
+- Claude 앱의 미리보기(`.claude/launch.json`의 `village`)는 새로 켜지 않고 이 서버에 붙습니다. 따로 켜야 할 때는 `village-dev`를 씁니다.
+
 ## 태블릿에서 접속
 
 1. 컴퓨터와 태블릿을 **같은 와이파이**에 연결합니다.
