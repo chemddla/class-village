@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
-  WORLD, HALF, EDGE, PLOTS, BRIDGE, SPAWN, RIVER_HALF_WIDTH, riverCenterZ,
+  WORLD, HALF, EDGE, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, riverCenterZ,
 } from '../../shared/world.js';
 import {
   toon, windToon, basic, paint, vertexColorToon, addOutline, TIME,
@@ -37,6 +37,8 @@ function buildGround() {
     else if (dPlaza < 6.2) c.lerp(SAND, 0.5);
     // 광장 → 다리 길
     if (Math.abs(x) < 1.1 && z < SPAWN.z && z > -24) c.copy(SAND);
+    // 광장 → 상점·대장간 길
+    if (Math.abs(z - SPAWN.z) < 1.1 && Math.abs(x) < 13) c.copy(SAND);
     // 강가 모래
     const dr = Math.abs(z - riverCenterZ(x));
     if (dr < RIVER_HALF_WIDTH + 0.6) c.copy(BANK);
@@ -481,6 +483,7 @@ function grassy(x, z) {
   if (Math.abs(x) > HALF - 0.5 || Math.abs(z) > HALF - 0.5) return false;
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 6.4) return false;
   if (Math.abs(x) < 1.4 && z < SPAWN.z && z > -24) return false;
+  if (Math.abs(z - SPAWN.z) < 1.4 && Math.abs(x) < 13) return false;
   if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + 0.9) return false;
   for (const p of PLOTS) if (Math.abs(x - p.x) < p.w / 2 + 0.3 && Math.abs(z - p.z) < p.d / 2 + 0.6) return false;
   for (const t of WORLD.trees) if (Math.hypot(x - t.x, z - t.z) < t.r * 0.6) return false;
@@ -635,6 +638,64 @@ function buildPlots(group, labels) {
   group.add(addOutline(new THREE.Mesh(mergeGeometries(parts), vertexColorToon), 0.02));
 }
 
+// 마을 광장: 둥글게 깐 돌바닥 + 가운데 분수 + 벤치 + 가로등
+function buildPlaza(group) {
+  const { x: cx, z: cz } = SPAWN;
+  const rand = seeded(42);
+  const stone = [];
+  const STONES = [0xd8cfc0, 0xcfc4b2, 0xe2dacb, 0xc6baa6];
+  // 돌바닥: 분수 둘레부터 바깥까지 동심원으로 돌을 깐다 (맨 바깥 줄은 진한 테두리)
+  for (let r = PLAZA.fountain.r + 0.35; r < PLAZA.r; r += 0.52) {
+    const edge = r + 0.52 >= PLAZA.r;
+    const n = Math.floor((Math.PI * 2 * r) / 0.58);
+    const off = rand() * Math.PI;
+    for (let i = 0; i < n; i++) {
+      const a = off + (i / n) * Math.PI * 2;
+      const g = new THREE.BoxGeometry(0.44, 0.05, (Math.PI * 2 * r) / n - 0.08)
+        .rotateY(-a)
+        .translate(cx + Math.cos(a) * r, 0.025, cz + Math.sin(a) * r);
+      stone.push(paint(g, edge ? 0xb3a58e : STONES[Math.floor(rand() * STONES.length)]));
+    }
+  }
+  // 분수: 둥근 돌 수반 + 가운데 기둥 + 위 접시
+  const f = PLAZA.fountain;
+  const fountain = [
+    paint(new THREE.CylinderGeometry(f.r, f.r + 0.1, 0.5, 32).translate(f.x, 0.25, f.z), 0xcfc4b2),
+    paint(new THREE.CylinderGeometry(0.28, 0.36, 1.2, 16).translate(f.x, 0.6, f.z), 0xd8cfc0),
+    paint(new THREE.CylinderGeometry(0.65, 0.3, 0.22, 24).translate(f.x, 1.25, f.z), 0xd8cfc0),
+    paint(new THREE.SphereGeometry(0.14, 12, 8).translate(f.x, 1.45, f.z), 0xe2dacb),
+  ];
+  // 벤치: 나무 앉음판 + 등받이 + 돌 다리 (rot 쪽을 바라봄)
+  const wood = [];
+  for (const b of PLAZA.benches) {
+    const parts = [
+      paint(new THREE.BoxGeometry(1.4, 0.08, 0.42).translate(0, 0.42, 0), 0xc9965f),
+      paint(new THREE.BoxGeometry(1.4, 0.32, 0.07).translate(0, 0.7, -0.2), 0xbf8b55),
+      paint(new THREE.BoxGeometry(0.12, 0.4, 0.38).translate(-0.58, 0.2, 0), 0x9c8f7a),
+      paint(new THREE.BoxGeometry(0.12, 0.4, 0.38).translate(0.58, 0.2, 0), 0x9c8f7a),
+    ];
+    for (const g of parts) wood.push(g.rotateY(b.rot).translate(b.x, 0, b.z));
+  }
+  // 가로등: 진한 기둥 + 등 (등불은 그림자 없이 밝게)
+  const lampBulbs = [];
+  for (const l of PLAZA.lamps) {
+    wood.push(paint(new THREE.CylinderGeometry(0.07, 0.1, 2.2, 8).translate(l.x, 1.1, l.z), 0x4f5a5e));
+    wood.push(paint(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 6).translate(l.x, 2.24, l.z), 0x4f5a5e));
+    wood.push(paint(new THREE.ConeGeometry(0.26, 0.2, 6).translate(l.x, 2.66, l.z), 0x4f5a5e));
+    lampBulbs.push(new THREE.CylinderGeometry(0.16, 0.13, 0.34, 6).translate(l.x, 2.43, l.z));
+  }
+  group.add(new THREE.Mesh(mergeGeometries(stone), vertexColorToon));
+  group.add(addOutline(new THREE.Mesh(mergeGeometries([...fountain, ...wood]), vertexColorToon), 0.02));
+  group.add(new THREE.Mesh(mergeGeometries(lampBulbs), basic(0xfff1b0)));
+  // 분수 물: 아래 수반과 위 접시
+  const water = toon(0x7cc8f0);
+  const low = new THREE.Mesh(new THREE.CircleGeometry(f.r - 0.14, 32).rotateX(-Math.PI / 2), water);
+  low.position.set(f.x, 0.46, f.z);
+  const top = new THREE.Mesh(new THREE.CircleGeometry(0.55, 24).rotateX(-Math.PI / 2), water);
+  top.position.set(f.x, 1.37, f.z);
+  group.add(low, top);
+}
+
 export function buildVillage(scene, { low = false } = {}) {
   const group = new THREE.Group();
   const labels = []; // 둥근 지평선에 맞춰 매 장면 위치를 고칠 이름표
@@ -647,6 +708,7 @@ export function buildVillage(scene, { low = false } = {}) {
   buildMeadow(group, { low });
   buildFence(group);
   buildPlots(group, labels);
+  buildPlaza(group);
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)

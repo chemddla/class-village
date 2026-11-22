@@ -20,11 +20,9 @@ export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
 export const TOOLS = ['none', 'axe', 'rod', 'club'];
 export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이)는 인벤토리에서 꺼냄
-// 테스트 서버에서 광장 가운데 놓는 생활 체험용 나무·연못·덤불
+// 테스트 서버에서 광장에 놓는 생활 체험용 나무
 export const LIFE_SPOTS = [
   { kind: 'tree', x: -3.6, z: 1.2 },
-  { kind: 'pond', x: 3.6, z: 1.4, r: 1.3 },
-  { kind: 'bush', x: 0, z: 0.2 },
 ];
 
 // 캐릭터 색 목록 (파스텔)
@@ -53,8 +51,23 @@ export function riverCenterZ(x) {
 // 다리 (강을 건너는 곳)
 export const BRIDGE = { x: 0, halfWidth: 1.3 };
 
-// 처음 나타나는 곳
+// 처음 나타나는 곳 (마을 광장 한가운데)
 export const SPAWN = { x: 0, z: 3 };
+
+// 마을 광장: 돌바닥 원 + 가운데 분수 + 벤치·가로등 (rot: 벤치가 바라보는 각)
+export const PLAZA = {
+  r: 6,
+  fountain: { x: SPAWN.x, z: SPAWN.z, r: 1.5 },
+  benches: [
+    { x: SPAWN.x - 3.4, z: SPAWN.z + 2.4 },
+    { x: SPAWN.x + 3.4, z: SPAWN.z + 2.4 },
+    { x: SPAWN.x + 3.4, z: SPAWN.z - 2.4 },
+  ].map((b) => ({ ...b, rot: Math.atan2(SPAWN.x - b.x, SPAWN.z - b.z) })),
+  lamps: [
+    { x: SPAWN.x - 1.9, z: SPAWN.z - 5.4 }, { x: SPAWN.x + 1.9, z: SPAWN.z - 5.4 }, // 다리 쪽 입구
+    { x: SPAWN.x - 5.4, z: SPAWN.z + 1.9 }, { x: SPAWN.x + 5.4, z: SPAWN.z + 1.9 }, // 상점·대장간 쪽 입구
+  ],
+};
 
 // 건물 예정지 (나중에 학생들이 함께 짓는 자리)
 export const PLOTS = [
@@ -76,8 +89,9 @@ function nearRiver(x, z, margin) {
 }
 
 function onPath(x, z, margin) {
-  // 광장에서 다리로 이어지는 길
-  return Math.abs(x) < 1.5 + margin && z < 4 && z > -20;
+  // 광장에서 다리로 이어지는 길 + 상점·대장간으로 이어지는 길
+  if (Math.abs(x) < 1.5 + margin && z < 4 && z > -20) return true;
+  return Math.abs(z - SPAWN.z) < 1.5 + margin && Math.abs(x) < 13;
 }
 
 export function generateWorld(seed = 20261118) {
@@ -134,6 +148,10 @@ export function generateWorld(seed = 20261118) {
   const colliders = [...trees, ...rocks].map((o) => ({ x: o.x, z: o.z, r: o.r }));
   // 예정지 표지판 기둥·판
   for (const p of PLOTS) colliders.push({ x: p.x, z: p.z + p.d / 2 + 0.25, r: 0.35 });
+  // 광장 분수·벤치·가로등
+  colliders.push({ x: PLAZA.fountain.x, z: PLAZA.fountain.z, r: PLAZA.fountain.r });
+  for (const b of PLAZA.benches) colliders.push({ x: b.x, z: b.z, r: 0.6 });
+  for (const l of PLAZA.lamps) colliders.push({ x: l.x, z: l.z, r: 0.15 });
   return { seed, trees, rocks, flowers, colliders };
 }
 
@@ -154,10 +172,8 @@ export function isBlocked(x, z, radius = PLAYER_RADIUS) {
   return false;
 }
 
-// 테스트 서버 광장 요소의 부딪힘 원 (연못은 테두리까지)
-export const LIFE_COLLIDERS = LIFE_SPOTS.map((s) => ({
-  x: s.x, z: s.z, r: s.kind === 'pond' ? s.r + 0.18 : s.kind === 'tree' ? 0.3 : 0.65,
-}));
+// 테스트 서버 광장 요소의 부딪힘 원
+export const LIFE_COLLIDERS = LIFE_SPOTS.map((s) => ({ x: s.x, z: s.z, r: 0.3 }));
 
 // 벽에 부딪히면 미끄러지듯 이동. extra: 화면에서만 막는 원들 (다른 캐릭터, 광장 요소)
 export function resolveMove(x, z, nx, nz, extra = []) {
