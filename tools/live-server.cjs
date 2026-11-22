@@ -14,6 +14,8 @@
  * --main: 작업 폴더 대신 전용 작업 폴더(%LOCALAPPDATA%\ClassVillage\live-main)를 몇 초마다 원격 main(origin/main)에
  *   맞추고 그 폴더를 보여 준다 → 다른 컴퓨터에서 푸시해도 몇 초 안에 반영된다. 전용 폴더는 강제로 덮어쓰므로 거기서는 고치지 말 것.
  *   설치 폴더(node_modules)는 작업 폴더의 것을 함께 쓴다 (main에서 새 패키지를 넣었으면 작업 폴더에서도 npm install 필요)
+ *   화면·게임 서버(5180·2577)는 스위치 파일 %LOCALAPPDATA%\ClassVillage\main-serve.on 이 있을 때만 켠다 (기본은 꺼짐).
+ *   원격 main 받아오기와 테스트판 올리기(--deploy-test)는 스위치와 상관없이 늘 한다
  *
  * - 화면 코드(client)를 고치면 Vite가 브라우저를 곧바로 새로 그린다.
  * - 게임 서버 코드(server·shared)를 고치면 게임 서버를 다시 켠다 (고친 코드에 오류가 있어 멈추면 다음 수정 때 다시 켬).
@@ -85,11 +87,14 @@ const savePids = () => {
 cleanupStale();
 savePids();
 
-// 하나의 프로그램을 켜 두고, 멈추면 RETRY_MS 뒤 다시 켠다
-function keep(name, args, env = {}) {
+// 하나의 프로그램을 켜 두고, 멈추면 RETRY_MS 뒤 다시 켠다.
+// on(): 지금 켜 두어야 하는지 (스위치 파일로 끄고 켤 때). 꺼야 하면 끄고, 다시 켜야 하면 켠다 (2초마다 확인)
+function keep(name, args, env = {}, on = () => true) {
   // busy: 포트를 이미 다른 곳에서 쓰고 있어 기다리는 중. 그동안은 같은 오류를 몇 초마다 되풀이해 적지 않는다
-  const job = { child: null, restartNow: false, busy: false };
+  const job = { child: null, restartNow: false, busy: false, waiting: false, stopping: false };
   const start = () => {
+    job.waiting = false;
+    if (!on()) return;
     const child = spawn(process.execPath, args, {
       cwd: ROOT, windowsHide: true, env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -118,6 +123,11 @@ function keep(name, args, env = {}) {
       job.child = null;
       const now = job.restartNow;
       job.restartNow = false;
+      if (job.stopping) {
+        job.stopping = false;
+        console.log(`[live] ${stamp()} ${name} 끔`);
+        return;
+      }
       if (inUse) {
         if (!job.busy) console.warn(`[live] ${stamp()} ${name}: 포트를 이미 다른 곳에서 쓰고 있음 → 비워질 때까지 ${RETRY_MS / 1000}초마다 다시 켜 봄`);
         job.busy = true;
@@ -125,9 +135,17 @@ function keep(name, args, env = {}) {
         job.busy = false;
         if (!now) console.warn(`[live] ${stamp()} ${name} 멈춤 (코드 ${code}) → ${RETRY_MS / 1000}초 뒤 다시 켬`);
       }
+      job.waiting = true;
       setTimeout(start, now ? 0 : RETRY_MS);
     });
   };
+  setInterval(() => {
+    if (on() && !job.child && !job.waiting) start();
+    else if (!on() && job.child && !job.stopping) {
+      job.stopping = true;
+      job.child.kill();
+    }
+  }, 2000);
   job.restart = () => {
     if (!job.child) return;
     job.restartNow = true;
@@ -215,8 +233,12 @@ if (MAIN) {
 
 const vite = path.join(REPO, 'node_modules', 'vite', 'bin', 'vite.js');
 // strictPort: 포트가 쓰이고 있으면 다른 포트로 옮겨 가지 않고 멈췄다가 다시 시도한다 (늘 같은 주소로 접속하도록)
-const view = keep('화면', [vite, 'client', '--host', '--strictPort', '--port', String(VIEW_PORT)], { VITE_GAME_PORT: String(GAME_PORT) });
-const game = keep('게임', ['server/index.js'], { GAME_PORT: String(GAME_PORT) });
+// 스위치 파일: --main 서버의 화면·게임 서버는 이 파일이 있을 때만 켠다 (원격 main 받아오기·테스트판 올리기는 늘 함).
+// 켜기: 파일 만들기 · 끄기: 파일 지우기 → 2초 안에 따라간다. 로컬용(5173)은 스위치 없이 늘 켠다
+const SWITCH = path.join(DATA, 'main-serve.on');
+const serving = () => !MAIN || fs.existsSync(SWITCH);
+const view = keep('화면', [vite, 'client', '--host', '--strictPort', '--port', String(VIEW_PORT)], { VITE_GAME_PORT: String(GAME_PORT) }, serving);
+const game = keep('게임', ['server/index.js'], { GAME_PORT: String(GAME_PORT) }, serving);
 
 // 게임 서버 코드가 바뀌면 다시 켠다 (여러 파일이 한꺼번에 바뀌어도 한 번만)
 let timer = null;
@@ -234,4 +256,5 @@ const stop = () => process.exit(0);
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 process.on('exit', () => { for (const j of [view, game]) j.child?.kill(); });
-console.log(`[live] ${stamp()} 상시 테스트 서버${MAIN ? '(원격 main)' : ''}: http://localhost:${VIEW_PORT}  (게임 서버 포트 ${GAME_PORT})`);
+console.log(`[live] ${stamp()} 상시 테스트 서버${MAIN ? '(원격 main)' : ''}: http://localhost:${VIEW_PORT}  (게임 서버 포트 ${GAME_PORT})`
+  + (MAIN ? ` — 화면·게임 서버는 스위치 파일(${SWITCH})이 있을 때만 켬, 지금 ${serving() ? '켜짐' : '꺼짐'}` : ''));
