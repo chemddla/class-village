@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
-  FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH,
+  FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
-import { buildVillage } from './village.js';
+import { buildVillage, fishModel } from './village.js';
 import { Character, actTime, LAND } from './character.js';
 import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft } from './life.js';
 import { createLookEditor } from './look-editor.js';
@@ -125,7 +125,7 @@ let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 지금 손에 든 도구 번호,
 // equip: 퀵슬롯에서 고른 장비 번호 (생활 행동 중에는 그 일에 맞는 도구를 잠깐 들었다가, 끝나면 다시 이것으로 돌아온다)
-const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0, picked: null };
+const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0, picked: null, fishing: null };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·3타 0.62초 × 0.5
 const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
   [ANIM.SLASH1]: 282, [ANIM.SLASH2]: 232, [ANIM.SLASH3]: 285, [ANIM.SLASH4]: 282 }; // 목검: 동작 길이 × hitAt
@@ -236,6 +236,8 @@ const QUICK_SLOTS = 4;
 const FRUIT_ICON = { peach: '🍑', apple: '🍎', orange: '🍊', pear: '🍐' };
 const bag = new Map(); // 내 가방에 든 과일: 이름 → 개수 (서버가 정함)
 const drops = new Map(); // 땅에 떨어진 과일: 번호 → { x, z, f } (서버가 정함)
+const dex = new Map(); // 내 도감: 물고기 id → 잡은 마릿수 (서버가 정함)
+const announced = new Set(); // '도감에 새로 등록!'을 이미 알린 물고기
 // 손이 닿는 가장 가까운 떨어진 과일 { id, x, z } 또는 null
 function nearDrop(x, z) {
   let best = null;
@@ -258,7 +260,10 @@ const quick = (() => {
   return [3, 4, null, null]; // 처음에는 몽둥이를 1칸, 목검을 2칸에 넣어 둔다 (가방에 있을 때만 보인다)
 })();
 const saveQuick = () => store.set(localStorage, 'quick', JSON.stringify(quick));
-const slotItem = (i) => (quick[i] !== null && invItems.includes(quick[i]) ? quick[i] : null); // 가방에 없는 장비는 빈칸으로 본다
+// 생활 도구(도끼·낚싯대)는 따로 생활 도구 칸에 있고, 퀵슬롯(1~4)에는 무기만 넣는다
+const LIFE_ITEMS = [TOOLS.indexOf('axe'), TOOLS.indexOf('rod')];
+const isLifeItem = (t) => LIFE_ITEMS.includes(t);
+const slotItem = (i) => (quick[i] !== null && invItems.includes(quick[i]) && !isLifeItem(quick[i]) ? quick[i] : null); // 가방에 없는 장비·생활 도구는 빈칸으로 본다
 
 function showTool() {
   const t = TOOLS[local.equip];
@@ -290,21 +295,45 @@ function equipTool(t) {
   renderQuick();
   renderInv();
 }
-// Q: 맨손과 퀵슬롯에 넣은 장비를 차례로 돌려 든다
+// Q: 맨손과 퀵슬롯에 넣은 무기를 차례로 돌려 든다 (생활 도구를 들고 있었으면 첫 무기부터)
 function nextQuick() {
   const list = [0, ...quick.map((_, i) => slotItem(i)).filter((t) => t !== null)];
-  if (list.length === 1) { toast('가방(I)에서 장비를 퀵슬롯에 넣어 보세요'); return; }
+  if (list.length === 1) { toast('가방(I)에서 무기를 퀵슬롯에 넣어 보세요'); return; }
+  const i = list.indexOf(local.equip);
+  equipTool(list[(i + 1) % list.length]);
+}
+// R: 맨손 → 도끼 → 낚싯대 → 맨손 (생활 도구를 든 채 돌아다닐 수 있다)
+function nextLifeTool() {
+  const list = [0, ...LIFE_ITEMS.filter((t) => invItems.includes(t))];
   const i = list.indexOf(local.equip);
   equipTool(list[(i + 1) % list.length]);
 }
 function renderQuick() {
   ui.quick.innerHTML = '';
+  // 왼쪽: 생활 도구 칸 (R) — 누르면 들고, 든 것을 다시 누르면 내려놓는다
+  const life = document.createElement('div');
+  life.className = 'life-group';
+  for (const t of LIFE_ITEMS.filter((x) => invItems.includes(x))) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = t === local.equip ? 'on' : '';
+    b.title = `${EQUIPMENT[TOOLS[t]].label} (생활 도구)`;
+    b.innerHTML = TOOL_ICON[TOOLS[t]];
+    b.onclick = () => equipTool(t === local.equip ? 0 : t);
+    life.appendChild(b);
+  }
+  const rk = document.createElement('span');
+  rk.className = 'quick-key';
+  rk.textContent = 'R';
+  life.appendChild(rk);
+  ui.quick.appendChild(life);
+  // 오른쪽: 무기 퀵슬롯 1~4 (Q)
   for (let i = 0; i < QUICK_SLOTS; i++) {
     const t = slotItem(i);
     const b = document.createElement('button');
     b.type = 'button';
     b.className = t !== null && t === local.equip ? 'on' : t === null ? 'empty' : '';
-    b.title = t === null ? '빈칸 (가방에서 장비를 넣을 수 있어요)' : EQUIPMENT[TOOLS[t]].label;
+    b.title = t === null ? '빈칸 (가방에서 무기를 넣을 수 있어요)' : EQUIPMENT[TOOLS[t]].label;
     b.innerHTML = `<small>${i + 1}</small>${t === null ? '' : TOOL_ICON[TOOLS[t]]}`;
     // 든 장비 칸을 다시 누르면 내려놓고 맨손이 된다
     b.onclick = () => { if (t === null) ui.inv.classList.remove('hidden'); else equipTool(t === local.equip ? 0 : t); };
@@ -317,10 +346,10 @@ function renderQuick() {
 }
 // 가방: 장비를 누르면 퀵슬롯에 넣고, 이미 넣은 장비를 누르면 뺀다
 function renderInv() {
-  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3><p class="inv-help">장비를 누르면 퀵슬롯에 넣거나 뺍니다. 생활 도구는 G를 누르면 알아서 꺼내 들어요.</p>';
+  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3><p class="inv-help">무기를 누르면 퀵슬롯(1~4)에 넣거나 뺍니다. 생활 도구(도끼·낚싯대)는 R이나 생활 도구 칸으로 들어요.</p>';
   const row = document.createElement('div');
   row.className = 'look-row';
-  for (const t of invItems) {
+  for (const t of invItems.filter((x) => !isLifeItem(x))) {
     const slot = quick.findIndex((v, i) => v === t && slotItem(i) === t);
     const b = document.createElement('button');
     b.type = 'button';
@@ -342,22 +371,170 @@ function renderInv() {
     row.appendChild(b);
   }
   ui.inv.appendChild(row);
-  // 과일: 과일나무를 F로 흔들어 떨어진 과일을 F로 주워 모은다. 나중에 상점에 팔 수 있다
+  // 과일·물고기: 모아 두었다가 상점이 열리면 판다
+  const section = (help, items) => {
+    const title = document.createElement('p');
+    title.className = 'inv-help';
+    title.textContent = help;
+    ui.inv.appendChild(title);
+    if (!items.length) return;
+    const row = document.createElement('div');
+    row.className = 'look-row';
+    for (const text of items) {
+      const b = document.createElement('span');
+      b.className = 'fruit-count';
+      b.textContent = text;
+      row.appendChild(b);
+    }
+    ui.inv.appendChild(row);
+  };
   const fruits = FRUITS.filter((f) => bag.get(f) > 0);
-  const title = document.createElement('p');
-  title.className = 'inv-help';
-  title.textContent = fruits.length ? '과일: 상점이 열리면 팔 수 있어요' : '과일: 과일나무 앞에서 F로 흔들고, 떨어진 과일을 F로 주워요';
-  ui.inv.appendChild(title);
-  if (!fruits.length) return;
-  const frow = document.createElement('div');
-  frow.className = 'look-row';
-  for (const f of fruits) {
-    const b = document.createElement('span');
-    b.className = 'fruit-count';
-    b.textContent = `${FRUIT_ICON[f]} ${FRUIT_NAMES[f]} ×${bag.get(f)}`;
-    frow.appendChild(b);
+  section(fruits.length ? '과일: 상점이 열리면 팔 수 있어요' : '과일: 과일나무 앞에서 F로 흔들고, 떨어진 과일을 F로 주워요',
+    fruits.map((f) => `${FRUIT_ICON[f]} ${FRUIT_NAMES[f]} ×${bag.get(f)}`));
+  const fish = FISH.filter((f) => bag.get(f.id) > 0);
+  section(fish.length ? '물고기: 희귀할수록 비싸게 팔 수 있어요' : '물고기: 강둑이나 바닷가에서 G로 낚시해요',
+    fish.map((f) => `🐟 ${f.name} ×${bag.get(f.id)}`));
+}
+
+// ── 도감 (B): 강·바다 물고기를 모두 보여 주고, 잡아 본 것만 이름·희귀도·값이 보인다 ──
+const dexPanel = $id('dex-panel');
+const stars = (r) => '★'.repeat(RARITY[r].stars);
+function renderDex() {
+  const got = FISH.filter((f) => dex.get(f.id) > 0).length;
+  dexPanel.innerHTML = `<h3>📖 물고기 도감 <small>(B)</small></h3><p class="inv-help">${got} / ${FISH.length} 종류를 잡았어요</p>`;
+  for (const [where, title] of [['river', '🏞️ 강'], ['sea', '🌊 바다']]) {
+    const h = document.createElement('h4');
+    h.textContent = title;
+    dexPanel.appendChild(h);
+    for (const f of FISH.filter((x) => x.where === where)) {
+      const n = dex.get(f.id) ?? 0;
+      const row = document.createElement('div');
+      row.className = `dex-row${n ? '' : ' unknown'}`;
+      const color = n ? `#${f.color.toString(16).padStart(6, '0')}` : '#e6dccb';
+      row.innerHTML = n
+        ? `<span class="dot" style="background:${color}"></span><span class="nm">${f.name}</span><span class="stars">${stars(f.rarity)}</span><span class="meta">${RARITY[f.rarity].name} · ${f.price.toLocaleString()}원 · ${n}마리</span>`
+        : `<span class="dot" style="background:${color}"></span><span class="nm">???</span><span class="stars">${stars(f.rarity)}</span><span class="meta">${RARITY[f.rarity].name}</span>`;
+      dexPanel.appendChild(row);
+    }
   }
-  ui.inv.appendChild(frow);
+}
+renderDex();
+
+// ── 낚시: 물가에서 G → 던지기 → 물고기가 찌로 다가와 4~5번 톡톡(찌가 까딱) → 덥석(찌가 쏙, 머리 위 ❗) → 바로 G ──
+// 톡톡 건드릴 때 누르면 놀라 도망가고, 쏙 들어간 뒤 너무 늦게 누르면 놓친다 (희귀할수록 누를 시간이 짧다)
+// 머리 위 느낌표 (덥석 물었을 때)
+const alertMark = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 128;
+  cv.height = 128;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#fffaf0';
+  g.strokeStyle = '#4a3525';
+  g.lineWidth = 8;
+  g.beginPath();
+  g.arc(64, 60, 46, 0, Math.PI * 2);
+  g.fill();
+  g.stroke();
+  g.fillStyle = '#e2574c';
+  g.font = 'bold 76px sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('!', 64, 64);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  s.scale.setScalar(0.7);
+  s.renderOrder = 10;
+  s.visible = false;
+  scene.add(s);
+  return s;
+})();
+// 캐릭터가 바라보는 쪽으로 던진다 (찌가 떨어질 자리가 물이어야 함)
+function startFishing() {
+  if (!room || !me) return;
+  const water = waterAt(me.x + Math.sin(me.targetRot) * BOB_AHEAD, me.z + Math.cos(me.targetRot) * BOB_AHEAD);
+  if (!water) { toast('물가에 서서 물 쪽을 바라보고 G를 눌러요'); return; }
+  holdTool(TOOLS.indexOf('rod'));
+  startAct(ANIM.FISH_CAST);
+  // 찌가 떨어지고 1.5~3초는 물고기가 알아채지 않는다 (던지자마자 달려들지 않게)
+  const [n0, n1] = NOTICE.after;
+  local.fishing = { phase: 'cast', water, castAt: performance.now(), noticeAt: performance.now() + (n0 + Math.random() * (n1 - n0)) * 1000 };
+  room.send('cast', angleToByte(me.targetRot));
+}
+// 낚시가 끝나면 찌·물고기·느낌표를 정리 (flee: 물고기가 도망가는 모습)
+function endFishing(flee) {
+  const f = local.fishing;
+  if (f?.ambient) village.fishShadows.release(f.ambient.fish); // 그 물고기는 다른 곳에서 다시 나타남
+  local.fishing = null;
+  alertMark.visible = false;
+  if (me) me.bobberDip = 0;
+  village.lure.end(flee ? 'flee' : 'caught');
+}
+// 낚시 그만두기 (움직이거나, 물고기가 오기 전에 G를 다시 누름)
+function stopFishing() {
+  const f = local.fishing;
+  if (!f) return;
+  if (f.phase !== 'reeling') room?.send('cancelFish');
+  endFishing(true);
+  if (local.act === ANIM.FISH_CAST || local.act === ANIM.FISH_WAIT) local.actLeft = 0;
+}
+// 낚아채기(G): 서버가 덥석 문 뒤 시간 안이었는지 판정한다
+function reel() {
+  const f = local.fishing;
+  if (!f || !f.id || f.phase === 'reeling') return;
+  room?.send('reel', [f.id]);
+  f.phase = 'reeling';
+}
+// 매 장면: 흐름에 맞춰 찌를 까딱·쏙, 톡톡마다 작은 물결, 덥석이면 물보라와 ❗
+function updateFishing() {
+  const f = local.fishing;
+  if (!f || !me) return;
+  // 찌가 물에 떨어진 뒤(0.7초): 지나가던 물고기가 찌를 입 앞에 두면 알아채고 다가온다
+  if (!f.ambient && performance.now() > f.noticeAt) {
+    const bx = me.x + Math.sin(me.targetRot) * BOB_AHEAD;
+    const bz = me.z + Math.cos(me.targetRot) * BOB_AHEAD;
+    const c = village.fishShadows.notice(f.water, bx, bz);
+    if (c) {
+      f.ambient = c;
+      village.fishShadows.take(c.fish); // 돌아다니던 그림자를 빼고, 찌로 오는 물고기가 그 자리에서 이어 간다
+      village.lure.start({ bx, bz, y: f.water === 'sea' ? -0.027 : -0.045, len: c.len, from: c, t0: performance.now() });
+      room?.send('interest', c.len); // 서버가 그 크기에 맞는 물고기와 톡톡·덥석 때를 정해 준다
+    }
+  }
+  if (!f.id) return;
+  const tau = performance.now() - f.t0;
+  let dip = 0;
+  for (const t of f.nibbles) dip = Math.max(dip, 0.45 * Math.exp(-(((tau - t) / (NIBBLE_MS * 0.8)) ** 2))); // 입이 닿는 만큼 천천히 까딱
+  if (tau >= f.bite && f.phase !== 'reeling') dip = 1;
+  me.bobberDip = dip;
+  const bx = me.x + Math.sin(me.targetRot) * BOB_AHEAD;
+  const bz = me.z + Math.cos(me.targetRot) * BOB_AHEAD;
+  const splash = (n, power) => FX.burst('splash', n, bx, me.groundY, bz, { floor: me.groundY - 0.1, spread: Math.PI, power });
+  while (f.next < f.nibbles.length && tau >= f.nibbles[f.next]) { splash(3, 0.35); f.next++; }
+  if (tau >= f.bite && f.phase === 'wait') {
+    f.phase = 'bite';
+    splash(14, 0.9);
+    alertMark.visible = true;
+  }
+  if (alertMark.visible) alertMark.position.set(me.x, me.root.position.y + 2.75 + Math.sin(tau / 60) * 0.03, me.z);
+}
+// 잡은 물고기를 머리 위로 들어 보인다 (내 캐릭터·다른 학생 모두)
+const shows = [];
+function showCatch(char, fish) {
+  const mesh = fishModel(fish);
+  scene.add(mesh);
+  shows.push({ char, mesh, t: 0 });
+}
+function updateShows(dt) {
+  for (let i = shows.length - 1; i >= 0; i--) {
+    const s = shows[i];
+    s.t += dt;
+    const up = Math.min(1, s.t / 0.25);
+    s.mesh.position.set(s.char.x, s.char.groundY + 2.2 + up * 0.5 + Math.sin(s.t * 6) * 0.04, s.char.z);
+    s.mesh.rotation.set(0, s.char.root.rotation.y + Math.PI / 2, Math.sin(s.t * 9) * 0.25); // 파닥파닥
+    s.mesh.scale.setScalar(s.t > 2 ? Math.max(0, 1 - (s.t - 2) / 0.25) : up);
+    if (s.t > 2.25) { scene.remove(s.mesh); shows.splice(i, 1); }
+  }
 }
 showTool();
 renderQuick();
@@ -399,8 +576,16 @@ const input = createInput({
     else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
     else if (name === 'tool') {
       nextQuick();
+    } else if (name === 'lifeTool') {
+      if (local.fishing) stopFishing();
+      nextLifeTool();
     } else if (name === 'inv') {
       ui.inv.classList.toggle('hidden');
+      dexPanel.classList.add('hidden'); // 가방과 도감은 같은 자리에 열려서 하나만
+    } else if (name === 'dex') {
+      renderDex();
+      dexPanel.classList.toggle('hidden');
+      ui.inv.classList.add('hidden');
     } else if (name === 'attack') {
       // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 꾹 누르고 있을 때만)
       if (local.hurt > 0) return;
@@ -446,9 +631,15 @@ const input = createInput({
       startAct(d ? ANIM.POCKET : ANIM.TREE_SHAKE);
     } else if (name === 'life') {
       // 손에 무엇을 들었든, 가장 가까운 생활 대상에 맞는 도구를 꺼내 들고 한다 (끝나면 고른 장비로 돌아온다)
+      if (local.fishing) {
+        if (local.fishing.id) reel(); // 물고기가 온 뒤에는 G = 낚아채기 (톡톡 중이면 너무 이름)
+        else { stopFishing(); toast('낚싯줄을 감았어요'); }
+        return;
+      }
       if (local.actLeft > 0) return;
       const t = findLife(me.x, me.z, lifeSpots);
       if (!t) { toast('나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
+      if (t.tool === 'rod') { startFishing(); return; }
       holdTool(TOOLS.indexOf(t.tool));
       me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 대상 쪽으로 돌아섬
       startAct(LIFE[t.tool].anim);
@@ -510,9 +701,15 @@ function attach(r) {
       const setBag = (n, f) => {
         const before = bag.get(f) ?? 0;
         if (n > 0) bag.set(f, n); else bag.delete(f);
-        if (n > before) toast(`${FRUIT_ICON[f] ?? ''} ${FRUIT_NAMES[f] ?? f}를 주웠어요! (가방에 ${n}개)`);
+        if (n > before && FRUIT_NAMES[f]) toast(`${FRUIT_ICON[f] ?? ''} ${FRUIT_NAMES[f]}를 주웠어요! (가방에 ${n}개)`);
         renderInv();
       };
+      dex.clear();
+      const setDex = (n, f) => { dex.set(f, n); renderDex(); };
+      $(p).dex.onAdd(setDex, false);
+      $(p).dex.onChange(setDex);
+      p.dex.forEach((n, f) => { dex.set(f, n); announced.add(f); });
+      renderDex();
       $(p).bag.onAdd(setBag, false);
       $(p).bag.onChange(setBag);
       $(p).bag.onRemove((_, f) => setBag(0, f));
@@ -582,6 +779,37 @@ function attach(r) {
   });
   $(r.state).drops.onRemove((_, id) => { drops.delete(id); village.removeDrop(id); });
   setTimeout(() => { dropsReady = true; }, 300);
+
+  // 낚시: 서버가 정한 물고기의 흐름(나타남·톡톡·덥석)을 받아 그림자를 찌로 데려온다 (어떤 물고기인지는 잡을 때까지 비밀)
+  r.onMessage('fishOn', (o) => {
+    const f = local.fishing;
+    if (!f || f.id || !f.ambient || !me) return;
+    const now = performance.now();
+    Object.assign(f, { phase: 'wait', id: o.id, t0: now, nibbles: o.nibbles, bite: o.bite, next: 0 });
+    // 이미 찌 쪽으로 오고 있는 물고기에 톡톡·덥석 때를 넣는다 (받은 때 기준)
+    village.lure.setTimeline(o.nibbles.map((t) => now + t), now + o.bite);
+  });
+  r.onMessage('caught', ([sid, id]) => {
+    const fish = FISH_BY_ID[id];
+    const char = sid === r.sessionId ? me : others.get(sid)?.char;
+    if (!fish || !char) return;
+    showCatch(char, fish);
+    if (char !== me) return;
+    const first = !announced.has(id) && (dex.get(id) ?? 0) <= 1; // 도감 갱신과 이 알림 중 무엇이 먼저 와도 처음 잡은 것만
+    announced.add(id);
+    endFishing(false);
+    local.actLeft = 0; // 기다리던 자세를 끝내고 바로 낚아 올린다
+    startAct(ANIM.FISH_CATCH);
+    toast(`🎣 ${fish.name}를 낚았다! ${stars(fish.rarity)} ${RARITY[fish.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
+  });
+  r.onMessage('escaped', (why) => {
+    if (!local.fishing) return;
+    endFishing(true);
+    local.actLeft = 0;
+    toast(why === 'full' ? '가방에 이 물고기가 가득 찼어요'
+      : why === 'early' ? '앗, 너무 빨랐어요! 물고기가 놀라 도망갔어요 (찌가 쏙 들어갈 때 G)'
+        : '놓쳤다… 찌가 쏙 들어가고 ❗가 뜨면 바로 G!');
+  });
 
   // 서버가 이상한 이동이라고 판단하면 되돌림
   r.onMessage('fix', ([x, z]) => {
@@ -659,6 +887,7 @@ function enterGame() {
   ui.actions.classList.remove('hidden');
   ui.hint.classList.remove('hidden');
   ui.invBtn.classList.remove('hidden');
+  $id('dex-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
   input.enable(true);
 }
@@ -724,6 +953,7 @@ function updateMe(dt) {
     const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
     me.setPose(nx, nz, swinging || airSwing ? me.targetRot : Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
+    if (local.fishing && local.fishing.phase !== 'reeling') stopFishing(); // 움직이면 낚시를 그만둠
     if (swinging || airSwing) { /* 공격은 그대로 이어 간다 */ } else if (!AIRBORNE.has(local.act)) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
     else if (local.actLeft > 0) {
       // 달리며 뛰었으면 발이 닿자마자 바로 다시 달린다: 착지 뒤 일어서는 자세를 끝까지 틀면 쪼그린 채로 미끄러져 끊겨 보인다
@@ -767,6 +997,9 @@ function updateMe(dt) {
       }
     }
   }
+  // 낚시: 던지기가 끝나면 입질을 기다리는 자세로, 기다리는 동안은 그 자세를 이어 간다
+  if (local.fishing && local.actLeft <= 0 && local.fishing.phase !== 'reeling') startAct(ANIM.FISH_WAIT);
+  updateFishing();
   // 생활 행동이 끝나면 잠깐 꺼내 든 도구를 넣고 고른 장비를 다시 든다
   if (local.actLeft <= 0 && local.tool !== local.equip) holdTool(local.equip);
   // 생활 버튼 글자: 가까이 있는 대상에 맞춰 가끔 바꾼다
@@ -861,6 +1094,7 @@ renderer.setAnimationLoop(() => {
   if (me) me.update(dt);
   for (const { char } of others.values()) char.update(dt);
   FX.update(dt);
+  updateShows(dt);
 
   for (const label of village.labels) {
     const b = label.userData.base;

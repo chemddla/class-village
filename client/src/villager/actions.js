@@ -12,6 +12,8 @@ const ARM_REST = 0.6;
 // 과일나무 흔들기에서 앞으로 내딛을 거리 (주민 몸 크기 단위). 나무마다 줄기까지 거리가 달라서,
 // 게임에서는 캐릭터가 동작을 시작할 때 손이 줄기 표면에 딱 닿을 만큼으로 정해 넣는다 (character.js)
 export const SHAKE = { step: 0.2 };
+// 낚시 찌가 물에 잠긴 정도 (0 떠 있음 → 1 쏙 들어감). 게임에서 캐릭터마다 그릴 때 정해 넣는다 (character.js)
+export const BOBBER = { dip: 0 };
 
 // 무릎 굽히기 c∈[0,1]: 발바닥이 바닥과 평행하도록 엉덩이·무릎·발목을 함께 굽히고 몸을 낮춘다
 function crouch(P, c) {
@@ -610,6 +612,7 @@ const fishWait = (t, P, fx) => {
   P['head.ry'] = glance * 0.45;
   P['head.rz'] = -sway * 0.04;
   fx.bobber = 'water';
+  fx.dip = BOBBER.dip;
 };
 const fishCatch = (u, P, fx) => {
   // 움찔 숙였다가 낚아채며 뒤로 젖히고 폴짝, 낚싯대를 번쩍 든 채 기뻐서 한 번 더 통통

@@ -1,6 +1,6 @@
 // 생활 행동: 생활 대상(나무·물가·꽃) 앞에서 G 를 누르면, 손에 무엇을 들었든 그 일에 맞는 도구를 꺼내 들고 한다
 import * as THREE from 'three';
-import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM } from '../../shared/world.js';
+import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM, waterNear } from '../../shared/world.js';
 import { toon, swayToon, addOutline } from './materials.js';
 import { roundCanopy, trunkGeometry } from './village.js';
 
@@ -42,8 +42,13 @@ export function findTarget(tool, x, z, spots) {
     for (const t of WORLD.trees) near(t.x, t.z, t.r);
     for (const t of of('tree')) near(t.x, t.z, 0.3);
   } else if (tool === 'rod') {
-    const rz = riverCenterZ(x);
-    if (Math.abs(z - rz) < RIVER_HALF_WIDTH + REACH) near(x, rz, RIVER_HALF_WIDTH);
+    // 강둑이면 강 가운데 쪽, 바닷가면 섬 바깥(바다) 쪽을 보고 던진다
+    const where = waterNear(x, z);
+    if (where === 'river') near(x, riverCenterZ(x), RIVER_HALF_WIDTH);
+    else if (where === 'sea') {
+      const L = Math.hypot(x, z) || 1;
+      near(x + (x / L) * 3, z + (z / L) * 3, 2.9);
+    }
   } else {
     for (const f of WORLD.flowers) near(f.x, f.z);
   }
