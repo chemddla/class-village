@@ -231,7 +231,7 @@ const POLE = { R: V(-0.7, -1, -0.3).normalize(), L: V(0.7, -1, -0.3).normalize()
 // 두 팔 모두 팔꿈치를 손목보다 낮게 둔다: 팔꿈치가 높으면 아래팔이 손으로 내려꽂혀 손목이 위로(손등 쪽으로) 젖혀 보인다
 // 왼팔(자루 끝을 쥔 팔)은 팔꿈치를 옆으로 벌리지 않고 가슴 앞 아래로 떨어뜨린다: 윗팔은 어깨에서 아래로 내려가고
 // 아래팔이 거기서 손으로 올라가는 V자 모양. 팔을 수평으로 가로지르면 손목만 위로 꺾여 자루를 쥐게 된다
-const GRIP_POLE = { R: V(-0.8, -1, -0.1).normalize(), L: V(0.12, -1, 0.2).normalize() };
+const GRIP_POLE = { R: V(-1, 0, 0.2).normalize(), L: V(0.12, -1, 0.2).normalize() };
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
 const m4 = new THREE.Matrix4();
@@ -446,7 +446,7 @@ function twoHandGrip(rig, y, w, dt, aim) {
   // 3) 도구와 두 주먹이 몸·머리에 박히면 밀어낸다. 밀어낸 양(몸통 기준)은 부드럽게 따라가게 해 프레임 사이에 튀지 않는다
   if (rig.colliders) {
     const tool = sock.children[0];
-    const probes = (tool.userData.probes2 ??= [...toolProbes(sock), { p: V(), rad: 0.03, hand: true }, { p: V(0, 0, y), rad: 0.03, hand: true }]);
+    const probes = (tool.userData.probes2 ??= [...toolProbes(sock).filter((q) => q.p.z > y - 0.005), { p: V(), rad: 0.03, hand: true }, { p: V(0, 0, y), rad: 0.03, hand: true }]);
     const P1 = P.clone();
     const Q1 = Q.clone();
     const fwd = V(0, 0, 1).applyQuaternion(torsoQ);
@@ -471,7 +471,7 @@ function twoHandGrip(rig, y, w, dt, aim) {
     // 더 밀어내야 할 때는 바로(박힌 채로 한두 장 지나가지 않게), 덜 밀어도 될 때는 천천히 돌아온다
     const more = dp.lengthSq() > st.dp.lengthSq() || Math.abs(dq.w) < Math.abs(st.dq.w);
     // (돌려 놓은 각은 빨리 푼다: 젖힐 때 머리를 피하느라 돌린 각이 타격 순간까지 남으면 몽둥이 끝이 아래로 끌려 처진다)
-    const a = 1 - Math.exp(-(more ? 90 : 18) * dt);
+    const a = 1 - Math.exp(-(more ? 90 : 45) * dt);
     const aq = 1 - Math.exp(-(more ? 90 : 70) * dt);
     st.dp.lerp(dp, a);
     st.dq.slerp(dq, aq);

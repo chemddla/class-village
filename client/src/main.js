@@ -121,12 +121,18 @@ const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 든 도구 번호
 const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, last: null, hurt: 0 };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·3타 0.62초 × 0.5
-const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310 };
+const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300 };
 // 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 2타 → 3타 → …
 // (3타는 2타에서 이어지도록 만든 1타. 2타와 3타가 서로의 끝 자세에서 시작해 끊기지 않고 8자를 그린다)
 const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH2 };
 // 다음 타로 넘어가는 때(초): 휘두른 몽둥이가 관성 끝까지 간 직후, 왼손을 놓기 전
 const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.405 };
+// 이어 하는 도끼질: 도끼가 나무에 박혀 멈춘 뒤에도 G를 누르고 있으면, 뽑아서 다시 찍는 동작으로 넘어간다
+const NEXT_CHOP = { [ANIM.CHOP]: ANIM.CHOP2, [ANIM.CHOP2]: ANIM.CHOP3, [ANIM.CHOP3]: ANIM.CHOP2 };
+const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 떨림이 잦아든 뒤, 손을 놓기 전
+// 떠 있는 동안의 동작: 움직여도 끊기지 않는다
+const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM]);
+const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
 function getHit(fromX, fromZ) {
   local.act = ANIM.SURPRISE; // 'hit' 피격 모션
   local.actLeft = actTime(ANIM.SURPRISE);
@@ -136,7 +142,9 @@ function getHit(fromX, fromZ) {
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
-  if (action === 'clubSmash2' || action === 'clubSmash3') action = 'clubSmash'; // 이어 치는 타도 타격 연출은 같다
+  const slam = action === 'clubSlam';
+  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격도 타격 연출은 같다
+  if (action === 'chopAgain' || action === 'chopAgain2') action = 'chop';
   const fx = Math.sin(char.targetRot);
   const fz = Math.cos(char.targetRot);
   const gy = char.groundY;
@@ -190,7 +198,11 @@ function hitFx(char, action) {
     burst('splash', 14, at(t.x, t.z, 0), { spread: Math.PI, floor: gy - 0.1 });
     burst('star', 6, at(t.x, t.z, 0.8), { spread: Math.PI, power: 0.6 });
   }
-  if (char === me || strong) FX.hitstop(0.05);
+  if (slam) { // 땅을 내리찍으면 발밑에서 먼지가 둥글게 퍼진다
+    burst('dust', 14, at(char.x + fx * 0.6, char.z + fz * 0.6, 0.05), { ring: true, power: 1.5 });
+    burst('stone', 6, at(char.x + fx * 0.6, char.z + fz * 0.6, 0.05), { spread: Math.PI, power: 0.9 });
+  }
+  if (char === me || strong) FX.hitstop(slam ? 0.08 : 0.05);
 }
 Character.onHit = (char, action) => hitFx(char, action);
 
@@ -271,13 +283,26 @@ const input = createInput({
     } else if (name === 'inv') {
       ui.inv.classList.toggle('hidden');
     } else if (name === 'attack' || (name === 'life' && TOOLS[local.tool] === 'club')) {
-      // 휘두르는 중에 또 누르면 다음 타를 예약한다
-      if (TOOLS[local.tool] === 'club' && local.actLeft > 0 && NEXT_SWING[local.act]) local.combo = true;
-      if (TOOLS[local.tool] === 'club' && local.actLeft <= 0) {
-        // 마우스가 가리키는 땅 쪽으로 돌아서서 휘두른다 (터치·화면 버튼은 보던 방향 그대로)
-        const rot = aimRot();
+      // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 G를 누르고 있을 때만)
+      if (TOOLS[local.tool] !== 'club' || local.hurt > 0) return;
+      const el = actTime(local.act) - local.actLeft; // 지금 동작이 흐른 시간
+      const rot = aimRot(); // 마우스가 가리키는 땅 쪽으로 돌아서서 휘두른다 (터치·화면 버튼은 보던 방향 그대로)
+      if (local.act === ANIM.JUMP && local.actLeft > 0 && el > 0.08 && el < 0.5) {
+        // 공중 공격: 뛰어오른 높이를 그대로 이어받아 공중에서 휘두른다 (길이가 점프와 같아 남은 시간도 그대로)
         if (rot !== null) me.setPose(me.x, me.z, rot);
-        startAct(ANIM.SMASH);
+        local.act = ANIM.SMASH_AIR;
+      } else if (local.act === ANIM.FLIP && local.actLeft > 0 && el < 0.5) {
+        // 더블 점프 뒤 공격: 착지하며 땅을 내리찍는다
+        if (rot !== null) me.setPose(me.x, me.z, rot);
+        local.act = ANIM.SMASH_SLAM;
+        local.actLeft = actTime(ANIM.SMASH_SLAM) - el;
+      } else if (local.actLeft <= 0) {
+        const inp = input.read();
+        if (inp.run && inp.mag > 0) startAct(ANIM.SMASH_DASH); // 달리던 방향 그대로 뛰어들며 내리친다
+        else {
+          if (rot !== null) me.setPose(me.x, me.z, rot);
+          startAct(ANIM.SMASH);
+        }
       }
     } else if (name === 'life') {
       if (local.actLeft > 0) return;
@@ -462,7 +487,16 @@ function updateMe(dt) {
   const inp = input.read();
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
-  if (inp.mag > 0 && local.hurt <= 0) {
+  // 대시 공격: 누른 순간 보던 쪽으로 뛰어들고, 내리친 뒤에는 그 자리에 멈춘다 (그동안 방향 입력은 받지 않는다)
+  const dashing = local.act === ANIM.SMASH_DASH && local.actLeft > 0;
+  if (dashing && local.hurt <= 0) {
+    const u = 1 - local.actLeft / actTime(ANIM.SMASH_DASH);
+    const speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(u, 0.35, 0.6));
+    const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
+    for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
+    const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
+    me.setPose(nx, nz, me.targetRot);
+  } else if (inp.mag > 0 && local.hurt <= 0) {
     // 화면 기준 방향을 카메라가 돈 만큼 돌려 땅 위 방향으로
     const c = Math.cos(cam.yaw);
     const sn = Math.sin(cam.yaw);
@@ -470,13 +504,14 @@ function updateMe(dt) {
     const wz = -inp.x * sn + inp.z * c;
     // 휘두르는 중에는 움직여도 공격이 끊기지 않는다: 대신 천천히 움직이고, 몸은 계속 휘두르는 쪽을 본다
     const swinging = local.actLeft > 0 && !!NEXT_SWING[local.act];
+    const airSwing = local.actLeft > 0 && (local.act === ANIM.SMASH_AIR || local.act === ANIM.SMASH_SLAM); // 공중 공격도 휘두르는 쪽을 본 채 움직인다
     const speed = (inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag)) * (swinging ? 0.4 : 1);
     const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
     for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
     const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
-    me.setPose(nx, nz, swinging ? me.targetRot : Math.atan2(wx, wz));
+    me.setPose(nx, nz, swinging || airSwing ? me.targetRot : Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
-    if (swinging) { /* 공격은 그대로 이어 간다 */ } else if (local.act !== ANIM.JUMP && local.act !== ANIM.FLIP) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
+    if (swinging || airSwing) { /* 공격은 그대로 이어 간다 */ } else if (!AIRBORNE.has(local.act)) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
     else if (local.actLeft > 0) {
       // 달리며 뛰었으면 발이 닿자마자 바로 다시 달린다: 착지 뒤 일어서는 자세를 끝까지 틀면 쪼그린 채로 미끄러져 끊겨 보인다
       const land = local.act === ANIM.JUMP ? LAND.jump : LAND.flip;
@@ -484,24 +519,40 @@ function updateMe(dt) {
       if (actTime(local.act) - local.actLeft >= land + (local.act === ANIM.FLIP ? 0.1 : 0.04)) local.actLeft = 0;
     }
   }
-  // 몽둥이를 들고 G(생활 키)를 누르고 있으면 계속 휘두른다: 쉬고 있으면 1타를 시작하고, 휘두르는 중이면 다음 타를 예약
-  if (TOOLS[local.tool] === 'club' && input.holding('life') && local.hurt <= 0) {
-    if (local.actLeft <= 0) {
+  // 몽둥이를 들고 G(생활 키)를 누르고 있으면 계속 휘두른다. 한 번 눌렀다 떼면 한 번만 휘두른다:
+  // 다음 타로 넘어갈지는 미리 예약하지 않고, 넘어가는 그 순간에도 키를 누르고 있는지로 정한다
+  // (누른 순간부터 예약하면 짧게 한 번 눌러도 키가 눌려 있던 몇 장면 때문에 2타가 따라 나온다)
+  const holdSwing = TOOLS[local.tool] === 'club' && input.holding('life') && local.hurt <= 0;
+  if (holdSwing && local.actLeft <= 0) {
+    const rot = aimRot();
+    if (rot !== null) me.setPose(me.x, me.z, rot);
+    startAct(ANIM.SMASH);
+  } else if (holdSwing && NEXT_SWING[local.act]) {
+    // 넘어가는 때: 휘두른 몽둥이가 관성 끝까지 간 직후의 짧은 구간 (왼손을 놓은 뒤에 넘어가면 동작이 튄다)
+    const at = actTime(local.act) - local.actLeft - COMBO_AT[local.act];
+    if (at >= 0 && at < 0.06) {
       const rot = aimRot();
-      if (rot !== null) me.setPose(me.x, me.z, rot);
-      startAct(ANIM.SMASH);
-    } else if (NEXT_SWING[local.act]) local.combo = true;
-  }
-  // 연속 공격: 예약해 둔 다음 타로 넘어간다 (그때마다 마우스 쪽으로 다시 돌아선다)
-  if (local.combo && local.actLeft > 0 && NEXT_SWING[local.act]) {
-    if (actTime(local.act) - local.actLeft >= COMBO_AT[local.act]) {
-      local.combo = false;
-      const rot = aimRot();
-      if (rot !== null) me.setPose(me.x, me.z, rot);
+      if (rot !== null) me.setPose(me.x, me.z, rot); // 그때마다 마우스 쪽으로 다시 돌아선다
       local.act = NEXT_SWING[local.act];
       local.actLeft = actTime(local.act);
     }
-  } else if (local.actLeft <= 0) local.combo = false;
+  }
+  // 도끼를 들고 G를 누르고 있으면 계속 찍는다: 나무에 박혀 멈춘 도끼를 뽑아 다시 뒤로 보냈다가 또 찍는다
+  if (TOOLS[local.tool] === 'axe' && input.holding('life') && local.hurt <= 0) {
+    if (local.actLeft <= 0) {
+      const t = findTarget('axe', me.x, me.z, lifeSpots);
+      if (t) {
+        me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z));
+        startAct(ANIM.CHOP);
+      }
+    } else if (NEXT_CHOP[local.act]) {
+      const at = actTime(local.act) * (1 - CHOP_AT) - local.actLeft; // 넘어가는 때를 지난 시간
+      if (at >= 0 && at < 0.06) {
+        local.act = NEXT_CHOP[local.act];
+        local.actLeft = actTime(local.act);
+      }
+    }
+  }
   if (local.actLeft > 0) {
     local.actLeft -= dt;
     anim = local.act;
@@ -549,7 +600,8 @@ function updateOthers(now) {
 }
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
-if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, FX, get me() { return me; }, get room() { return room; } };
+// step: 화면이 가려져 그리기가 멈춘 동안에도 내 캐릭터만 정해진 시간만큼 움직여 보는 점검용
+if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, FX, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();

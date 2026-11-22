@@ -252,6 +252,33 @@ function slerpDir(a, b, t) {
   const kb = Math.sin(t * th) / Math.sin(th);
   return a.map((x, i) => x * ka + b[i] * kb);
 }
+// 두 손으로 쥔 자리와 도구 방향을 키프레임으로: gripPath(u, [u0, pos, dir], [u1, pos, dir, ease], ...) → fx.grip 에 넣는다.
+// 팔 관절 값으로 도구를 움직이면 두 손이 닿지 않는 데로 가거나 한 손이 반대편 팔을 뚫고 지나가므로,
+// 두 손 동작은 손 자리(가슴 앞, 팔꿈치를 벌릴 여유가 있는 거리)와 도구 방향을 직접 정한다
+function gripPath(u, ...keys) {
+  let i = 0;
+  while (i < keys.length - 2 && u >= keys[i + 1][0]) i += 1;
+  const [u0, p0, d0] = keys[i];
+  const [u1, p1, d1, ease] = keys[i + 1];
+  const w = kf(u, [u0, 0], [u1, 1, ease]);
+  return { pos: mix(p0, p1, w), dir: slerpDir(unit(d0), unit(d1), w) };
+}
+// 다리를 넓게 벌려 선다 (k = 0~1). 발바닥은 땅과 나란히, 벌린 만큼 몸을 낮춰 발이 뜨지 않게
+function wideStance(P, k) {
+  const st = k * 0.26;
+  P['hipR.rz'] = -st; P['hipL.rz'] = st;
+  P['footR.rz'] = st; P['footL.rz'] = -st;
+  P['pelvis.py'] = (P['pelvis.py'] ?? 0) - 0.2 * (1 - Math.cos(st)) - 0.005 * k;
+}
+// 두 손을 놓은 뒤 팔이 돌아오는 길 (v: 0 → 1). 팔꿈치·손목을 꺾지 않고 어깨에서 천천히 내린다
+function armsDown(P, v) {
+  P['shoulderR.rx'] = kf(v, [0, -0.65], [0.5, -0.42], [1, 0]);
+  P['shoulderR.rz'] = kf(v, [0, -0.3], [0.5, -0.45], [1, -ARM_REST]);
+  P['elbowR.rx'] = kf(v, [0, -0.5], [0.5, -0.16], [1, -0.08]);
+  P['shoulderL.rx'] = kf(v, [0, -0.55], [0.55, -0.3], [1, 0]);
+  P['shoulderL.rz'] = kf(v, [0, 0.35], [1, ARM_REST]);
+  P['elbowL.rx'] = kf(v, [0, -0.5], [0.5, -0.14], [1, -0.08]);
+}
 // ── 몽둥이 휘두르기 시안 ──
 // back / hit: 젖혔을 때·타격 때 몽둥이가 뻗는 방향 (몸통 기준: x 오른쪽(-)·왼쪽(+), y 위, z 앞)
 // posBack / posHit: 그때 두 손이 쥔 자리,  twist: 허리 비틀기 [젖힘, 타격, 관성],  lean: 상체 숙임 [젖힘, 타격, 관성]
@@ -267,9 +294,9 @@ export const CLUB_STYLES = {
   // 가까이 두면 왼 윗팔은 아래로 내려가고 아래팔이 손으로 올라가는 V자가 된다
   // (참고 영상) 오른 어깨 옆에 세워 들었다가, 두 팔을 뻗어 앞을 지나 왼쪽 아래까지 크게 휘두른다.
   // end / posEnd: 타격을 지나 관성으로 가 닿는 방향과 손 자리. 다리는 넓게 벌려 선다(stance)
-  diagonal: { label: '대각선으로 앞을 치기', back: [-0.4, 0.86, -0.3], hit: [-0.4, 0.2, 0.92], end: [0.45, 0.16, 0.88],
-    posBack: [-0.05, 0.19, 0.1], posHit: [-0.02, 0.135, 0.15], posEnd: [0.02, 0.13, 0.14],
-    twist: [-0.72, 0.15, 0.62], lean: [-0.14, 0.08, 0.12], crouch: 0.3, stance: 1 },
+  diagonal: { label: '대각선으로 앞을 치기', back: [-0.4, 0.86, -0.3], hit: [-0.4, 0.2, 0.92], end: [0.2, 0.16, 0.97],
+    posBack: [-0.05, 0.19, 0.1], posHit: [-0.035, 0.135, 0.13], posEnd: [-0.01, 0.13, 0.15],
+    twist: [-0.72, 0.15, 0.82], lean: [-0.14, 0.08, 0.12], crouch: 0.3, stance: 1 },
   overhead: { label: '머리 위에서 앞으로 내려치기', back: [-0.22, 0.92, -0.32], hit: [-0.45, -0.18, 0.87],
     posBack: [-0.04, 0.21, 0.125], posHit: [-0.02, 0.12, 0.145], twist: [-0.2, 0.05, 0.12], lean: [-0.3, 0.2, 0.26], crouch: 0.35 },
   side: { label: '옆으로 크게 휘두르기', back: [-0.82, 0.22, -0.53], hit: [0.12, -0.12, 0.98],
@@ -278,17 +305,17 @@ export const CLUB_STYLES = {
   // from: 시작 자세를 1타의 관성 끝 자세로 잡아 두 동작이 끊기지 않고 이어진다
   second: { label: '2타 · 왼쪽 위에서 앞을 지나 오른쪽으로', // (젖힐 때 몽둥이를 왼쪽으로 많이 눕히지 않고 머리 왼쪽 위로 세운다: 많이 눕히면 자루 끝을 쥔 왼손이 오른손의 오른쪽에 놓여
     //  오른팔이 왼팔을 가로질러 지나간다)
-    back: [0.42, 0.72, -0.55], hit: [-0.25, 0.2, 0.97], end: [-0.75, 0.16, 0.64],
-    posBack: [0.015, 0.185, 0.115], posHit: [-0.02, 0.135, 0.15], posEnd: [-0.05, 0.13, 0.135],
-    twist: [0.6, -0.15, -0.55], lean: [-0.14, 0.08, 0.12], crouch: 0.3, stance: 1,
+    back: [0.15, 0.85, -0.5], hit: [-0.25, 0.2, 0.97], end: [-0.75, 0.16, 0.64],
+    posBack: [0.015, 0.19, 0.115], posHit: [-0.035, 0.135, 0.13], posEnd: [-0.05, 0.13, 0.135],
+    twist: [0.75, -0.15, -0.55], lean: [-0.14, 0.08, 0.12], crouch: 0.3, stance: 1,
     // via: 들어 올릴 때 거쳐 가는 자세. 왼쪽 아래에서 몸 옆 뒤로 돌아 올라가야, 꼭대기에서 멈췄다 되돌아오지 않고
     // 뒤 → 위 → 앞으로 한 방향으로 돌며 그대로 내리치게 된다 (앞쪽으로 들어 올리면 꼭대기에서 방향이 뒤집혀 한 박자 선다)
-    from: 'diagonal', duration: 0.62, via: { dir: [0.9, 0.35, -0.1], pos: [0.02, 0.15, 0.13] } },
+    from: 'diagonal', duration: 0.62, via: { dir: [0.25, 0.9, 0.35], pos: [0.0, 0.17, 0.135] } },
   // 3타(= 이어 치는 1타): 2타가 오른쪽 아래로 내려간 자리에서 몸 오른쪽 뒤로 돌아 올라가 다시 왼쪽 아래로 내리친다.
   // 2타의 거울상이라 2타 → 3타 → 2타 → … 로 끝없이 8자를 그리며 이어진다 (끝 자세가 1타와 같아 2타가 그대로 받는다)
-  third: { label: '3타 · 다시 오른쪽 위에서 앞을 지나 왼쪽으로', back: [-0.4, 0.86, -0.3], hit: [-0.4, 0.2, 0.92], end: [0.45, 0.16, 0.88],
-    posBack: [-0.05, 0.19, 0.1], posHit: [-0.02, 0.135, 0.15], posEnd: [0.02, 0.13, 0.14],
-    twist: [-0.72, 0.15, 0.62], lean: [-0.14, 0.08, 0.12], crouch: 0.3, stance: 1,
+  third: { label: '3타 · 다시 오른쪽 위에서 앞을 지나 왼쪽으로', back: [-0.4, 0.86, -0.3], hit: [-0.4, 0.2, 0.92], end: [0.2, 0.16, 0.97],
+    posBack: [-0.05, 0.19, 0.1], posHit: [-0.035, 0.135, 0.13], posEnd: [-0.01, 0.13, 0.15],
+    twist: [-0.72, 0.15, 0.82], lean: [-0.14, 0.08, 0.12], crouch: 0.3, stance: 1,
     from: 'second', duration: 0.62, via: { dir: [-0.9, 0.35, -0.15], pos: [-0.05, 0.15, 0.115] } },
   upper: { label: '아래에서 올려치기', back: [-0.62, -0.55, -0.56], hit: [-0.25, 0.5, 0.83],
     posBack: [-0.09, 0.07, 0.1], posHit: [-0.03, 0.15, 0.155], twist: [-0.6, 0.2, 0.45], lean: [0.3, -0.12, -0.2], crouch: 0.2, follow: 1.3 },
@@ -323,7 +350,7 @@ function clubSwing(S) {
   const lns = prev ? prev.lean[2] : 0;
   const cs = prev ? (prev.crouch ?? 0.5) * 0.9 : 0;
   return {
-    duration: S.duration ?? 0.72, hitAt: 0.5, equip: 'club', rate: 36, trail: [0.42, 0.68],
+    duration: S.duration ?? 0.72, hitAt: 0.5, equip: S.equip ?? 'club', rate: 36, trail: [0.42, 0.68],
     fn(u, P, fx) {
       twoHand(P, fx, u < 0.7);
       // 되튐은 작고 느리게: 크게 떨면 내리친 뒤 몸 전체가 덜컥거린다
@@ -351,10 +378,7 @@ function clubSwing(S) {
           : after(swing);
       }
       // 다리를 넓게 벌려 선다: 휘두르는 동안 버티고, 돌아올 때 모은다 (발바닥은 땅과 나란히)
-      const st = kf(u, [0, ws], [0.3, wide], [0.7, wide], [1, 0]) * 0.26;
-      P['hipR.rz'] = -st; P['hipL.rz'] = st;
-      P['footR.rz'] = st; P['footL.rz'] = -st;
-      P['pelvis.py'] -= 0.2 * (1 - Math.cos(st)) + 0.005 * (st / 0.26); // 벌린 만큼 낮춰 발이 뜨지 않게
+      wideStance(P, kf(u, [0, ws], [0.3, wide], [0.7, wide], [1, 0]));
       // 쥐기 전·놓은 뒤에 쓰이는 두 팔: 몸 앞에서 비스듬히 든 자세 (쥐는 자리와 가까워야 쥐고 놓을 때 팔이 몸을 스치지 않는다)
       // 돌아오는 구간(0.7~)은 팔꿈치·손목을 꺾지 않고 팔 전체를 어깨에서 천천히 내린다: 놓은 뒤에도 팔꿈치가 접혀 있거나
       // 손목이 젖혀 있으면 팔이 중간에서 툭 꺾인 채 내려온다
@@ -379,9 +403,51 @@ function clubSwing(S) {
   };
 }
 
+const AXE_BACK = { pos: [-0.05, 0.19, 0.1], dir: [-0.4, 0.86, -0.3] }; // 오른 어깨 옆에 세워 든 자세
+const AXE_STUCK = { pos: [-0.035, 0.14, 0.14], dir: [-0.3, 0.1, 0.95] }; // 나무에 박힌 자세: 가슴 높이에서 앞으로
+function axeChop(again) {
+  const T = again ? { dur: 0.8, back: 0.36, hit: 0.5 } : { dur: 1.0, back: 0.4, hit: 0.5 };
+  const HOLD = 0.82; // 여기까지 두 손으로 박힌 도끼를 쥐고 있다 (계속 누르고 있으면 그 전에 다음 도끼질로 넘어간다)
+  const s0 = again ? 1 : 0; // 이어 찍기는 몸도 박힌 자세에서 시작한다
+  return {
+    duration: T.dur, hitAt: T.hit, equip: 'axe', rate: 36, trail: [T.back + 0.02, T.hit + 0.01],
+    fn(u, P, fx) {
+      twoHand(P, fx, u < HOLD);
+      // 박힌 뒤의 떨림: 금방 잦아든다
+      const since = (u - T.hit) * T.dur;
+      const shake = since > 0 ? Math.sin(since * 60) * Math.exp(-since * 11) : 0;
+      const g = again
+        ? gripPath(u, [0, AXE_STUCK.pos, AXE_STUCK.dir], [0.1, [-0.04, 0.14, 0.125], [-0.36, 0.14, 0.92]], // 살짝 비틀어 뽑는다
+          [T.back, AXE_BACK.pos, AXE_BACK.dir], [T.hit, AXE_STUCK.pos, AXE_STUCK.dir, 'in'], [1, AXE_STUCK.pos, AXE_STUCK.dir])
+        : gripPath(u, [0, CLUB_READY_POS, CLUB_READY], [T.back, AXE_BACK.pos, AXE_BACK.dir], [T.hit, AXE_STUCK.pos, AXE_STUCK.dir, 'in'], [1, AXE_STUCK.pos, AXE_STUCK.dir]);
+      fx.grip = { pos: g.pos, dir: unit([g.dir[0] + shake * 0.05, g.dir[1] + shake * 0.07, g.dir[2]]) };
+      crouch(P, kf(u, [0, 0.28 * s0], [T.back, 0.1], [T.hit, 0.3, 'in'], [HOLD, 0.28], [1, 0]));
+      // 허리를 오른쪽으로 감았다가 풀며 찍고, 박힌 자리에서 멈춘다 (지나쳐 돌아가지 않는다)
+      const tw = kf(u, [0, 0.3 * s0], [T.back, -0.85], [T.hit, 0.3, 'in'], [HOLD, 0.3], [1, 0]);
+      P['pelvis.ry'] = tw * 0.4;
+      P['spine.ry'] = tw + shake * 0.03;
+      P['spine.rx'] += kf(u, [0, 0.08 * s0], [T.back, -0.1], [T.hit, 0.08, 'in'], [HOLD, 0.08], [1, 0]) + shake * 0.03;
+      P['spine.rz'] = kf(u, [0, 0], [T.back, -0.09], [T.hit, 0.05], [1, 0]);
+      P['head.ry'] = -tw * 0.85; // 몸을 틀어도 눈은 나무에
+      P['head.rx'] = -shake * 0.04;
+      P['hipL.rx'] -= kf(u, [0, 0.2 * s0], [T.back, 0.3], [HOLD, 0.2], [1, 0]);
+      wideStance(P, kf(u, [0, s0], [0.25, 1], [HOLD, 1], [1, 0]));
+      armsDown(P, kf(u, [HOLD - 0.1, 0], [1, 1]));
+    },
+  };
+}
+
 // 낚시 3단계 (연속 시퀀스에서도 같은 함수를 재사용)
+const ROD_POS = [-0.03, 0.13, 0.125];
 const fishCast = (u, P, fx) => {
   twoHand(P, fx);
+  fx.grip = gripPath(u,
+    [0, ROD_POS, [0, 0.55, 0.83]],
+    [0.18, ROD_POS, [0, 0.6, 0.8]],
+    [0.42, [-0.05, 0.19, 0.1], [-0.3, 0.85, -0.43]],
+    [0.6, [-0.03, 0.13, 0.14], [0, 0.25, 0.97], 'in'],
+    [0.74, [-0.03, 0.13, 0.13], [0, 0.5, 0.87], 'out'],
+    [1, ROD_POS, [0, 0.42, 0.9]]);
   // 한 발 내딛으며 크게 뒤로 젖혔다가 휙 — 던진 뒤 낚싯대가 살짝 되튐
   P['shoulderR.rx'] = kf(u, [0, -0.3], [0.18, -0.1], [0.42, -2.6], [0.6, -0.35], [0.74, -0.65], [1, -0.55]);
   P['shoulderR.rz'] = kf(u, [0, 0.15], [0.42, -0.8], [0.6, 0.2], [1, 0.15]);
@@ -404,6 +470,8 @@ const fishWait = (t, P, fx) => {
   // 찌를 보다가 가끔 두리번, 몸은 좌우로 느긋하게 흔들고 낚싯대 끝은 까딱까딱
   const glance = sm(Math.sin(t * 0.55), 0.8, 1);
   twoHand(P, fx);
+  // 낚싯대 끝이 느긋하게 오르내리다 가끔 까딱
+  fx.grip = { pos: ROD_POS, dir: unit([0, 0.42 + Math.sin(t * 1.4) * 0.03 + Math.max(0, Math.sin(t * 3.1)) ** 6 * 0.07, 0.9]) };
   P['shoulderR.rx'] = -0.55 + Math.sin(t * 1.4) * 0.04 + Math.max(0, Math.sin(t * 3.1)) ** 6 * 0.08;
   P['shoulderR.rz'] = 0.15;
   P['elbowR.rx'] = -0.35;
@@ -423,6 +491,11 @@ const fishWait = (t, P, fx) => {
 const fishCatch = (u, P, fx) => {
   // 움찔 숙였다가 낚아채며 뒤로 젖히고 폴짝, 낚싯대를 번쩍 든 채 기뻐서 한 번 더 통통
   twoHand(P, fx, u < 0.85);
+  fx.grip = gripPath(u,
+    [0, ROD_POS, [0, 0.42, 0.9]],
+    [0.12, [-0.03, 0.12, 0.13], [0, 0.25, 0.97]],
+    [0.3, [-0.04, 0.19, 0.11], [-0.1, 0.95, -0.3]],
+    [0.85, [-0.04, 0.19, 0.11], [-0.1, 0.97, -0.15]]);
   crouch(P, kf(u, [0, 0], [0.12, 0.45], [0.26, 0], [0.5, 0], [0.56, 0.3], [0.64, 0], [0.8, 0], [0.86, 0.25], [1, 0]));
   P['shoulderR.rx'] = kf(u, [0, -0.55], [0.12, -0.3], [0.3, -2.5], [0.7, -2.3], [1, -0.4]);
   P['handR.rx'] = kf(u, [0, 0.45], [0.3, -0.1], [0.5, 0]);
@@ -463,29 +536,11 @@ Object.assign(ACTIONS, {
       P['root.sy'] = kf(u, [0.7, 0], [0.76, -0.05], [0.84, 0.05], [0.96, -0.04], [1, 0]);
     },
   },
-  // 도끼질: 허리를 틀며 도끼를 어깨 너머로 천천히 크게 젖혀(예비 동작) → 순식간에 내려찍고(가속) →
-  // 관성으로 조금 더 파고들었다가(잔여 동작) 부르르 되튐. 내려찍는 구간이 예전보다 두 배 빠르다.
-  chop: {
-    duration: 1.3, hitAt: 0.55, equip: 'axe', rate: 42, trail: [0.47, 0.66],
-    fn(u, P, fx) {
-      twoHand(P, fx, u < 0.8);
-      const shake = u > 0.55 ? Math.sin((u - 0.55) * 60) * Math.exp(-(u - 0.55) * 14) : 0;
-      crouch(P, kf(u, [0, 0], [0.2, 0.22], [0.48, 0.02], [0.55, 0.5, 'in'], [0.62, 0.62, 'out'], [0.78, 0.45], [1, 0]));
-      P['shoulderR.rx'] = kf(u, [0, 0], [0.4, -1.85], [0.48, -2.1], [0.55, -0.5, 'in'], [0.62, -0.3, 'out'], [0.78, -0.6], [1, 0]) + shake * 0.12;
-      P['shoulderR.rz'] = kf(u, [0, 0], [0.4, -1.15], [0.48, -1.3], [0.55, 0.3, 'in'], [0.62, 0.38, 'out'], [0.78, -0.2], [1, -ARM_REST]);
-      P['shoulderL.rx'] = kf(u, [0, 0], [0.4, -1.25], [0.48, -1.45], [0.55, -0.5, 'in'], [0.62, -0.35, 'out'], [0.78, -0.55], [1, 0]) + shake * 0.12;
-      P['shoulderL.rz'] = kf(u, [0, ARM_REST], [0.48, -0.22], [0.55, -0.35, 'in'], [0.78, 0.25], [1, ARM_REST]);
-      P['elbowR.rx'] = kf(u, [0, 0], [0.48, -0.5], [0.55, -0.1, 'in'], [1, 0]);
-      P['elbowL.rx'] = kf(u, [0, 0], [0.48, -0.95], [0.55, -0.2, 'in'], [1, 0]);
-      P['spine.rx'] += kf(u, [0, 0], [0.4, -0.25], [0.48, -0.34], [0.55, 0.45, 'in'], [0.62, 0.55, 'out'], [0.78, 0.35], [1, 0]) + shake * 0.05;
-      P['spine.ry'] = kf(u, [0, 0], [0.48, -0.38], [0.55, 0.18, 'in'], [0.62, 0.24, 'out'], [1, 0]);
-      P['pelvis.ry'] = kf(u, [0, 0], [0.48, -0.16], [0.55, 0.1, 'in'], [1, 0]);
-      P['head.rx'] = kf(u, [0, 0], [0.48, -0.22], [0.55, 0.15, 'in'], [1, 0]) - shake * 0.06;
-      P['head.ry'] = kf(u, [0, 0], [0.48, 0.28], [0.55, -0.1, 'in'], [1, 0]); // 몸을 틀어도 눈은 나무에
-      P['hipL.rx'] -= kf(u, [0, 0], [0.48, 0.28], [1, 0]);
-      P['root.sy'] = kf(u, [0.3, 0], [0.48, 0.05], [0.56, -0.06], [0.75, 0]);
-    },
-  },
+  // 도끼질: 야구 방망이처럼 수평으로 휘둘러 앞에 선 나무 옆구리를 찍는다. 도끼는 나무에 박혀 그 자리에서 부르르 떨며 멈춘다
+  // (몽둥이처럼 나무를 지나쳐 돌아가지 않는다). chopAgain: 박힌 도끼를 뽑아 다시 뒤로 보냈다가 또 찍는, 이어 하는 도끼질
+  chop: axeChop(false),
+  chopAgain: axeChop(true),
+  chopAgain2: axeChop(true), // 같은 동작을 연달아 다시 재생하려고 이름만 다르게 하나 더 둔다
   // 몽둥이 내리치기: 허리와 어깨를 오른쪽 뒤로 크게 감으며 몽둥이를 오른 어깨 너머 뒤로 보냈다가(예비 동작),
   // 머리 위를 넘겨 몸 앞으로 번개처럼 내리치고(가속), 관성으로 왼쪽 아래까지 더 내려간 뒤(잔여 동작) 부르르 되튐.
   // 두 손이 쥔 자리와 몽둥이 방향은 fx.grip 으로 직접 정한다 (몸통 기준이라 허리를 틀면 함께 돈다).
@@ -493,6 +548,80 @@ Object.assign(ACTIONS, {
   clubSmash: clubSwing(CLUB_STYLES.diagonal),
   clubSmash2: clubSwing(CLUB_STYLES.second), // 1타에 이어 치는 2타
   clubSmash3: clubSwing(CLUB_STYLES.third), // 2타에 이어 치는 1타 (계속 누르면 2타 ↔ 3타 반복)
+  // 공중 공격: 뛰어오른 도중에 누르면 그 높이 그대로 이어받아(재생기의 offset) 공중에서 수평으로 휘두른다.
+  // 몸 높이·다리는 점프 동작 그대로이고, 누른 순간(sec0)부터 0.38초 동안 휘두른다
+  clubAir: {
+    duration: 0.95, equip: 'club', rate: 36, rootRate: 120, hitAfter: 0.19, offset: 0.15,
+    fn(u, P, fx, sec, sec0) {
+      ACTIONS.jump.fn(u, P);
+      const v = (sec - (sec0 || 0.15)) / 0.38;
+      if (v < 0) return;
+      twoHand(P, fx, v < 1.05);
+      fx.grip = gripPath(v, [0, CLUB_READY_POS, CLUB_READY], [0.3, [-0.05, 0.19, 0.1], [-0.4, 0.86, -0.3]],
+        [0.5, [-0.035, 0.135, 0.13], [-0.4, 0.15, 0.92], 'in'], [0.85, [-0.01, 0.13, 0.15], [0.2, 0.16, 0.97], 'out'], [1.05, [-0.01, 0.13, 0.15], [0.2, 0.16, 0.97]]);
+      fx.trail = v > 0.3 && v < 0.85;
+      const tw = kf(v, [0, 0], [0.3, -0.75], [0.5, 0.2, 'in'], [0.85, 0.85, 'out'], [1.6, 0]);
+      P['pelvis.ry'] = tw * 0.5;
+      P['spine.ry'] = tw;
+      P['head.ry'] = -tw * 0.8;
+      // 휘두르는 쪽 다리를 뒤로 차며 몸을 편다
+      P['hipR.rx'] += kf(v, [0, 0], [0.5, 0.5], [1.2, 0]);
+      P['kneeR.rx'] -= kf(v, [0, 0], [0.5, 0.4], [1.2, 0]);
+    },
+  },
+  // 내리찍기: 더블 점프(공중제비) 도중에 누르면 몽둥이를 머리 위로 치켜든 채 돌다가, 착지하는 순간 땅을 내리찍는다.
+  // 몸은 공중제비 동작 그대로 이어받고, 찍은 뒤에는 잠깐 웅크린 채 버텼다가 일어난다
+  clubSlam: {
+    // (rootRate: 몸 높이는 공중제비와 같은 빠르기로 따라가게 한다. 다르면 넘어오는 순간 높이가 툭 튄다)
+    duration: 1.15, equip: 'club', rate: 36, rootRate: 18, hitAt: (0.74 * 0.85 + 0.02) / 1.15, offset: 0.2,
+    fn(u, P, fx, sec, sec0) {
+      const F = 0.85; // 공중제비 길이
+      const TL = 0.74 * F; // 발이 땅에 닿는 때
+      ACTIONS.flip.fn(Math.min(1, sec / F), P);
+      const s0 = sec0 || 0.2;
+      if (sec < s0) return;
+      const UP = [[-0.02, 0.2, 0.105], [-0.1, 0.92, -0.38]];
+      const DOWN = [[-0.02, 0.105, 0.15], [-0.1, -0.62, 0.78]];
+      twoHand(P, fx, sec < TL + 0.3);
+      const since = sec - TL - 0.02;
+      const shake = since > 0 ? Math.sin(since * 55) * Math.exp(-since * 12) : 0;
+      const g = sec < TL - 0.1
+        ? gripPath((sec - s0) / Math.max(0.08, TL - 0.1 - s0), [0, CLUB_READY_POS, CLUB_READY], [1, ...UP])
+        : gripPath(sec, [TL - 0.1, ...UP], [TL + 0.02, ...DOWN, 'in'], [TL + 0.4, ...DOWN]);
+      fx.grip = { pos: g.pos, dir: unit([g.dir[0], g.dir[1] + shake * 0.08, g.dir[2]]) };
+      fx.trail = sec > TL - 0.1 && sec < TL + 0.05;
+      // 찍은 뒤: 깊이 웅크려 버텼다가 일어난다
+      const k = kf(sec, [TL - 0.06, 0], [TL + 0.03, 1], [TL + 0.28, 1], [1.15, 0]);
+      if (k > 0) {
+        crouch(P, Math.max(kf(sec / F, [0.6, 0], [0.74, 0.3], [0.84, 0.42], [1, 0]), 0.85 * k));
+        P['spine.rx'] += 0.3 * k + shake * 0.04;
+        P['head.rx'] = -0.5 * P['spine.rx'];
+        wideStance(P, k);
+      }
+      armsDown(P, kf(sec, [TL + 0.25, 0], [1.15, 1]));
+    },
+  },
+  // 대시 공격: 달리다가 누르면 앞으로 뛰어들며 머리 위에서 아래로 내리친다 (앞으로 나아가는 것은 게임 쪽에서 움직여 준다)
+  clubDash: {
+    duration: 0.62, hitAt: 0.48, equip: 'club', rate: 36, rootRate: 120, trail: [0.34, 0.6],
+    fn(u, P, fx) {
+      twoHand(P, fx, u < 0.76);
+      const UP = [[-0.02, 0.2, 0.105], [-0.1, 0.92, -0.38]];
+      const g = gripPath(u, [0, CLUB_READY_POS, CLUB_READY], [0.3, ...UP], [0.48, [-0.02, 0.125, 0.15], [-0.1, -0.25, 0.96], 'in'],
+        [0.62, [-0.02, 0.105, 0.15], [-0.1, -0.58, 0.81], 'out'], [1, [-0.02, 0.105, 0.15], [-0.1, -0.58, 0.81]]);
+      const shake = u > 0.48 ? Math.sin((u - 0.48) * 36) * Math.exp(-(u - 0.48) * 14) : 0;
+      fx.grip = { pos: g.pos, dir: unit([g.dir[0], g.dir[1] + shake * 0.06, g.dir[2]]) };
+      crouch(P, kf(u, [0, 0.15], [0.3, 0.05], [0.48, 0.5, 'in'], [0.72, 0.6], [1, 0]));
+      P['spine.rx'] += kf(u, [0, 0.12], [0.3, -0.22], [0.48, 0.28, 'in'], [0.72, 0.34], [1, 0]) + shake * 0.04;
+      P['head.rx'] = -0.5 * P['spine.rx'];
+      // 뛰어드는 다리: 왼발을 크게 내딛고 오른발은 뒤로 찬다. 살짝 떠올랐다가 내리치며 착지
+      P['hipL.rx'] -= kf(u, [0, 0.35], [0.3, 0.7], [0.55, 0.35], [1, 0]);
+      P['hipR.rx'] += kf(u, [0, 0.25], [0.3, 0.55], [0.55, 0.1], [1, 0]);
+      P['kneeR.rx'] += kf(u, [0, 0.4], [0.3, 0.8], [0.55, 0.15], [1, 0]);
+      P['root.py'] = kf(u, [0, 0], [0.26, 0.09], [0.48, 0]);
+      armsDown(P, kf(u, [0.7, 0], [1, 1]));
+    },
+  },
   // 쇼룸에서 비교해 보는 시안 (게임은 clubSmash 만 쓴다)
   clubOverhead: clubSwing(CLUB_STYLES.overhead),
   clubSide: clubSwing(CLUB_STYLES.side),
@@ -511,6 +640,7 @@ Object.assign(ACTIONS, {
           const k = sm(u, 0.66, 0.7);
           P['shoulderR.rx'] += Math.sin(sec * 40) * 0.05 * k;
           P['handR.rx'] += Math.sin(sec * 40 + 1) * 0.06 * k;
+          fx.grip = { pos: fx.grip.pos, dir: unit([Math.sin(sec * 40 + 1) * 0.03 * k, fx.grip.dir[1] - 0.1 * k + Math.sin(sec * 40) * 0.04 * k, fx.grip.dir[2]]) };
           P['spine.rx'] += 0.12 * k;
           P['head.rx'] = 0.15 * k;
           P['head.ry'] = 0;
@@ -659,13 +789,16 @@ export function createAnimator(rate = 18) {
   let done = false;
   let cb = {};
   let progress = -1; // 일회성 액션 진행도 0→1 (반복 액션은 -1)
+  let off = 0;
   const wrap = (d) => Math.atan2(Math.sin(d), Math.cos(d));
 
   return {
     get action() { return name; },
     get progress() { return progress; },
     onEnd: null, // (이름, 다음 액션|null) — 일회성이 끝날 때 한 번
-    play(next, onHit, onComplete) {
+    // offset: 이 동작을 몇 초 지난 자리부터 이어서 재생할지 (뛰어오른 도중에 공중 공격으로 바꿀 때 높이가 그대로 이어지게)
+    play(next, onHit, onComplete, offset = 0) {
+      off = offset;
       name = ACTIONS[next] ? next : 'idle';
       start = null;
       hits = 0;
@@ -673,7 +806,7 @@ export function createAnimator(rate = 18) {
       cb = { onHit, onComplete };
     },
     update(rig, t, dt) {
-      if (start === null) start = t;
+      if (start === null) start = t - off;
       for (const k in target) delete target[k];
       const fx = {};
       const def = ACTIONS[name];
@@ -685,8 +818,9 @@ export function createAnimator(rate = 18) {
         const sec = t - start;
         const u = Math.min(1, sec / def.duration);
         progress = u;
-        def.fn(u, target, fx, sec);
-        const at = [].concat(def.hitAt ?? []);
+        def.fn(u, target, fx, sec, off);
+        // hitAfter: 이어받아 시작한 순간부터 몇 초 뒤가 타격인 동작 (공중 공격은 누른 때가 매번 다르다)
+        const at = def.hitAfter != null ? [((off || def.offset || 0) + def.hitAfter) / def.duration] : [].concat(def.hitAt ?? []);
         while (hits < at.length && u >= at[hits]) {
           hits += 1; // ?.() 는 콜백이 없으면 인자 계산도 건너뛰므로 증가는 따로
           cb.onHit?.(name, hits);

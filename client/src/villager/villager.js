@@ -400,8 +400,10 @@ function buildHead(head, o, live) {
   nose.castShadow = false; // 코 그림자가 어깨에 초승달처럼 떨어지는 것 방지
 
   // 귀
+  // (얼굴 재질을 그대로 쓰면 얼굴 그림 전체가 귀에도 작게 입혀져 볼 발그레와 입이 귀에 찍힌다: 그림 없는 살색 재질을 쓴다)
+  const earSkin = new THREE.MeshPhysicalMaterial({ color: shade(o.skin, 1), roughness: 0.55, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c2), sheenRoughness: 0.8 });
   for (const s of [-1, 1]) {
-    const ear = mesh(ellipsoid(0.022, 0.04, 0.03), skin, head, '귀');
+    const ear = mesh(ellipsoid(0.022, 0.04, 0.03), earSkin, head, '귀');
     ear.position.copy(surf(s * PI * 0.5, PI * 0.56)).multiplyScalar(0.97);
     ear.rotation.z = s * 0.15;
     ear.castShadow = false;
@@ -1006,6 +1008,9 @@ const WAIST_HI = 0.135; // 여기 위는 상체 그대로 (어깨 관절보다 �
 function bendWaist(root, hips, torso) {
   root.updateWorldMatrix(true, true);
   const skeleton = new THREE.Skeleton([hips, torso]);
+  // 바지 허리·치마도 상의와 똑같이 휘게 한다: 골반에만 붙여 두면 허리를 틀거나 숙일 때 상의 밑단만 따라 돌아
+  // 그 속의 바지 허리가 상의를 뚫고 나온다 (같은 뼈·같은 비율로 휘면 둘 사이 간격이 그대로 유지된다)
+  for (const c of hips.children.filter((m) => m.isMesh && (m.name === '바지허리' || m.name === '치마'))) torso.add(c);
   for (const c of [...torso.children]) {
     if (!c.isMesh) continue;
     c.updateMatrix();
@@ -1246,7 +1251,8 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
 
   // 액션 실행: 필요한 장비를 자동으로 쥐고, 표정이 있는 액션은 끝날 때 원래 표정으로 되돌린다
   // onHit(이름, 몇 번째 타격) · onComplete(이름) 는 일회성 액션에서 불린다
-  function setAction(name, onHit, onComplete) {
+  // offset: 몇 초 지난 자리부터 이어서 재생 (공중 공격이 점프 높이를 그대로 이어받을 때)
+  function setAction(name, onHit, onComplete, offset = 0) {
     const def = ACTIONS[name] ? ACTIONS[name] : (name = 'idle', ACTIONS.idle);
     if (def.equip && def.equip !== state.equipment) equip(def.equip);
     if (def.expression) {
@@ -1259,16 +1265,18 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
       redrawFace();
     }
     state.action = name;
-    player.play(name, onHit, onComplete);
+    player.play(name, onHit, onComplete, offset);
     api.onChange?.();
   }
   player.onEnd = (_name, next) => { if (next) setAction(next); };
 
   let blinkT = 2 + Math.random() * 3;
+  let trailOn = false; // 동작이 지금 휘두르는 궤적을 남기라고 했는가 (구간이 매번 달라지는 공중 공격용)
 
   function update(t, dt = 1 / 60) {
     if (state.action !== player.action) setAction(state.action); // state.action 을 직접 바꾼 경우도 받아 줌
     const fx = player.update(rig, t, dt);
+    trailOn = !!fx.trail;
     updateEquipment(rig, root, fx, t, dt, state);
     resolveArmCollision(rig); // 팔이 몸·옷 속으로 들어가지 않게 (장비 IK까지 끝난 뒤)
     straightenWrists(rig); // 팔꿈치가 옮겨진 뒤에도 손목은 아래팔과 한 줄로
@@ -1290,6 +1298,6 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
     live.eyes.forEach((t) => t.dispose());
     root.removeFromParent();
   }
-  const api = { root, get rig() { return rig; }, get progress() { return player.progress; }, options: o, state, set, setExpression, setAction, equip, update, dispose, onChange: null };
+  const api = { root, get rig() { return rig; }, get progress() { return player.progress; }, get trailOn() { return trailOn; }, options: o, state, set, setExpression, setAction, equip, update, dispose, onChange: null };
   return api;
 }

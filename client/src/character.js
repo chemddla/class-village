@@ -60,7 +60,10 @@ const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 const ACTS = {
   [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
   [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3',
+  [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
 };
+// 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
+const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5 };
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
@@ -134,7 +137,11 @@ export class Character {
 
   // 동작 바꾸기 (잠깐 하는 동작으로 바뀌는 순간 한 번 재생)
   setAnim(a) {
-    if (a !== this.anim && ACTS[a]) this.actLeft = actTime(a);
+    if (a !== this.anim && ACTS[a]) {
+      const from = CONTINUES[a];
+      this.startAt = from !== undefined && this.anim === from && this.actLeft > 0 ? actTime(from) - this.actLeft : 0;
+      this.actLeft = actTime(a) - this.startAt;
+    }
     this.anim = a;
   }
 
@@ -146,9 +153,11 @@ export class Character {
     const want = ACTS[this.anim] && this.actLeft > 0 ? ACTS[this.anim] : BASE[this.anim] ?? 'idle';
     if (want !== this.current) {
       this.current = want;
-      this.actSec = 0;
-      this.marks = {};
-      this.villager.setAction(want, (name, n) => Character.onHit?.(this, name, n));
+      const at = ACTS[this.anim] === want ? this.startAt ?? 0 : 0;
+      this.actSec = at;
+      this.marks = at > 0 ? { up: 1 } : {}; // 이어받은 동작은 도약 연출을 다시 하지 않는다
+      this.startAt = 0;
+      this.villager.setAction(want, (name, n) => Character.onHit?.(this, name, n), undefined, at);
       // 동작이 끝나면 원래 들고 있던 도구로 돌아간다
       if (!ACTIONS[want]?.equip && this.villager.state.equipment !== TOOLS[this.tool]) this.villager.equip(TOOLS[this.tool]);
     }
@@ -202,15 +211,15 @@ export class Character {
     // 점프: 도약하는 순간 쭉 늘어나고, 착지하는 순간 납작 → 탄성 복원 + 발밑 먼지
     const cur = this.current;
     const M = this.marks;
-    if (cur === 'jump') {
+    if (cur === 'jump' || cur === 'clubAir') {
       if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
       // 발이 땅에 닿는 순간(진행도 0.78 = 0.74초)에 맞춘다: 더 이르면 아직 공중에서 납작해지고 먼지가 난다
       if (!M.down && this.actSec >= LAND.jump) { M.down = 1; this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
-    } else if (cur === 'flip') {
+    } else if (cur === 'flip' || cur === 'clubSlam') {
       if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
       if (!M.down && this.actSec >= LAND.flip) { M.down = 1; this.footPuff(12, 1.2, true); }
       // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
-      if (this.actSec < 0.55) {
+      if (cur === 'flip' && this.actSec < 0.55) {
         rig.head.getWorldPosition(vB);
         rig.pelvis.getWorldPosition(vA);
         this.trail('flip', { life: 0.16, color: 0xffffff, alpha: 0.55 }).push(this.time, vA, vB);
@@ -232,14 +241,14 @@ export class Character {
     // 휘두르기 궤적: 액션에 trail: [시작, 끝] 이 있으면 그 구간 동안 도구 끝을 따라 부채꼴
     const def = ACTIONS[cur];
     const u = this.villager.progress;
-    if (def?.trail && u >= def.trail[0] && u <= def.trail[1] && toolEnds(rig, vA, vB)) {
+    if (((def?.trail && u >= def.trail[0] && u <= def.trail[1]) || this.villager.trailOn) && toolEnds(rig, vA, vB)) {
       this.trail('swing', { life: 0.15, color: 0xfffbe8, alpha: 0.95 }).push(this.time, vA, vB);
     }
     for (const k in this.trails) this.trails[k].update(this.time);
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)
     let leanX = run * 0.16 + (cur === 'flip' ? 0.2 * (1 - Math.min(1, this.actSec / 0.5)) : 0);
-    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip') leanX = 0; // 생활·공격 동작 중에는 똑바로
+    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip' && cur !== 'clubDash') leanX = 0; // 생활·공격 동작 중에는 똑바로
     const leanZ = THREE.MathUtils.clamp(-turn * 0.035, -0.22, 0.22) * run;
     const a = 1 - Math.exp(-dt * 10);
     this.body.rotation.x += (leanX - this.body.rotation.x) * a;
