@@ -7,7 +7,7 @@ import {
   plaidTexture, soleBump, pocketTexture, shade, logoTexture, canvasTexture,
 } from './textures.js';
 import { ACTIONS, createAnimator } from './actions.js';
-import { EQUIPMENT, attachEquipment, updateEquipment } from './equipment.js';
+import { EQUIPMENT, attachEquipment, updateEquipment, straightenWrists } from './equipment.js';
 import { resolveArmCollision } from './collision.js';
 
 const PI = Math.PI;
@@ -1271,6 +1271,7 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
     const fx = player.update(rig, t, dt);
     updateEquipment(rig, root, fx, t, dt, state);
     resolveArmCollision(rig); // 팔이 몸·옷 속으로 들어가지 않게 (장비 IK까지 끝난 뒤)
+    straightenWrists(rig); // 팔꿈치가 옮겨진 뒤에도 손목은 아래팔과 한 줄로
     // 간헐적 눈 깜빡임
     blinkT -= dt;
     let sy = 1;

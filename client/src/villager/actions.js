@@ -265,8 +265,11 @@ export const CLUB_STYLES = {
   // 손은 가슴 높이로: 팔이 짧아 낮게 내밀면 다 펴져 팔꿈치를 벌릴 여유가 없다.
   // 젖힐 때 두 손은 오른 어깨 쪽으로 멀리 보내지 않고 가슴 가운데 가까이 둔다: 멀리 보내면 왼팔이 가슴을 일자로 가로지른다.
   // 가까이 두면 왼 윗팔은 아래로 내려가고 아래팔이 손으로 올라가는 V자가 된다
-  diagonal: { label: '대각선으로 앞을 치기', back: [-0.72, 0.45, -0.53], hit: [-0.52, -0.12, 0.85],
-    posBack: [-0.03, 0.185, 0.105], posHit: [-0.02, 0.125, 0.145], twist: [-0.72, 0.15, 0.5], lean: [-0.18, 0.14, 0.18], crouch: 0.3, follow: 1.1 },
+  // (참고 영상) 오른 어깨 옆에 세워 들었다가, 두 팔을 뻗어 앞을 지나 왼쪽 아래까지 크게 휘두른다.
+  // end / posEnd: 타격을 지나 관성으로 가 닿는 방향과 손 자리. 다리는 넓게 벌려 선다(stance)
+  diagonal: { label: '대각선으로 앞을 치기', back: [-0.4, 0.86, -0.3], hit: [-0.4, 0.0, 0.92], end: [0.3, -0.52, 0.8],
+    posBack: [-0.05, 0.19, 0.1], posHit: [-0.02, 0.13, 0.15], posEnd: [0.03, 0.1, 0.14],
+    twist: [-0.72, 0.15, 0.62], lean: [-0.16, 0.14, 0.24], crouch: 0.36, stance: 1 },
   overhead: { label: '머리 위에서 앞으로 내려치기', back: [-0.22, 0.92, -0.32], hit: [-0.45, -0.18, 0.87],
     posBack: [-0.04, 0.21, 0.125], posHit: [-0.02, 0.12, 0.145], twist: [-0.2, 0.05, 0.12], lean: [-0.3, 0.2, 0.26], crouch: 0.35 },
   side: { label: '옆으로 크게 휘두르기', back: [-0.82, 0.22, -0.53], hit: [0.12, -0.12, 0.98],
@@ -275,15 +278,17 @@ export const CLUB_STYLES = {
   // from: 시작 자세를 1타의 관성 끝 자세로 잡아 두 동작이 끊기지 않고 이어진다
   second: { label: '2타 · 왼쪽 위에서 앞을 지나 오른쪽으로', // (젖힐 때 몽둥이를 왼쪽으로 많이 눕히지 않고 머리 왼쪽 위로 세운다: 많이 눕히면 자루 끝을 쥔 왼손이 오른손의 오른쪽에 놓여
     //  오른팔이 왼팔을 가로질러 지나간다)
-    back: [0.42, 0.66, -0.62], hit: [-0.45, -0.12, 0.88],
-    posBack: [0.015, 0.18, 0.12], posHit: [-0.03, 0.125, 0.145], twist: [0.6, -0.15, -0.45], lean: [-0.16, 0.14, 0.18], crouch: 0.3, follow: 1.1,
+    back: [0.42, 0.72, -0.55], hit: [-0.25, 0.0, 0.97], end: [-0.72, -0.45, 0.53],
+    posBack: [0.015, 0.185, 0.115], posHit: [-0.02, 0.13, 0.15], posEnd: [-0.06, 0.1, 0.13],
+    twist: [0.6, -0.15, -0.55], lean: [-0.16, 0.14, 0.24], crouch: 0.36, stance: 1,
     // via: 들어 올릴 때 거쳐 가는 자세. 왼쪽 아래에서 몸 옆 뒤로 돌아 올라가야, 꼭대기에서 멈췄다 되돌아오지 않고
     // 뒤 → 위 → 앞으로 한 방향으로 돌며 그대로 내리치게 된다 (앞쪽으로 들어 올리면 꼭대기에서 방향이 뒤집혀 한 박자 선다)
     from: 'diagonal', duration: 0.62, via: { dir: [0.42, -0.62, -0.66], pos: [0.01, 0.095, 0.135] } },
   // 3타(= 이어 치는 1타): 2타가 오른쪽 아래로 내려간 자리에서 몸 오른쪽 뒤로 돌아 올라가 다시 왼쪽 아래로 내리친다.
   // 2타의 거울상이라 2타 → 3타 → 2타 → … 로 끝없이 8자를 그리며 이어진다 (끝 자세가 1타와 같아 2타가 그대로 받는다)
-  third: { label: '3타 · 다시 오른쪽 위에서 앞을 지나 왼쪽으로', back: [-0.72, 0.45, -0.53], hit: [-0.52, -0.12, 0.85],
-    posBack: [-0.03, 0.185, 0.105], posHit: [-0.02, 0.125, 0.145], twist: [-0.72, 0.15, 0.5], lean: [-0.18, 0.14, 0.18], crouch: 0.3, follow: 1.1,
+  third: { label: '3타 · 다시 오른쪽 위에서 앞을 지나 왼쪽으로', back: [-0.4, 0.86, -0.3], hit: [-0.4, 0.0, 0.92], end: [0.3, -0.52, 0.8],
+    posBack: [-0.05, 0.19, 0.1], posHit: [-0.02, 0.13, 0.15], posEnd: [0.03, 0.1, 0.14],
+    twist: [-0.72, 0.15, 0.62], lean: [-0.16, 0.14, 0.24], crouch: 0.36, stance: 1,
     from: 'second', duration: 0.62, via: { dir: [-0.8, -0.46, -0.38], pos: [-0.05, 0.09, 0.13] } },
   upper: { label: '아래에서 올려치기', back: [-0.62, -0.55, -0.56], hit: [-0.25, 0.5, 0.83],
     posBack: [-0.09, 0.07, 0.1], posHit: [-0.03, 0.15, 0.155], twist: [-0.6, 0.2, 0.45], lean: [0.3, -0.12, -0.2], crouch: 0.2, follow: 1.3 },
@@ -303,8 +308,15 @@ function clubSwing(S) {
   const over = S.follow ?? 1.22;
   // 시작 자세: 보통은 몸 앞에 세워 든 준비 자세, 이어 치는 동작은 앞 동작의 관성 끝 자세
   const prev = S.from ? CLUB_STYLES[S.from] : null;
-  const startPos = prev ? mix(prev.posBack, prev.posHit, prev.follow ?? 1.22) : CLUB_READY_POS;
-  const startDir = prev ? slerpDir(unit(prev.back), unit(prev.hit), prev.follow ?? 1.22) : CLUB_READY;
+  const startPos = prev ? prev.posEnd ?? mix(prev.posBack, prev.posHit, prev.follow ?? 1.22) : CLUB_READY_POS;
+  const startDir = prev ? (prev.end ? unit(prev.end) : slerpDir(unit(prev.back), unit(prev.hit), prev.follow ?? 1.22)) : CLUB_READY;
+  const END = S.end ? unit(S.end) : null;
+  // 젖힘 → 타격 → 관성 끝을 한 줄의 곡선으로: 타격(q = 1)에서 방향이 꺾이지 않고 그대로 지나간다
+  const sweep = (q) => (q <= 1
+    ? { pos: curve(S.posBack, S.posBack, S.posHit, S.posEnd, q), dir: unit(curve(BACK, BACK, HIT, END, q)) }
+    : { pos: curve(S.posBack, S.posHit, S.posEnd, S.posEnd, q - 1), dir: unit(curve(BACK, HIT, END, END, q - 1)) });
+  const wide = S.stance ?? 0;
+  const ws = prev ? (prev.stance ?? 0) : 0;
   // 이어 치는 동작은 몸(허리 비틀기·숙임·무릎)도 앞 동작이 끝난 자세에서 시작한다: 0에서 시작하면 넘어가는 순간 몸이 홱 풀렸다 다시 감긴다
   const VIA = S.via ? unit(S.via.dir) : null;
   const tws = prev ? prev.twist[2] : 0;
@@ -320,22 +332,29 @@ function clubSwing(S) {
       // 준비 → 젖힘까지 한 번(back), 젖힌 데서 타격을 지나 관성까지는 같은 원호 위를 한 번에(swing: 0 → 타격 1 → 관성) 간다.
       // 타격에서 다른 원호로 갈아타면 가장 빠른 순간에 방향이 꺾여 덜컥거린다
       const back = kf(u, [0, 0], [0.4, 1]);
-      const swing = kf(u, [0.4, 0], [0.5, 1, 'in'], [0.68, over, 'out']);
+      const swing = kf(u, [0.4, 0], [0.5, 1, 'in'], [0.68, END ? 2 : over, 'out']);
+      const after = (q) => (END ? sweep(q) : { pos: mix(S.posBack, S.posHit, q), dir: slerpDir(BACK, HIT, q) });
       if (S.via) {
         // 이어 치기: 시작 → 거쳐 가는 자세 → 젖힘 → 타격을 한 줄의 부드러운 곡선으로 잇고, 멈추지 않고 점점 빨라지며 지나간다
         // (젖힌 꼭대기에서도 속도가 남아 있어 채찍처럼 이어진다). 타격 뒤는 같은 방향으로 조금 더 나가며 느려진다
         const p = u < 0.5 ? 3 * (u / 0.5) ** 2.2 : 3;
         const i = Math.min(2, Math.floor(p));
         const t = p - i;
-        const at = (pts) => curve(pts[Math.max(0, i - 1)], pts[i], pts[i + 1], pts[Math.min(3, i + 2)], t);
+        const at = (pts) => curve(pts[Math.max(0, i - 1)], pts[i], pts[i + 1], pts[Math.min(pts.length - 1, i + 2)], t);
         fx.grip = u < 0.5
-          ? { pos: at([startPos, S.via.pos, S.posBack, S.posHit]), dir: unit(at([startDir, VIA, BACK, HIT])) }
-          : { pos: mix(S.posBack, S.posHit, swing), dir: slerpDir(BACK, HIT, swing) };
+          ? { pos: at(END ? [startPos, S.via.pos, S.posBack, S.posHit, S.posEnd] : [startPos, S.via.pos, S.posBack, S.posHit]),
+            dir: unit(at(END ? [startDir, VIA, BACK, HIT, END] : [startDir, VIA, BACK, HIT])) }
+          : after(swing);
       } else {
         fx.grip = u < 0.4
           ? { pos: mix(startPos, S.posBack, back), dir: slerpDir(startDir, BACK, back) }
-          : { pos: mix(S.posBack, S.posHit, swing), dir: slerpDir(BACK, HIT, swing) };
+          : after(swing);
       }
+      // 다리를 넓게 벌려 선다: 휘두르는 동안 버티고, 돌아올 때 모은다 (발바닥은 땅과 나란히)
+      const st = kf(u, [0, ws], [0.3, wide], [0.7, wide], [1, 0]) * 0.26;
+      P['hipR.rz'] = -st; P['hipL.rz'] = st;
+      P['footR.rz'] = st; P['footL.rz'] = -st;
+      P['pelvis.py'] -= 0.2 * (1 - Math.cos(st)) + 0.005 * (st / 0.26); // 벌린 만큼 낮춰 발이 뜨지 않게
       // 쥐기 전·놓은 뒤에 쓰이는 두 팔: 몸 앞에서 비스듬히 든 자세 (쥐는 자리와 가까워야 쥐고 놓을 때 팔이 몸을 스치지 않는다)
       // 돌아오는 구간(0.7~)은 팔꿈치·손목을 꺾지 않고 팔 전체를 어깨에서 천천히 내린다: 놓은 뒤에도 팔꿈치가 접혀 있거나
       // 손목이 젖혀 있으면 팔이 중간에서 툭 꺾인 채 내려온다
