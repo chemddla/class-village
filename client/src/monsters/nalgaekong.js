@@ -27,7 +27,8 @@ export const NALGAE_MOTIONS = {
   spawn: { label: '등장', dur: 0.7 },
 };
 
-export function createNalgaekong({ fxParent = null, onDone = null } = {}) {
+// outlineScale: 외곽선 두께 배율 (마을에서는 주민과 같이 0.65 로 얇게)
+export function createNalgaekong({ fxParent = null, onDone = null, outlineScale = 1 } = {}) {
   const mat = (color, roughness = 0.6) => new THREE.MeshStandardMaterial({ color, roughness });
   const YELLOW = mat('#ffe07a', 0.85);
   const ORANGE = mat('#ff9d3c', 0.6);
@@ -128,7 +129,7 @@ export function createNalgaekong({ fxParent = null, onDone = null } = {}) {
   }
 
   // 부리: 윗부리는 고정, 아랫부리만 벌어짐
-  const BEAK_LINE = 0.0006; // 부리는 작아서 몸보다 얇은 외곽선
+  const BEAK_LINE = 0.0006 * outlineScale; // 부리는 작아서 몸보다 얇은 외곽선
   // 끝이 뭉툭한 총알 모양. 가장 굵은 둘레가 몸 밖으로 나와 있어야 정면에서도 외곽선 테가 보인다
   const beakGeo = (k) => new THREE.LatheGeometry([
     [0.0001, -0.004], [0.006, -0.0035], [0.0088, 0], [0.0082, 0.0035], [0.0058, 0.0068], [0.0028, 0.0088], [0.0001, 0.0095],
@@ -143,7 +144,7 @@ export function createNalgaekong({ fxParent = null, onDone = null } = {}) {
   lower.position.z = 0.0015;
   lower.scale.y = 0.7;
   // 부리 외곽선: 부리가 몸에 반쯤 묻혀 있어 보통 외곽선 껍질은 뒤쪽이 몸에 가려 테두리가 떠 보인다.
-  // 그래서 부리 껍질만 화면 위치는 그대로 두고 카메라 쪽으로 6mm 당겨 그려, 몸에 가려지지 않게 한다
+  // 그래서 부리 껍질만 화면 위치는 그대로 두고 카메라 쪽으로 12mm 당겨 그려, 몸에 가려지지 않게 한다
   // (몸 반대편으로 돌아가면 몸 두께가 그보다 훨씬 두꺼워 비쳐 보이지 않음)
   const beakLineMat = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
   beakLineMat.onBeforeCompile = (sh) => {
@@ -151,7 +152,7 @@ export function createNalgaekong({ fxParent = null, onDone = null } = {}) {
       .replace('#include <begin_vertex>', `#include <begin_vertex>
   transformed += normalize(normal) * ${BEAK_LINE.toFixed(5)};`)
       .replace('#include <project_vertex>', `vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
-  mvPosition.xyz += normalize(-mvPosition.xyz) * 0.006;
+  mvPosition.xyz += normalize(-mvPosition.xyz) * 0.012;
   gl_Position = projectionMatrix * mvPosition;`);
   };
   for (const m of [beakTop, lower]) addOutline(m, BEAK_LINE).material = beakLineMat;
@@ -478,8 +479,8 @@ export function createNalgaekong({ fxParent = null, onDone = null } = {}) {
     bang.position.y = 0.175 + P.y;
 
     updateParts(dt);
-    syncToon(root, true);
-    if (fxParent) syncToon(fx, true);
+    syncToon(root, true, outlineScale);
+    if (fxParent) syncToon(fx, true, outlineScale);
     setFlash(P.flash);
   }
 

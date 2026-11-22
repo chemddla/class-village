@@ -29,6 +29,7 @@
     </div>
     <div class="main-btns">
       <button type="button" id="tool-btn" class="small" data-key="KeyQ"></button>
+      <button type="button" id="pick-btn" class="hidden" data-key="KeyF">🌳<span>F 흔들기</span></button>
       <button type="button" id="life-btn" data-key="KeyG"></button>
       <button type="button" id="jump-btn" data-key="Space">⤴️<span>점프</span></button>
     </div>
@@ -36,11 +37,15 @@
   <!-- 퀵슬롯: 가방에서 넣은 장비. Q 로 차례로 바꿔 들고, 칸을 눌러 바로 든다 -->
   <div id="quick" class="hidden"></div>
   <div id="toast"></div>
-  <div id="hint" class="hidden">방향키/WASD 이동 · Shift 달리기 · Space 점프(공중에서 한 번 더: 공중제비) · Ctrl+1~4 감정 표현 · Q 퀵슬롯 장비 바꾸기 · G 생활(도구는 알아서) · I 가방 · Z/클릭 공격(몽둥이·목검) · 마우스 끌기 시점 · 휠 확대</div>
+  <div id="hint" class="hidden">방향키/WASD 이동 · Shift 달리기 · Space 점프(공중에서 한 번 더: 공중제비) · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구 들기 · G 생활(도구는 알아서) · F 과일 흔들기·줍기 · G 물가에서 낚시(찌가 쏙 들어가면 G) · I 가방 · B 도감 · Z/클릭 공격(몽둥이·목검) · 마우스 끌기 시점 · 휠 확대</div>
 
   <!-- 인벤토리 (I) -->
   <button id="inv-btn" class="hidden" type="button" data-key="KeyI">🎒 가방</button>
   <div id="inv-panel" class="card hidden"></div>
+
+  <!-- 도감 (B): 잡아 본 물고기 -->
+  <button id="dex-btn" class="hidden" type="button" data-key="KeyB">📖 도감</button>
+  <div id="dex-panel" class="card hidden"></div>
 
   <!-- 외형 꾸미기 (테스트 서버 전용) -->
   <button id="look-btn" class="hidden" type="button">👕 꾸미기</button>

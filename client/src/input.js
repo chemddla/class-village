@@ -1,11 +1,11 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터)
-// Space 점프 · Ctrl+1~4 감정 표현 · Q 퀵슬롯 장비 바꾸기 · G 생활 행동(필요한 도구는 알아서 듦) · I 인벤토리 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
 // 키 → 행동 이름 (화면 버튼은 data-key 로 같은 키를 누른 것처럼 동작)
 const ACTION_KEYS = {
-  Space: 'jump', KeyQ: 'tool', KeyG: 'life', KeyI: 'inv', KeyZ: 'attack',
+  Space: 'jump', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyZ: 'attack',
   Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
   Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
 };

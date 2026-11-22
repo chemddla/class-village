@@ -2,7 +2,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
-  WORLD, HALF, EDGE, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, riverCenterZ,
+  WORLD, HALF, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, RIVER_BANK_CLEAR, riverCenterZ,
+  islandN, shoreN, islandRadius, BEACH, FISH, FISH_APPROACH, LURE_HESITATE, NIBBLE_MS, shadowLen, rollFish, NOTICE,
+  VILLAGE_FRUIT, FRUIT_MAX,
 } from '../../shared/world.js';
 import {
   toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME,
@@ -13,6 +15,9 @@ const GRASS_A = new THREE.Color(0xa6d97f);
 const GRASS_B = new THREE.Color(0x8fcb72);
 const SAND = new THREE.Color(0xeedcae);
 const BANK = new THREE.Color(0xd9c690);
+const BEACH_SAND = new THREE.Color(0xf1dfae); // 바닷가 마른 모래
+const WET_SAND = new THREE.Color(0xd2b986); // 파도에 젖은 모래
+const SEA_Y = -0.03; // 바닷물 높이 (강물 -0.06 보다 살짝 위라 강이 바다에 묻혀 끝난다)
 
 // 간단한 값 잡음 (풀밭 색 얼룩용)
 function noise(x, z) {
@@ -21,8 +26,8 @@ function noise(x, z) {
 }
 
 function buildGround() {
-  const size = 90;
-  const seg = 200; // 0.45m 간격
+  const size = 110; // 섬 모서리(가운데에서 약 47m)까지 덮게
+  const seg = 245; // 0.45m 간격
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -42,9 +47,16 @@ function buildGround() {
     // 강가 모래: 강에서 멀어질수록 풀밭 색으로 부드럽게 (한 점씩 끊으면 격자 모양 계단이 생긴다)
     const dr = Math.abs(z - riverCenterZ(x));
     c.lerp(BANK, THREE.MathUtils.clamp((RIVER_HALF_WIDTH + 0.85 - dr) / 0.4, 0, 1));
+    // 바닷가: 풀밭 → 마른 모래 → 젖은 모래 (해안선까지 거리에 따라 부드럽게)
+    const toShore = shoreN(x, z) - islandN(x, z); // 해안선까지 (바다 쪽은 음수)
+    c.lerp(BEACH_SAND, THREE.MathUtils.clamp((BEACH.grass + 1.2 - toShore) / 1.2, 0, 1));
+    c.lerp(WET_SAND, THREE.MathUtils.clamp((BEACH.wet - toShore) / 0.6, 0, 1));
     colors.set([c.r, c.g, c.b], i * 3);
     // 강바닥: 둑에서 가운데로 비스듬히 내려가게. 물(높이 -0.06)과 땅이 만나는 선이 격자가 아닌 강 모양을 따른다
-    pos.setY(i, -0.3 * THREE.MathUtils.clamp((RIVER_HALF_WIDTH + 0.3 - dr) / 1.2, 0, 1));
+    const riverY = -0.3 * THREE.MathUtils.clamp((RIVER_HALF_WIDTH + 0.3 - dr) / 1.2, 0, 1);
+    // 바다 밑: 해안선 조금 안쪽부터 바다 쪽으로 완만하게 내려간다 (바닷물과 만나는 선이 곧 해안선)
+    const seaY = -0.8 * THREE.MathUtils.clamp((0.5 - toShore) / 4, 0, 1);
+    pos.setY(i, Math.min(riverY, seaY));
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
@@ -369,34 +381,35 @@ function tint(g, color, shadeBy = null) {
 }
 const stem = () => tint(new THREE.CylinderGeometry(0.012, 0.016, 0.07, 5).translate(0, -0.02, 0), 0x7a5232);
 const smallLeaf = (x = 0.05) => tint(new THREE.SphereGeometry(0.045, 6, 4).scale(1.6, 0.35, 0.8).rotateZ(0.4).translate(x, -0.02, 0), 0x5aa83e);
-// 귀여운 과일: 통통하고 둥글게, 앞쪽(+z)에 하얀 반짝임 점
-const shine = (y) => tint(new THREE.SphereGeometry(0.032, 8, 6).scale(0.8, 1.2, 0.5).translate(-0.06, y + 0.05, 0.13), 0xffffff);
+// 귀여운 과일: 통통하고 둥글게
 const FRUIT_MODELS = {
   apple: () => [
     tint(new THREE.SphereGeometry(0.15, 16, 12).scale(1.06, 0.92, 1.06).translate(0, -0.15, 0), 0xf0464a),
-    stem(), smallLeaf(), shine(-0.15),
+    stem(), smallLeaf(),
   ],
   peach: () => [
     tint(new THREE.SphereGeometry(0.15, 16, 12).translate(0, -0.16, 0), 0xffc89c,
       (c, x, y) => c.lerp(new THREE.Color(0xff8f9c), THREE.MathUtils.clamp((y + 0.16) * 4 + 0.35, 0, 0.75))),
-    smallLeaf(0.05), smallLeaf(-0.05), shine(-0.16),
+    smallLeaf(0.05), smallLeaf(-0.05),
   ],
   orange: () => [
     tint(new THREE.SphereGeometry(0.15, 16, 12).translate(0, -0.16, 0), 0xffa12e),
     tint(new THREE.SphereGeometry(0.022, 6, 4).translate(0, -0.01, 0), 0x6a9a3a),
-    smallLeaf(), shine(-0.16),
+    smallLeaf(),
   ],
   pear: () => [
     tint(new THREE.SphereGeometry(0.14, 16, 12).translate(0, -0.22, 0), 0xdfe06e),
     tint(new THREE.SphereGeometry(0.095, 12, 9).translate(0, -0.11, 0), 0xdfe06e),
-    stem(), smallLeaf(), shine(-0.22),
+    stem(), smallLeaf(),
   ],
 };
 
 // 과일나무 잎 + 과일: 잎은 꼭짓점 색에 초록을 미리 칠해 두고(과일 색이 물들지 않게), 옆·아래쪽 겉에 과일을 단다
+// count: 매달 과일 수 (따 가면 줄어든 모양으로 바꿔 끼운다)
 const fruitCanopyCache = new Map();
-export function fruitCanopy(fruit) {
-  if (fruitCanopyCache.has(fruit)) return fruitCanopyCache.get(fruit);
+export function fruitCanopy(fruit, count = FRUIT_MAX) {
+  const key = `${fruit}:${count}`;
+  if (fruitCanopyCache.has(key)) return fruitCanopyCache.get(key);
   const leaves = roundCanopy(29, FRUIT_BLOBS, 2.8);
   const col = leaves.attributes.color;
   const green = new THREE.Color().setHSL(0.27, 0.56, 0.47); // 다른 나무와 같은 방식(색 공간 변환)으로 만든 초록
@@ -408,7 +421,7 @@ export function fruitCanopy(fruit) {
     const spots = [];
     // 한 나무에 5개만, 서로 멀찍이: 잎 덩어리 옆·아래쪽 겉에 매달고 반짝임이 바깥을 보게 돌린다
     FRUIT_BLOBS.forEach(([x, y, z, r], bi) => {
-      for (let i = 0; i < 40 && spots.length < 5; i++) {
+      for (let i = 0; i < 40 && spots.length < FRUIT_MAX; i++) {
         const th = rand() * Math.PI * 2;
         const ny = -0.55 + rand() * 0.6;
         const rr = Math.sqrt(1 - ny * ny);
@@ -419,13 +432,13 @@ export function fruitCanopy(fruit) {
         spots.push({ p, n });
       }
     });
-    for (const { p, n } of spots) {
+    for (const { p, n } of spots.slice(0, count)) {
       const face = Math.atan2(n.x, n.z);
       for (const g of make()) parts.push(g.scale(1.35, 1.35, 1.35).rotateY(face).translate(p.x, p.y, p.z));
     }
   }
   const g = mergeGeometries(parts);
-  fruitCanopyCache.set(fruit, g);
+  fruitCanopyCache.set(key, g);
   return g;
 }
 
@@ -491,7 +504,7 @@ function buildTrees(group) {
   const s = new THREE.Vector3();
   const col = new THREE.Color();
   const Y = new THREE.Vector3(0, 1, 0);
-  const base = []; // 나무 번호 → { pos, q, s, leaves: [mesh, index] }
+  const base = []; // 나무 번호 → { pos, q, s, leaves(matrix): 잎 덩어리 자리 바꾸기 }
 
   const trunks = new THREE.InstancedMesh(trunkGeometry(), toon(0xc0905c), WORLD.trees.length);
   WORLD.trees.forEach((t, i) => {
@@ -508,21 +521,31 @@ function buildTrees(group) {
     if (k === 2) return col.setHSL(0.3 + h * 0.06, 0.48, 0.4 + h2 * 0.06);
     return col.setRGB(1, 1, 1);
   };
-  let fruitMesh = null;
-  [roundCanopy(), pineCanopy(), ovalCanopy(), fruitCanopy(null)].forEach((geo, k) => {
+  const leafMat = swayToon(0xffffff, { vertexColors: true });
+  [roundCanopy(), pineCanopy(), ovalCanopy()].forEach((geo, k) => {
     const list = kinds[k];
-    const mesh = new THREE.InstancedMesh(geo, swayToon(0xffffff, { vertexColors: true }), list.length);
+    const mesh = new THREE.InstancedMesh(geo, leafMat, list.length);
     list.forEach(({ t, i }, j) => {
       const b = base[i];
-      b.leaves = [mesh, j];
+      b.leaves = (mm) => { mesh.setMatrixAt(j, mm); mesh.instanceMatrix.needsUpdate = true; };
       mesh.setMatrixAt(j, m.compose(b.pos, b.q, s.setScalar(t.s)));
       const h = ((t.x * 7.1) % 1 + 1) % 1;
       const h2 = ((t.z * 3.7) % 1 + 1) % 1;
       mesh.setColorAt(j, tintOf(k, h, h2));
     });
-    if (k === 3) fruitMesh = mesh;
     group.add(addOutline(mesh, 0.025, { sway: true }));
   });
+  // 과일나무: 한 그루씩 따로 그려, 남은 과일 수에 맞는 모양으로 바꿔 끼운다 (잎 색은 미리 칠해 둠)
+  const fruitMeshes = new Map(); // 나무 번호 → 잎+과일 덩어리
+  for (const { t, i } of kinds[3]) {
+    const b = base[i];
+    const mesh = new THREE.Mesh(fruitCanopy(VILLAGE_FRUIT), leafMat);
+    mesh.matrixAutoUpdate = false;
+    mesh.matrix.compose(b.pos, b.q, s.setScalar(t.s));
+    b.leaves = (mm) => { mesh.matrix.copy(mm); mesh.matrixWorldNeedsUpdate = true; };
+    group.add(addOutline(mesh, 0.025, { sway: true }));
+    fruitMeshes.set(i, mesh);
+  }
 
   // 흔들기: 맞은 쪽으로 휘청였다가 흔들흔들 (줄기는 덜)
   const active = new Map();
@@ -532,14 +555,19 @@ function buildTrees(group) {
     wq.setFromAxisAngle(ax, ang * 0.3).multiply(b.q);
     trunks.setMatrixAt(i, m.compose(b.pos, wq, s.setScalar(b.s)));
     wq.setFromAxisAngle(ax, ang).multiply(b.q);
-    const [mesh, j] = b.leaves;
-    mesh.setMatrixAt(j, m.compose(b.pos, wq, s.setScalar(b.s)));
+    b.leaves(m.compose(b.pos, wq, s.setScalar(b.s)));
     trunks.instanceMatrix.needsUpdate = true;
-    mesh.instanceMatrix.needsUpdate = true;
   };
   return {
-    // 마을 주된 과일이 정해지면 과일나무에 그 과일을 단다
-    setFruit(fruit) { fruitMesh.geometry = fruitCanopy(fruit); },
+    // 과일나무 k(WORLD.fruitTrees 순서)에 남은 과일 수만큼만 매단다
+    setFruitLeft(k, n) {
+      const mesh = fruitMeshes.get(WORLD.fruitTrees[k]);
+      const geo = fruitCanopy(VILLAGE_FRUIT, Math.max(0, Math.min(FRUIT_MAX, n)));
+      if (!mesh || mesh.geometry === geo) return;
+      mesh.geometry = geo;
+      mesh.clear(); // 외곽선도 새 모양에 맞춰 다시 두른다
+      addOutline(mesh, 0.025, { sway: true });
+    },
     shake(i, dx, dz, power = 1) { active.set(i, { t: 0, ax: new THREE.Vector3(dz, 0, -dx).normalize(), power }); },
     update(dt) {
       for (const [i, a] of active) {
@@ -591,10 +619,11 @@ function buildRocks(group) {
 // 풀이 자랄 수 있는 곳인지 (모래 광장·길·강가·예정지 피하기)
 function grassy(x, z) {
   if (Math.abs(x) > HALF - 0.5 || Math.abs(z) > HALF - 0.5) return false;
+  if (shoreN(x, z) - islandN(x, z) < BEACH.grass + 0.6) return false; // 모래사장
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 6.4) return false;
   if (Math.abs(x) < 1.4 && z < SPAWN.z && z > -24) return false;
   if (Math.abs(z - SPAWN.z) < 1.4 && Math.abs(x) < 13) return false;
-  if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + 0.9) return false;
+  if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + RIVER_BANK_CLEAR) return false; // 강둑은 낚시 자리라 비워 둠
   for (const p of PLOTS) if (Math.abs(x - p.x) < p.w / 2 + 0.3 && Math.abs(z - p.z) < p.d / 2 + 0.6) return false;
   for (const t of WORLD.trees) if (Math.hypot(x - t.x, z - t.z) < t.r * 0.6) return false;
   for (const r of WORLD.rocks) if (Math.hypot(x - r.x, z - r.z) < r.r * 0.9) return false;
@@ -644,23 +673,6 @@ function buildMeadow(group, { low = false } = {}) {
   group.add(stems, heads);
 }
 
-function buildFence(group) {
-  const parts = [];
-  const r = EDGE + 0.7;
-  const step = 2;
-  for (let t = -r; t <= r + 0.01; t += step) {
-    for (const [x, z] of [[t, -r], [t, r], [-r, t], [r, t]]) {
-      parts.push(paint(new THREE.BoxGeometry(0.18, 0.8, 0.18).translate(x, 0.4, z), 0xe9d3a8));
-    }
-  }
-  for (const y of [0.3, 0.6]) {
-    parts.push(paint(new THREE.BoxGeometry(r * 2, 0.08, 0.06).translate(0, y, -r), 0xf3e2bf));
-    parts.push(paint(new THREE.BoxGeometry(r * 2, 0.08, 0.06).translate(0, y, r), 0xf3e2bf));
-    parts.push(paint(new THREE.BoxGeometry(0.06, 0.08, r * 2).translate(-r, y, 0), 0xf3e2bf));
-    parts.push(paint(new THREE.BoxGeometry(0.06, 0.08, r * 2).translate(r, y, 0), 0xf3e2bf));
-  }
-  group.add(addOutline(new THREE.Mesh(mergeGeometries(parts), vertexColorToon), 0.02));
-}
 
 function buildPlots(group, labels) {
   const parts = [];
@@ -904,13 +916,14 @@ function buildClouds(group) {
   const clouds = [];
   for (let i = 0; i < 18; i++) {
     const a = rand() * Math.PI * 2;
-    const r = 32 + rand() * 34; // 마을 바깥쪽 하늘
+    const r = 40 + rand() * 34; // 섬 바깥쪽 하늘
     const m = new THREE.Mesh(shapes[i % shapes.length], mat);
     const s = 2.2 + rand() * 2.2;
     m.scale.set(s, s * (0.8 + rand() * 0.3), s);
     m.rotation.y = rand() * Math.PI;
-    // 카메라(기본 높이 약 12.5m)보다 높게: 내려다볼 때는 화면을 가리지 않고, 시점을 들면 나무 위 하늘에 보인다
-    m.position.set(Math.cos(a) * r, 13.5 + rand() * 5, Math.sin(a) * r);
+    // 카메라가 가장 멀리·높이 빠졌을 때(약 28m)보다도 높게: 내려다볼 때는 화면을 가리지 않는다.
+    // 멀리 있는 구름은 둥근 지평선 효과로 내려앉아, 시점을 들면 나무 위 하늘에 보인다
+    m.position.set(Math.cos(a) * r, 30 + rand() * 6, Math.sin(a) * r);
     m.frustumCulled = false; // 둥근 지평선 효과로 실제 그려지는 자리가 달라서
     group.add(m);
     clouds.push({ m, speed: 0.35 + rand() * 0.3 });
@@ -923,6 +936,481 @@ function buildClouds(group) {
   };
 }
 
+// ── 땅에 떨어진 과일: 나무에서 톡 떨어져 한 번 튀고, 주우면 쏙 작아지며 사라진다 ──
+const groundFruitCache = new Map();
+function groundFruit(fruit) {
+  if (!groundFruitCache.has(fruit)) {
+    const make = FRUIT_MODELS[fruit] ?? FRUIT_MODELS.peach;
+    const g = mergeGeometries(make().map((p) => p.scale(1.35, 1.35, 1.35)));
+    g.computeBoundingBox();
+    g.translate(0, -g.boundingBox.min.y, 0); // 땅 위에 놓이게
+    groundFruitCache.set(fruit, g);
+  }
+  return groundFruitCache.get(fruit);
+}
+function buildDrops(group) {
+  const mat = toon(0xffffff, { vertexColors: true });
+  const list = new Map(); // 번호 → { mesh, t, from, to, gone }
+  const FALL = 0.55;
+  return {
+    // from: 떨어지기 시작하는 자리(나무 잎 높이), 없으면 이미 땅에 있던 과일
+    add(id, fruit, x, z, from = null) {
+      const mesh = new THREE.Mesh(groundFruit(fruit), mat);
+      mesh.rotation.y = Math.random() * Math.PI * 2;
+      mesh.position.set(x, 0, z);
+      addOutline(mesh, 0.018);
+      group.add(mesh);
+      list.set(id, { mesh, t: from ? 0 : FALL, from, to: new THREE.Vector3(x, 0, z), gone: -1 });
+    },
+    remove(id) {
+      const d = list.get(id);
+      if (d) d.gone = 0;
+    },
+    update(dt) {
+      for (const [id, d] of list) {
+        if (d.gone >= 0) { // 주우면 쏙 작아짐
+          d.gone += dt;
+          const s = Math.max(0, 1 - d.gone / 0.18);
+          d.mesh.scale.setScalar(s);
+          d.mesh.position.y += dt * 1.5;
+          if (s <= 0) { group.remove(d.mesh); list.delete(id); }
+          continue;
+        }
+        if (d.t >= FALL) continue;
+        d.t = Math.min(FALL, d.t + dt);
+        const k = d.t / FALL;
+        // 나무에서 땅까지 포물선으로 떨어진 뒤 마지막에 살짝 튄다
+        d.mesh.position.lerpVectors(d.from, d.to, Math.min(1, k * 1.15));
+        const fallY = d.from.y * (1 - Math.min(1, k * 1.15)) ** 2;
+        const bounce = k > 0.87 ? Math.sin(((k - 0.87) / 0.13) * Math.PI) * 0.12 : 0;
+        d.mesh.position.y = fallY + bounce;
+        d.mesh.rotation.x = (1 - k) * 2.5;
+      }
+    },
+  };
+}
+
+// ── 바다: 섬 둘레를 감싸는 고리 모양 물 + 밀려오는 파도 + 해안선의 하얀 물거품 ──
+// 해안선을 따라 도는 띠 만들기: d0~d1 은 해안선에서 바다 쪽으로 잰 거리(m), rows 는 그 사이 줄 (거리 목록)
+// colorAt(d) 를 주면 줄마다 꼭짓점 색, u 는 해안선을 따라 잰 길이(m)/uScale, v 는 d0→d1 이 0→1
+// y: 높이 (숫자, 또는 d 에 따른 높이를 돌려주는 함수 — 모래 위로 올라오는 물거품은 땅 높이를 따라간다)
+function shoreStrip(rows, y, uScale = 1, colorAt = null) {
+  const yAt = typeof y === 'function' ? y : () => y;
+  const N = 400;
+  const pts = [];
+  const uv = [];
+  const col = [];
+  const idx = [];
+  const R = rows.length;
+  let len = 0;
+  let prev = null;
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const r0 = islandRadius(shoreN(c, s), c, s); // 해안선까지 실제 거리
+    const p = [c * r0, s * r0];
+    if (prev) len += Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+    prev = p;
+    for (const d of rows) {
+      pts.push(c * (r0 + d), yAt(d), s * (r0 + d));
+      uv.push(len / uScale, (d - rows[0]) / (rows[R - 1] - rows[0]));
+      if (colorAt) { const k = colorAt(d); col.push(k.r, k.g, k.b); }
+    }
+    if (i < N) {
+      for (let r = 0; r < R - 1; r++) {
+        const a0 = i * R + r;
+        idx.push(a0, a0 + R, a0 + 1, a0 + 1, a0 + R, a0 + R + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  if (colorAt) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  if (g.attributes.normal.getY(0) < 0) g.attributes.normal.array.forEach((_, i, arr) => { if (i % 3 === 1) arr[i] = 1; });
+  return g;
+}
+
+
+// ── 파도·물거품은 그림을 밀어 움직이는 대신 화면 셰이더로 그린다 ──
+// 해안선을 따라(u, m) 구간마다 파도 박자가 달라서, 온 바닷가가 한꺼번에 똑같이 움직이지 않는다
+const SEA_GLSL = `
+uniform float uTime;
+float seaHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float seaNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(seaHash(i), seaHash(i + vec2(1.0, 0.0)), f.x), mix(seaHash(i + vec2(0.0, 1.0)), seaHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// 이 자리 파도의 박자 (0→1 이 한 번): 0 에서 파도가 바닷가에 닿아 물거품이 모래 위로 올라오기 시작한다
+float seaPhase(float u) {
+  return fract(uTime * 0.11 + seaNoise(vec2(u * 0.06, 0.0)) * 3.0 + seaNoise(vec2(u * 0.17, 5.0)) * 0.6);
+}`;
+const WHITE_1PX = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+WHITE_1PX.needsUpdate = true;
+// 둥근 지평선이 적용된 기본 재질에, 색·투명도를 직접 계산하는 조각을 끼워 넣는다 (vMapUv: x=해안선 따라 m, y=띠 안쪽→바깥 0→1)
+function seaShader(key, body) {
+  const m = basic(0xffffff, { map: WHITE_1PX, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  const curve = m.onBeforeCompile;
+  m.onBeforeCompile = (sh) => {
+    curve(sh);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\n${SEA_GLSL}`)
+      .replace('#include <map_fragment>', body);
+  };
+  m.customProgramCacheKey = () => key;
+  return m;
+}
+
+function buildSea(group) {
+  // 바닷물: 해안선 가까이는 맑은 청록, 멀어질수록 짙은 파랑. 해안선 조금 안쪽(모래 밑)에서 시작해 수평선까지
+  const SHALLOW = new THREE.Color(0x7fd8d0);
+  const MID = new THREE.Color(0x4fb3dd);
+  const DEEP = new THREE.Color(0x2f7fc4);
+  const c = new THREE.Color();
+  const seaColor = (d) => (d < 8 ? c.copy(SHALLOW).lerp(MID, THREE.MathUtils.clamp(d / 8, 0, 1)) : c.copy(MID).lerp(DEEP, THREE.MathUtils.clamp((d - 8) / 22, 0, 1)));
+  group.add(new THREE.Mesh(shoreStrip([-2, 0, 2, 4, 7, 11, 18, 30, 60, 120, 220], SEA_Y, 6, seaColor), toon(0xffffff, { vertexColors: true, side: THREE.DoubleSide })));
+  // 물결 반짝임: 강과 같은 물살 무늬를 바다 위에 옅게 겹쳐 천천히 일렁이게
+  const glint = flowTexture(13, 30);
+  glint.repeat.set(1, 3);
+  group.add(new THREE.Mesh(shoreStrip([0, 6, 14, 30], SEA_Y + 0.005, 9), basic(0xffffff, {
+    map: glint, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide,
+  })));
+  // 밀려오는 파도: 먼바다에서 부드러운 물마루가 생겨 바닷가로 다가올수록 느려지고 하얗게 부서지다가,
+  // 바닷가에 닿는 순간(박자 0) 물거품이 모래 위로 올라온다. 물마루는 군데군데 끊겨 있다
+  const W0 = 0.5;
+  const W1 = 14;
+  group.add(new THREE.Mesh(shoreStrip([W0, 1, 1.6, 2.4, 3.4, 4.6, 6, 7.6, 9.4, 11.5, W1], SEA_Y + 0.008, 1), seaShader('sea-waves', `
+    float u = vMapUv.x;
+    float d = mix(${W0.toFixed(1)}, ${W1.toFixed(1)}, vMapUv.y);
+    float c = seaPhase(u);
+    float a = 0.0;
+    for (int k = 0; k < 2; k++) {
+      float ck = fract(c + float(k) * 0.5);
+      float D = 0.8 + 12.0 * pow(1.0 - ck, 1.5); // 바닷가에 가까울수록 느려짐
+      float band = exp(-pow((d - D) / (0.28 + 0.25 * (1.0 - ck)), 2.0));
+      float broken = smoothstep(0.3, 0.7, seaNoise(vec2(u * 0.7, float(k) * 7.0 + floor(uTime * 0.11 + float(k) * 0.5) * 3.0)));
+      float white = smoothstep(9.0, 2.0, D); // 다가올수록 하얗게 부서짐
+      a += band * (0.18 + 0.55 * white) * mix(0.35, 1.0, broken);
+    }
+    a *= smoothstep(0.5, 1.4, d) * (1.0 - smoothstep(9.0, 13.5, d));
+    diffuseColor = vec4(vec3(1.0), clamp(a, 0.0, 0.9) * diffuseColor.a);
+  `)));
+  // 해안선 물거품: 파도가 닿으면 모래 위로 빠르게 올라왔다가 천천히 빠져나간다.
+  // 앞 가장자리는 레이스처럼 들쭉날쭉하고, 그 뒤로 얇은 물막이 모래를 덮어 젖은 듯 반짝인다
+  // (모래 위로 올라오므로 띠 높이는 땅 높이를 따라간다: 땅은 해안선 0.5m 안쪽부터 바다 쪽으로 내려감)
+  const S0 = -2.6;
+  const S1 = 2.0;
+  const groundAt = (d) => -0.8 * THREE.MathUtils.clamp((0.5 + d) / 4, 0, 1);
+  const surfRows = [];
+  for (let d = S0; d <= S1 + 1e-6; d += 0.3) surfRows.push(+d.toFixed(2));
+  group.add(new THREE.Mesh(shoreStrip(surfRows, (d) => Math.max(groundAt(d) + 0.025, SEA_Y + 0.012), 1), seaShader('sea-surf', `
+    float u = vMapUv.x;
+    float d = mix(${S0.toFixed(1)}, ${S1.toFixed(1)}, vMapUv.y);
+    float c = seaPhase(u);
+    float up = smoothstep(0.0, 0.28, c); // 빠르게 올라옴
+    float down = smoothstep(0.28, 1.0, c); // 천천히 빠짐
+    float reach = -1.2 - 0.9 * seaNoise(vec2(u * 0.05, floor(uTime * 0.11) * 1.7)); // 파도마다 올라오는 높이가 다름
+    float front = mix(mix(0.7, reach, up), 0.7, down);
+    front += (seaNoise(vec2(u * 1.4, uTime * 0.25)) - 0.5) * 0.4; // 들쭉날쭉한 앞 가장자리
+    float lace = seaNoise(vec2(u * 7.0, d * 5.0 + uTime * 0.6));
+    float edge = smoothstep(front - 0.04, front + 0.1, d);
+    float body = 1.0 - smoothstep(front + 0.2, front + 0.75 + lace * 0.5, d);
+    float strength = mix(1.0, 0.3, down); // 빠질 때는 거품이 흩어져 옅어짐
+    float foam = edge * body * (0.45 + 0.55 * lace) * strength;
+    float sheet = edge * (1.0 - smoothstep(0.4, ${S1.toFixed(1)}, d)) * 0.3; // 물막 (바다 쪽으로 갈수록 바다와 섞임)
+    vec3 col = mix(vec3(0.6, 0.87, 0.85), vec3(1.0), clamp(foam * 1.6, 0.0, 1.0));
+    float a = clamp(foam + sheet, 0.0, 0.92) * (1.0 - smoothstep(1.4, ${S1.toFixed(1)}, d));
+    diffuseColor = vec4(col, a * diffuseColor.a);
+  `)));
+  return (t) => {
+    glint.offset.set(t * 0.02, t * 0.015);
+  };
+}
+
+// ── 물고기 ──
+// 잡은 물고기 모양: 통통한 몸 + 꼬리 + 지느러미 + 눈 (몸길이는 물고기 크기에 따라 0.35~0.9m)
+const fishModelCache = new Map();
+export function fishModel(fish) {
+  if (!fishModelCache.has(fish.id)) {
+    const body = new THREE.Color(fish.color);
+    const belly = body.clone().lerp(new THREE.Color(0xffffff), 0.55);
+    const fin = body.clone().multiplyScalar(0.8);
+    const parts = [
+      paint(new THREE.SphereGeometry(0.5, 16, 12).scale(1, 0.46, 0.3), 0xffffff),
+      paint(new THREE.ConeGeometry(0.2, 0.3, 4).scale(1, 1, 0.25).rotateZ(Math.PI / 2).translate(-0.6, 0, 0), fin.getHex()),
+      paint(new THREE.ConeGeometry(0.12, 0.22, 4).scale(1, 1, 0.25).translate(0.02, 0.27, 0), fin.getHex()),
+    ];
+    // 위는 몸 색, 배는 밝게
+    const g0 = parts[0];
+    const pos = g0.attributes.position;
+    const col = g0.attributes.color;
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      c.copy(belly).lerp(body, THREE.MathUtils.clamp(pos.getY(i) / 0.12 + 0.6, 0, 1));
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    for (const z of [0.13, -0.13]) {
+      parts.push(paint(new THREE.SphereGeometry(0.06, 8, 6).translate(0.3, 0.05, z), 0xffffff));
+      parts.push(paint(new THREE.SphereGeometry(0.035, 8, 6).translate(0.32, 0.05, z * 1.18), 0x2b2b2b));
+    }
+    const len = 0.35 + fish.size * 0.25;
+    const g = mergeGeometries(parts.map((p) => p.toNonIndexed())).scale(len, len, len);
+    fishModelCache.set(fish.id, g);
+  }
+  const mesh = new THREE.Mesh(fishModelCache.get(fish.id), vertexColorToon);
+  addOutline(mesh, 0.012);
+  return mesh;
+}
+
+// 물고기 그림자 윤곽 (위에서 본 모양, 몸길이 1, 머리가 +x): 둥근 머리 → 꼬리 쪽으로 가늘어지는 몸 → 갈라진 꼬리지느러미 + 가슴지느러미
+function fishShadowShape() {
+  const sh = new THREE.Shape();
+  sh.moveTo(0.5, 0);
+  sh.bezierCurveTo(0.5, 0.11, 0.33, 0.175, 0.12, 0.175);
+  sh.bezierCurveTo(-0.08, 0.17, -0.22, 0.09, -0.31, 0.045);
+  sh.lineTo(-0.5, 0.18); // 꼬리 위 갈래
+  sh.quadraticCurveTo(-0.43, 0.0, -0.5, -0.18); // 꼬리 가운데 오목
+  sh.lineTo(-0.31, -0.045);
+  sh.bezierCurveTo(-0.22, -0.09, -0.08, -0.17, 0.12, -0.175);
+  sh.bezierCurveTo(0.33, -0.175, 0.5, -0.11, 0.5, 0);
+  const fins = [1, -1].map((side) => {
+    const f = new THREE.Shape();
+    f.moveTo(0.22, 0.15 * side);
+    f.quadraticCurveTo(0.12, 0.3 * side, 0.02, 0.27 * side);
+    f.quadraticCurveTo(0.1, 0.2 * side, 0.12, 0.15 * side);
+    return f;
+  });
+  // 평면(x, y) → 땅 위(x, z)
+  return new THREE.ShapeGeometry([sh, ...fins], 10).rotateX(-Math.PI / 2);
+}
+
+// 물속을 지나가는 물고기 그림자: 강에서는 물살을 따라 오가고, 바다에서는 바닷가와 나란히 헤엄친다 (학생마다 따로)
+// 휙 나아갔다가 미끄러지듯 쉬기를 되풀이하고, 헤엄칠 때는 몸 뒤쪽과 꼬리가 좌우로 살랑인다.
+// 그림자 크기는 그 물에 사는 물고기 크기를 희귀도 비율대로 따른다 (큰 그림자는 드물다).
+// 찌가 입 앞에 떨어지면 알아채고 다가온다: notice 로 찾고, take 로 잠시 빼서 찌로 데려가고(buildLure), release 로 다른 곳에서 다시 나타난다
+function buildFishShadows(group) {
+  const rand = seeded(61);
+  const base = fishShadowShape();
+  const inner = basic(0x123246, { transparent: true, opacity: 0.32, depthWrite: false });
+  const outer = basic(0x123246, { transparent: true, opacity: 0.1, depthWrite: false }); // 물에 번진 듯한 가장자리
+  const fish = [];
+  const make = (kind, y) => {
+    const parts = [[inner, 1], [outer, 1.18]].map(([mat, k]) => {
+      const m = new THREE.Mesh(base.clone(), mat);
+      m.userData.k = k;
+      m.position.y = y - (k > 1 ? 0.001 : 0);
+      group.add(m);
+      return m;
+    });
+    const f = { kind, parts, base: base.attributes.position.array.slice(), ph: rand() * 6, wag: 0, x: 0, z: 0, hx: 1, hz: 0, away: 0 };
+    spawn(f);
+    return f;
+  };
+  // 새로 나타나기: 크기를 정하고 물속 아무 데나 둔다
+  function spawn(f) {
+    f.len = shadowLen(rollFish(f.kind, rand).size) * (0.92 + rand() * 0.16);
+    for (const m of f.parts) m.scale.setScalar(f.len * m.userData.k);
+    if (f.kind === 'river') {
+      f.rx = (rand() * 2 - 1) * 32;
+      f.off = (rand() * 2 - 1) * 1.1;
+      f.v = (rand() < 0.5 ? -1 : 1) * (0.22 + rand() * 0.3); // 느긋하게 (m/초)
+    } else {
+      f.a = rand() * Math.PI * 2;
+      // 대부분 바닷가에서 살짝 떨어진 곳(1.6~3.4m: 모래사장에서 던진 찌가 입 앞에 오기 좋은 거리), 열에 하나는 먼바다
+      f.d = rand() < 0.1 ? 5 + rand() * 4 : 1.6 + rand() * 1.8;
+      f.v = (rand() < 0.5 ? -1 : 1) * (0.25 + rand() * 0.35);
+    }
+  }
+  for (let i = 0; i < 10; i++) fish.push(make('river', -0.045));
+  for (let i = 0; i < 40; i++) fish.push(make('sea', SEA_Y + 0.003)); // 섬 둘레가 길어서 넉넉히
+  const showFish = (f, on) => { for (const m of f.parts) m.visible = on; };
+  return {
+    // 찌(bx, bz)를 입 앞에 둔 물고기 (입에서 NOTICE.dist 안, 헤엄치는 방향에서 NOTICE.angle 안) 중 가장 가까운 것
+    notice(where, bx, bz) {
+      const cos = Math.cos((NOTICE.angle * Math.PI) / 180);
+      let best = null;
+      let bestD = NOTICE.dist;
+      for (const f of fish) {
+        if (f.kind !== where || f.taken || f.away > 0) continue;
+        const mx = f.x + f.hx * f.len * 0.5;
+        const mz = f.z + f.hz * f.len * 0.5;
+        const vx = bx - mx;
+        const vz = bz - mz;
+        const d = Math.hypot(vx, vz);
+        if (d < bestD && (vx * f.hx + vz * f.hz) / (d || 1) > cos) { bestD = d; best = f; }
+      }
+      return best && { fish: best, x: best.x, z: best.z, hx: best.hx, hz: best.hz, len: best.len };
+    },
+    take(f) { f.taken = true; showFish(f, false); },
+    // 낚시가 끝나면 그 물고기는 잠시 뒤 다른 곳에서 다시 나타난다
+    release(f) { f.taken = false; f.away = 4; spawn(f); showFish(f, false); },
+    update(dt, t) {
+      for (const f of fish) {
+        if (f.taken) continue;
+        if (f.away > 0) { f.away -= dt; if (f.away <= 0) showFish(f, true); continue; }
+        // 휙 → 스르르: 빠르기가 박자에 맞춰 오르내린다
+        const burst = 0.45 + 0.8 * Math.max(0, Math.sin(t * 1.1 + f.ph)) ** 2;
+        const step = f.v * burst * dt;
+        f.wag += dt * (3 + 6 * burst);
+        if (f.kind === 'river') {
+          // 물살 따라 오가다가 강 끝(바다)에 가까워지면 돌아선다
+          f.rx += step;
+          if (Math.abs(f.rx) > 33) { f.v = -f.v; f.rx = Math.sign(f.rx) * 33; }
+          f.x = f.rx;
+          f.z = riverCenterZ(f.x) + f.off + Math.sin(t * 0.4 + f.ph) * 0.5;
+          const hz = Math.cos(t * 0.4 + f.ph) * 0.2 * Math.sign(f.v);
+          const h = Math.hypot(1, hz);
+          f.hx = Math.sign(f.v) / h;
+          f.hz = hz / h;
+        } else {
+          // 바다 물고기: 머리를 모래사장(섬 안쪽) 쪽으로 두고, 바닷가로 천천히 다가왔다 물러났다 한다.
+          // 바닷가를 따라서는 조금씩만 옮겨 가고, 머리 방향은 좌우로 살짝(±20°)씩 흔들린다
+          const c = Math.cos(f.a);
+          const sn = Math.sin(f.a);
+          const r = islandRadius(shoreN(c, sn), c, sn) + Math.max(1.2, f.d + Math.sin(t * 0.25 + f.ph) * 0.6); // 바닷가에서 1.2m 안으로는 오지 않음
+          f.a += (step * 0.25) / r;
+          f.x = Math.cos(f.a) * r;
+          f.z = Math.sin(f.a) * r;
+          const yaw = Math.sin(t * 0.2 + f.ph * 2) * 0.35;
+          f.hx = -c * Math.cos(yaw) + sn * Math.sin(yaw);
+          f.hz = -sn * Math.cos(yaw) - c * Math.sin(yaw);
+        }
+        // 몸 휘기: 머리는 거의 그대로, 뒤로 갈수록 크게 좌우로 (꼬리 끝이 가장 많이)
+        const amp = 0.05 + 0.07 * burst;
+        for (const m of f.parts) {
+          const pos = m.geometry.attributes.position;
+          const arr = pos.array;
+          for (let i = 0; i < arr.length; i += 3) {
+            const bx = f.base[i];
+            const back = Math.max(0, 0.2 - bx);
+            arr[i + 2] = f.base[i + 2] + Math.sin(f.wag - bx * 5) * amp * back * back * 2.2;
+          }
+          pos.needsUpdate = true;
+          m.position.x = f.x;
+          m.position.z = f.z;
+          m.rotation.y = -Math.atan2(f.hz, f.hx) + Math.sin(f.wag) * 0.06;
+        }
+      }
+    },
+  };
+}
+
+// 찌로 다가오는 물고기: 그림자가 헤엄쳐 와서 찌 앞에 멈추고, 정해진 때마다 입으로 찌를 톡톡 건드리다가 덥석 문다
+// start 로 흐름(던진 때부터 ms)을 받아 스스로 움직이고, end('caught'·'flee') 로 끝낸다
+function buildLure(group) {
+  const base = fishShadowShape();
+  const basePos = base.attributes.position.array.slice();
+  const mats = [basic(0x123246, { transparent: true, opacity: 0.38, depthWrite: false }), basic(0x123246, { transparent: true, opacity: 0.13, depthWrite: false })];
+  const parts = mats.map((mat, i) => {
+    const m = new THREE.Mesh(base.clone(), mat);
+    m.userData.k = i ? 1.18 : 1;
+    m.visible = false;
+    group.add(m);
+    return m;
+  });
+  let L = null;
+  const bump = (x, w) => Math.exp(-((x / w) ** 2));
+  const show = (on) => { for (const m of parts) m.visible = on; };
+  return {
+    // bx,bz: 찌 자리 · dx,dz: 캐릭터에서 찌 쪽 방향 · y: 물 높이 · len: 몸길이(m) · t0: 던진 때(performance.now)
+    // from: 찌를 알아챈 물고기 { x, z, hx, hz } — 그 자리에서 찌 쪽으로 돌아 헤엄쳐 온다
+    // 알아챈 순간 시작 (톡톡·덥석 때는 서버가 정해 setTimeline 으로 나중에 들어온다)
+    start({ bx, bz, y, len, from, t0 }) {
+      const sx = from.x;
+      const sz = from.z;
+      let hx = bx - sx;
+      let hz = bz - sz;
+      const h = Math.hypot(hx, hz) || 1;
+      hx /= h;
+      hz /= h;
+      const gap = len * 0.5 + 0.1; // 몸 가운데에서 입까지
+      // 알아챈 뒤 멈칫: 원래 가던 쪽으로 조금 미끄러지며 속도를 줄인다 (그 끝에서 찌 쪽으로 헤엄쳐 옴)
+      const gx = sx + from.hx * 0.25;
+      const gz = sz + from.hz * 0.25;
+      let ax = bx - gx;
+      let az = bz - gz;
+      const ah = Math.hypot(ax, az) || 1;
+      ax /= ah;
+      az /= ah;
+      L = { bx, bz, hx: ax, hz: az, fhx: from.hx, fhz: from.hz, sx, sz, gx, gz, rx: bx - ax * (gap + 0.16), rz: bz - az * (gap + 0.16), y, len, t0, nibbles: [], bite: Infinity, wag: 0, flee: 0, fade: 1, px: sx, pz: sz };
+      for (const m of parts) { m.scale.setScalar(len * m.userData.k); m.position.y = y - (m.userData.k > 1 ? 0.001 : 0); m.material.opacity = m.userData.k > 1 ? 0.13 : 0.38; }
+      show(false);
+    },
+    end(kind) {
+      if (!L) return;
+      if (kind === 'caught') { L = null; show(false); } else L.flee = performance.now();
+    },
+    // 서버가 정한 톡톡·덥석 때 (performance.now 기준 ms)
+    setTimeline(nibbles, bite) { if (L) { L.nibbles = nibbles; L.bite = bite; } },
+    update(dt) {
+      if (!L) return;
+      const now = performance.now();
+      const tau = now - L.t0;
+      show(true);
+      let x;
+      let z;
+      let amp = 0.06;
+      if (L.flee) {
+        // 놀라서 휙 도망가며 흐려진다
+        const f = (now - L.flee) / 1000;
+        L.px -= L.hx * 5 * dt;
+        L.pz -= L.hz * 5 * dt;
+        x = L.px;
+        z = L.pz;
+        amp = 0.14;
+        L.fade = Math.max(0, 1 - f / 0.7);
+        if (L.fade <= 0) { L = null; show(false); return; }
+      } else {
+        // 1) 멈칫: 가던 쪽으로 미끄러지며 느려지고 찌 쪽으로 돈다 → 2) 천천히 헤엄쳐 와서 찌 앞에 멈춘다
+        // → 3) 톡톡 때마다 입을 찌에 천천히 댔다 떼고 → 4) 덥석 물면 앞으로 쑥
+        const h = Math.min(1, tau / HESITATE_MS);
+        const he = 1 - (1 - h) * (1 - h); // 처음엔 미끄러지다 멈춤
+        const a = Math.max(0, Math.min(1, (tau - HESITATE_MS) / (FISH_APPROACH_MS - HESITATE_MS)));
+        const e = a * a * (3 - 2 * a);
+        const now0 = now;
+        let push = 0;
+        for (const t of L.nibbles) push = Math.max(push, 0.16 * bump(now0 - t, NIBBLE_MS));
+        if (now0 >= L.bite) push = 0.16 + 0.06 * Math.min(1, (now0 - L.bite) / 160);
+        const idle = a >= 1 && now0 < L.bite ? Math.sin(tau / 520) * 0.03 : 0;
+        const ox = L.sx + (L.gx - L.sx) * he;
+        const oz = L.sz + (L.gz - L.sz) * he;
+        x = ox + (L.rx - ox) * e + L.hx * (push + idle);
+        z = oz + (L.rz - oz) * e + L.hz * (push + idle);
+        L.px = x;
+        L.pz = z;
+        amp = tau < HESITATE_MS ? 0.05 : a < 1 ? 0.08 : now0 >= L.bite ? 0.16 : 0.035 + push * 0.3;
+      }
+      L.wag += dt * (5 + amp * 60);
+      for (const m of parts) {
+        const pos = m.geometry.attributes.position;
+        const arr = pos.array;
+        for (let i = 0; i < arr.length; i += 3) {
+          const bx = basePos[i];
+          const back = Math.max(0, 0.2 - bx);
+          arr[i + 2] = basePos[i + 2] + Math.sin(L.wag - bx * 5) * amp * back * back * 2.2;
+        }
+        pos.needsUpdate = true;
+        m.position.x = x;
+        m.position.z = z;
+        // 처음엔 헤엄치던 방향 → 멈칫하는 동안 찌 쪽으로 천천히 돌아선다
+        const tk = Math.min(1, tau / HESITATE_MS);
+        const turn = L.flee ? 1 : tk * tk * (3 - 2 * tk);
+        const tx = L.fhx + (L.hx - L.fhx) * turn;
+        const tz = L.fhz + (L.hz - L.fhz) * turn;
+        m.rotation.y = -Math.atan2(tz, tx);
+        m.material.opacity = (m.userData.k > 1 ? 0.13 : 0.38) * L.fade;
+      }
+    },
+  };
+}
+const FISH_APPROACH_MS = FISH_APPROACH * 1000;
+const HESITATE_MS = LURE_HESITATE * 1000;
+
 export function buildVillage(scene, { low = false } = {}) {
   const group = new THREE.Group();
   const labels = []; // 둥근 지평선에 맞춰 매 장면 위치를 고칠 이름표
@@ -933,10 +1421,13 @@ export function buildVillage(scene, { low = false } = {}) {
   const trees = buildTrees(group);
   const rocks = buildRocks(group);
   buildMeadow(group, { low });
-  buildFence(group);
   buildPlots(group, labels);
   const fountain = buildPlaza(group);
   const clouds = buildClouds(group);
+  const sea = buildSea(group);
+  const fishShadows = buildFishShadows(group);
+  const lure = buildLure(group);
+  const drops = buildDrops(group);
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)
@@ -957,7 +1448,16 @@ export function buildVillage(scene, { low = false } = {}) {
     nearTree: (x, z, reach = 1) => nearest(WORLD.trees, x, z, reach),
     nearRock: (x, z, reach = 1) => nearest(WORLD.rocks, x, z, reach),
     shakeTree: trees.shake,
-    setFruit: trees.setFruit,
+    setFruitLeft: trees.setFruitLeft,
+    lure, // 낚시 찌로 다가오는 물고기
+    fishShadows, // 돌아다니는 물고기 (찌를 알아채는지 보기)
+    // 땅에 떨어진 과일 (k: 떨어진 과일나무 번호, fall: 지금 막 떨어지는 중이면 true)
+    addDrop(id, fruit, x, z, k, fall) {
+      const t = WORLD.trees[WORLD.fruitTrees[k]];
+      const from = fall && t ? new THREE.Vector3(t.x + (x - t.x) * 0.35, 1.9 * t.s, t.z + (z - t.z) * 0.35) : null;
+      drops.add(id, fruit, x, z, from);
+    },
+    removeDrop: drops.remove,
     shakeRock: rocks.shake,
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t) {
@@ -965,6 +1465,10 @@ export function buildVillage(scene, { low = false } = {}) {
       river.update(t);
       fountain(t);
       clouds(dt);
+      sea(t);
+      fishShadows.update(dt, t);
+      lure.update(dt);
+      drops.update(dt);
       trees.update(dt);
       rocks.update(dt);
     },
