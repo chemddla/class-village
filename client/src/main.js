@@ -2,11 +2,11 @@
 import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
-  ANIM, COLORS, TOOLS, LIFE_TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
+  ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
 import { Character, actTime, LAND } from './character.js';
-import { LIFE, findTarget, buildLifeSpots } from './life.js';
+import { LIFE, findTarget, findLife, buildLifeSpots } from './life.js';
 import { createLookEditor } from './look-editor.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
@@ -88,7 +88,7 @@ const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
   fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
-  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
+  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
 let toastTimer = 0;
 function toast(text) {
@@ -118,8 +118,9 @@ const client = new Client(SERVER);
 let room = null;
 let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
-// act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 든 도구 번호
-const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, last: null, hurt: 0 };
+// act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 지금 손에 든 도구 번호,
+// equip: 퀵슬롯에서 고른 장비 번호 (생활 행동 중에는 그 일에 맞는 도구를 잠깐 들었다가, 끝나면 다시 이것으로 돌아온다)
+const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0 };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·3타 0.62초 × 0.5
 const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300 };
 // 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 2타 → 3타 → …
@@ -208,40 +209,108 @@ Character.onHit = (char, action) => hitFx(char, action);
 
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
 const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏' };
-const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', club: '💥' };
-const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', club: '공격' };
-let invItems = [0, 1, 2]; // 가진 도구 번호. 테스트 서버에선 나무 몽둥이(3)를 하나 줌
+const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟' };
+const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
+const QUICK_SLOTS = 4;
+let invItems = [1, 2]; // 가방에 든 장비 번호 (맨손은 빼고). 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무·연못·덤불
 let lifeSpotsMesh = null;
+// 퀵슬롯: 칸마다 장비 번호 또는 null. Q 를 누르면 맨손 → 1칸 → 2칸 → … 차례로 바꿔 든다
+const quick = (() => {
+  try {
+    const v = JSON.parse(store.get(localStorage, 'quick') ?? 'null');
+    if (Array.isArray(v)) return Array.from({ length: QUICK_SLOTS }, (_, i) => (Number.isInteger(v[i]) && v[i] > 0 && v[i] < TOOLS.length ? v[i] : null));
+  } catch { /* 저장된 값이 깨졌으면 처음부터 */ }
+  return [3, null, null, null]; // 처음에는 몽둥이를 1칸에 넣어 둔다 (가방에 있을 때만 보인다)
+})();
+const saveQuick = () => store.set(localStorage, 'quick', JSON.stringify(quick));
+const slotItem = (i) => (quick[i] !== null && invItems.includes(quick[i]) ? quick[i] : null); // 가방에 없는 장비는 빈칸으로 본다
 
 function showTool() {
-  const t = TOOLS[local.tool];
-  ui.toolBtn.innerHTML = `${TOOL_ICON[t]}<span>Q ${EQUIPMENT[t].label}</span>`;
-  ui.lifeBtn.innerHTML = `${LIFE_ICON[t]}<span>G ${LIFE_LABEL[t]}</span>`;
+  const t = TOOLS[local.equip];
+  ui.toolBtn.innerHTML = `${TOOL_ICON[t]}<span>Q 바꾸기</span>`;
 }
-showTool();
+// 생활 버튼: 가까이 있는 생활 대상에 맞춰 무엇을 할지 보여 준다
+let lifeShown = '';
+function showLife(tool) {
+  const key = tool ?? '';
+  if (key === lifeShown) return;
+  lifeShown = key;
+  ui.lifeBtn.innerHTML = tool ? `${LIFE_ICON[tool]}<span>G ${LIFE_LABEL[tool]}</span>` : '✨<span>G 생활</span>';
+  ui.lifeBtn.classList.toggle('dim', !tool);
+}
+showLife(null);
 
-function equipTool(t) {
-  if (local.actLeft > 0) return;
+// 손에 든 도구만 바꾼다 (생활 행동 때 잠깐 꺼내 드는 것)
+function holdTool(t) {
+  if (local.tool === t) return;
   local.tool = t;
   me?.setTool(t);
+}
+// 장비를 고른다 (퀵슬롯·Q·가방)
+function equipTool(t) {
+  if (local.actLeft > 0) return;
+  local.equip = t;
+  holdTool(t);
   showTool();
+  renderQuick();
   renderInv();
 }
+// Q: 맨손과 퀵슬롯에 넣은 장비를 차례로 돌려 든다
+function nextQuick() {
+  const list = [0, ...quick.map((_, i) => slotItem(i)).filter((t) => t !== null)];
+  if (list.length === 1) { toast('가방(I)에서 장비를 퀵슬롯에 넣어 보세요'); return; }
+  const i = list.indexOf(local.equip);
+  equipTool(list[(i + 1) % list.length]);
+}
+function renderQuick() {
+  ui.quick.innerHTML = '';
+  for (let i = 0; i < QUICK_SLOTS; i++) {
+    const t = slotItem(i);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = t !== null && t === local.equip ? 'on' : t === null ? 'empty' : '';
+    b.title = t === null ? '빈칸 (가방에서 장비를 넣을 수 있어요)' : EQUIPMENT[TOOLS[t]].label;
+    b.innerHTML = `<small>${i + 1}</small>${t === null ? '' : TOOL_ICON[TOOLS[t]]}`;
+    // 든 장비 칸을 다시 누르면 내려놓고 맨손이 된다
+    b.onclick = () => { if (t === null) ui.inv.classList.remove('hidden'); else equipTool(t === local.equip ? 0 : t); };
+    ui.quick.appendChild(b);
+  }
+  const q = document.createElement('span');
+  q.className = 'quick-key';
+  q.textContent = 'Q';
+  ui.quick.appendChild(q);
+}
+// 가방: 장비를 누르면 퀵슬롯에 넣고, 이미 넣은 장비를 누르면 뺀다
 function renderInv() {
-  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3>';
+  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3><p class="inv-help">장비를 누르면 퀵슬롯에 넣거나 뺍니다. 생활 도구는 G를 누르면 알아서 꺼내 들어요.</p>';
   const row = document.createElement('div');
   row.className = 'look-row';
   for (const t of invItems) {
+    const slot = quick.findIndex((v, i) => v === t && slotItem(i) === t);
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = t === local.tool ? 'on' : '';
-    b.textContent = `${TOOL_ICON[TOOLS[t]]} ${EQUIPMENT[TOOLS[t]].label}`;
-    b.onclick = () => equipTool(t);
+    b.className = slot >= 0 ? 'on' : '';
+    b.textContent = `${TOOL_ICON[TOOLS[t]]} ${EQUIPMENT[TOOLS[t]].label}${slot >= 0 ? ` · ${slot + 1}칸` : ''}`;
+    b.onclick = () => {
+      if (slot >= 0) {
+        quick[slot] = null;
+        if (local.equip === t) equipTool(0);
+      } else {
+        const empty = quick.findIndex((_, i) => slotItem(i) === null);
+        if (empty < 0) { toast('퀵슬롯이 가득 찼어요. 넣어 둔 장비를 눌러 빼 주세요'); return; }
+        quick[empty] = t;
+      }
+      saveQuick();
+      renderQuick();
+      renderInv();
+    };
     row.appendChild(b);
   }
   ui.inv.appendChild(row);
 }
+showTool();
+renderQuick();
 renderInv();
 
 // 마우스가 가리키는 땅 위 지점을 내 캐릭터에서 바라보는 방향 (마우스가 없거나 너무 가까우면 null)
@@ -279,11 +348,11 @@ const input = createInput({
     }
     else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
     else if (name === 'tool') {
-      equipTool((local.tool + 1) % LIFE_TOOLS);
+      nextQuick();
     } else if (name === 'inv') {
       ui.inv.classList.toggle('hidden');
-    } else if (name === 'attack' || (name === 'life' && TOOLS[local.tool] === 'club')) {
-      // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 G를 누르고 있을 때만)
+    } else if (name === 'attack') {
+      // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 꾹 누르고 있을 때만)
       if (TOOLS[local.tool] !== 'club' || local.hurt > 0) return;
       const el = actTime(local.act) - local.actLeft; // 지금 동작이 흐른 시간
       const rot = aimRot(); // 마우스가 가리키는 땅 쪽으로 돌아서서 휘두른다 (터치·화면 버튼은 보던 방향 그대로)
@@ -305,12 +374,13 @@ const input = createInput({
         }
       }
     } else if (name === 'life') {
+      // 손에 무엇을 들었든, 가장 가까운 생활 대상에 맞는 도구를 꺼내 들고 한다 (끝나면 고른 장비로 돌아온다)
       if (local.actLeft > 0) return;
-      const tool = TOOLS[local.tool];
-      const t = findTarget(tool, me.x, me.z, lifeSpots);
-      if (!t) { toast(`${LIFE[tool].what} 가까이에서 해 보세요 (Q로 도구 바꾸기)`); return; }
+      const t = findLife(me.x, me.z, lifeSpots);
+      if (!t) { toast('나무·물가·꽃이나 덤불 가까이에서 G를 눌러 보세요'); return; }
+      holdTool(TOOLS.indexOf(t.tool));
       me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 대상 쪽으로 돌아섬
-      startAct(LIFE[tool].anim);
+      startAct(LIFE[t.tool].anim);
     }
   },
   onOrbit(dx, dy) {
@@ -398,8 +468,9 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
-    invItems = free ? [0, 1, 2, 3] : [0, 1, 2];
-    if (!invItems.includes(local.tool)) equipTool(0);
+    invItems = free ? [1, 2, 3] : [1, 2];
+    if (local.equip && !invItems.includes(local.equip)) equipTool(0);
+    renderQuick();
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
   });
@@ -446,6 +517,7 @@ function enterGame() {
   ui.actions.classList.remove('hidden');
   ui.hint.classList.remove('hidden');
   ui.invBtn.classList.remove('hidden');
+  ui.quick.classList.remove('hidden');
   input.enable(true);
 }
 
@@ -519,10 +591,10 @@ function updateMe(dt) {
       if (actTime(local.act) - local.actLeft >= land + (local.act === ANIM.FLIP ? 0.1 : 0.04)) local.actLeft = 0;
     }
   }
-  // 몽둥이를 들고 G(생활 키)를 누르고 있으면 계속 휘두른다. 한 번 눌렀다 떼면 한 번만 휘두른다:
+  // 몽둥이를 들고 Z·마우스 왼쪽을 꾹 누르고 있으면 계속 휘두른다. 한 번 눌렀다 떼면 한 번만 휘두른다:
   // 다음 타로 넘어갈지는 미리 예약하지 않고, 넘어가는 그 순간에도 키를 누르고 있는지로 정한다
   // (누른 순간부터 예약하면 짧게 한 번 눌러도 키가 눌려 있던 몇 장면 때문에 2타가 따라 나온다)
-  const holdSwing = TOOLS[local.tool] === 'club' && input.holding('life') && local.hurt <= 0;
+  const holdSwing = TOOLS[local.tool] === 'club' && input.holding('attack') && local.hurt <= 0;
   if (holdSwing && local.actLeft <= 0) {
     const rot = aimRot();
     if (rot !== null) me.setPose(me.x, me.z, rot);
@@ -552,6 +624,14 @@ function updateMe(dt) {
         local.actLeft = actTime(local.act);
       }
     }
+  }
+  // 생활 행동이 끝나면 잠깐 꺼내 든 도구를 넣고 고른 장비를 다시 든다
+  if (local.actLeft <= 0 && local.tool !== local.equip) holdTool(local.equip);
+  // 생활 버튼 글자: 가까이 있는 대상에 맞춰 가끔 바꾼다
+  local.lifeTimer -= dt;
+  if (local.lifeTimer <= 0) {
+    local.lifeTimer = 0.2;
+    showLife(findLife(me.x, me.z, lifeSpots)?.tool ?? null);
   }
   if (local.actLeft > 0) {
     local.actLeft -= dt;

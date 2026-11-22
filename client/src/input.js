@@ -1,5 +1,5 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터)
-// Space 점프 · 1~4 감정 표현 · Q 도구 바꾸기 · G 생활 행동 · I 인벤토리 · Z/왼쪽 클릭 공격 · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// Space 점프 · 1~4 감정 표현 · Q 퀵슬롯 장비 바꾸기 · G 생활 행동(필요한 도구는 알아서 듦) · I 인벤토리 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
@@ -34,7 +34,10 @@ export function createInput({ onAction, onOrbit, onZoom }) {
 
   // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
-  const drag = { id: null, x: 0, y: 0, moved: 0 };
+  // 끌지 않고 누르기만 하면 공격: 짧게 눌렀다 떼면 한 번, 끌지 않은 채 꾹 누르고 있으면 뗄 때까지 연속 공격
+  // (누르자마자 휘두르면 시점을 돌리려고 끄는 것과 구별할 수 없으므로, 잠깐 지켜본 뒤 꾹 누름으로 친다)
+  const HOLD_MS = 200;
+  const drag = { id: null, x: 0, y: 0, moved: 0, timer: 0, attacking: false };
   // 마우스가 마지막으로 가리킨 화면 자리 (공격할 때 그쪽을 바라보는 데 쓴다). 터치·펜은 없음
   let pointer = null;
   addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') pointer = { x: e.clientX, y: e.clientY }; });
@@ -49,6 +52,14 @@ export function createInput({ onAction, onOrbit, onZoom }) {
       drag.x = e.clientX;
       drag.y = e.clientY;
       drag.moved = 0;
+      drag.attacking = false;
+      clearTimeout(drag.timer);
+      drag.timer = setTimeout(() => {
+        if (!enabled || drag.id !== e.pointerId || drag.moved >= 6) return;
+        drag.attacking = true;
+        held.add('attack');
+        onAction('attack');
+      }, HOLD_MS);
       canvas.setPointerCapture(e.pointerId);
       return;
     }
@@ -84,7 +95,10 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   const end = (e) => {
     if (e.pointerId === drag.id) {
       drag.id = null;
-      if (enabled && e.type === 'pointerup' && drag.moved < 6) onAction('attack'); // 끌지 않고 누르기만 하면 공격
+      clearTimeout(drag.timer);
+      if (drag.attacking) held.delete('attack'); // 꾹 눌러 연속 공격하던 것을 멈춘다 (이미 휘둘렀으니 뗄 때 또 치지 않는다)
+      else if (enabled && e.type === 'pointerup' && drag.moved < 6) onAction('attack'); // 짧게 눌렀다 떼면 한 번
+      drag.attacking = false;
     }
     if (e.pointerId !== joy.id) return;
     joy.id = null;

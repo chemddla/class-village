@@ -234,28 +234,152 @@ function shadeByHeight(geo, y0, y1, lo = 0.72, hi = 1.0) {
   return geo;
 }
 
-// 몽글몽글 둥근 나무 잎: 크고 작은 공 여러 개를 겹침 [x, y, z, 반지름]
-const ROUND_BLOBS = [
-  [0, 1.95, 0, 0.92], [0.62, 1.62, 0.18, 0.62], [-0.58, 1.66, -0.12, 0.64], [0.12, 1.6, 0.64, 0.6],
-  [-0.1, 1.62, -0.62, 0.58], [0.32, 2.5, -0.1, 0.58], [-0.36, 2.42, 0.22, 0.52],
-];
-// 키 큰 나무: 공 덩어리가 위로 갈수록 작아지는 탑 모양
-const TALL_BLOBS = [
-  [0, 1.45, 0, 0.82], [0.5, 1.3, 0.3, 0.5], [-0.5, 1.32, 0.22, 0.5], [0, 1.3, -0.55, 0.5],
-  [0, 2.15, 0, 0.66], [0.32, 2.05, -0.22, 0.4], [-0.3, 2.08, -0.18, 0.4],
-  [0, 2.75, 0, 0.46], [0, 3.15, 0, 0.28],
-];
-export function puffyCanopy(blobs = ROUND_BLOBS, detail = 2) {
-  const g = mergeGeometries(blobs.map(([x, y, z, r]) => new THREE.IcosahedronGeometry(r, detail).scale(1, 0.92, 1).translate(x, y, z)));
-  const ys = blobs.map((b) => b[1]);
-  return shadeByHeight(g, Math.min(...ys) - 0.7, Math.max(...ys) + 0.5);
+// 이미 칠한 꼭짓점 색에 높이에 따른 밝기를 곱함 (아래는 그늘, 위는 햇빛)
+function tintByHeight(geo, y0, y1, lo, hi) {
+  const pos = geo.attributes.position;
+  const c = geo.attributes.color;
+  for (let i = 0; i < pos.count; i++) {
+    const k = THREE.MathUtils.clamp((pos.getY(i) - y0) / (y1 - y0), 0, 1);
+    const v = lo + (hi - lo) * k * k * (3 - 2 * k);
+    c.setXYZ(i, c.getX(i) * v, c.getY(i) * v, c.getZ(i) * v);
+  }
+  return geo;
 }
+
+// 단순한 꼭짓점 목록으로 도형 만들기 (색 포함)
+function meshFrom(verts, colors, index) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(index);
+  g.computeVertexNormals();
+  return g;
+}
+
+// 잎 한 장: 끝이 세 갈래로 둥글게 갈라진 도톰한 잎. 앞면이 +Z, 가운데 갈래가 아래(-Y)를 향함
+// 가운데는 볼록하고 가장자리는 살짝 어두워서, 잎이 겹친 자리마다 경계가 보인다
+function leafGeometry(size, bright) {
+  const N = 12; // 3갈래 × 4
+  const LOBE = [1, 0.86, 0.68, 0.86];
+  const verts = [0, size * 0.15, size * 0.16, 0, size * 0.15, -size * 0.04];
+  const colors = [bright * 1.1, bright * 1.12, bright * 1.04, 0.5, 0.5, 0.5];
+  for (let k = 0; k < N; k++) {
+    // 가운데 갈래가 가장 길고, 잎자루 쪽(위)은 조금 짧게
+    const a = -Math.PI / 2 + (k / N) * Math.PI * 2;
+    const l = LOBE[k % 4];
+    const r = size * l * (k === 0 ? 1.12 : 1) * (Math.sin(a) > 0.3 ? 0.8 : 1);
+    verts.push(Math.cos(a) * r, Math.sin(a) * r, 0);
+    const e = bright * (0.7 + 0.22 * l);
+    colors.push(e, e, e * 0.95);
+  }
+  const index = [];
+  for (let k = 0; k < N; k++) {
+    const a = 2 + k;
+    const b = 2 + ((k + 1) % N);
+    index.push(0, a, b, 1, b, a);
+  }
+  return meshFrom(verts, colors, index);
+}
+
+// 잎을 놓을 자리·방향: 바깥쪽(n)을 보되 살짝 하늘로 젖혀, 잎 끝이 아랫줄 잎을 덮는 기와처럼 겹치게
+const _up = new THREE.Vector3(0, 1, 0);
+function leafMatrix(p, n, lift, spin) {
+  const z = n.clone().addScaledVector(_up, lift).normalize();
+  let y = _up.clone().addScaledVector(z, -_up.dot(z));
+  if (y.lengthSq() < 1e-4) y.set(Math.cos(spin), 0, Math.sin(spin));
+  y.normalize().applyAxisAngle(z, (spin % 1) * 0.5 - 0.25);
+  const x = new THREE.Vector3().crossVectors(y, z);
+  return new THREE.Matrix4().makeBasis(x, y, z).setPosition(p);
+}
+
+// 둥근 활엽수: 공 몇 개를 겹친 울퉁불퉁한 덩어리 [x, y, z, 반지름]
+// 짙은 속 덩어리 겉을 작은 잎이 기와처럼 빽빽이 덮는다
+const ROUND_BLOBS = [
+  [0, 1.98, 0, 0.88], [0.66, 1.66, 0.16, 0.6], [-0.6, 1.7, -0.14, 0.62], [0.1, 1.62, 0.66, 0.58],
+  [-0.12, 1.64, -0.64, 0.56], [0.34, 2.52, -0.12, 0.56], [-0.38, 2.44, 0.24, 0.5],
+];
+export function roundCanopy(seed = 7) {
+  const rand = seeded(seed);
+  const parts = [];
+  const c = new THREE.Vector3();
+  for (const [x, y, z, r] of ROUND_BLOBS) {
+    // 속 덩어리: 잎 사이 틈으로 보이는 짙은 그늘
+    const core = new THREE.IcosahedronGeometry(r * 0.92, 1).translate(x, y, z);
+    core.deleteAttribute('uv');
+    core.setAttribute('color', new THREE.Float32BufferAttribute(new Array(core.attributes.position.count * 3).fill(0.5), 3));
+    parts.push(core);
+  }
+  ROUND_BLOBS.forEach(([x, y, z, r], bi) => {
+    c.set(x, y, z);
+    // 공 겉에 고르게 점 찍기(해바라기 씨 배열). 다른 공 속에 묻히거나 맨 밑바닥인 자리는 건너뜀
+    const count = Math.round(r * r * 62);
+    for (let i = 0; i < count; i++) {
+      const yy = 1 - ((i + 0.5) / count) * 2;
+      const rr = Math.sqrt(1 - yy * yy);
+      const th = i * 2.39996 + bi * 1.3;
+      const n = new THREE.Vector3(Math.cos(th) * rr, yy, Math.sin(th) * rr);
+      if (n.y < -0.5) continue;
+      const p = c.clone().addScaledVector(n, r * 0.95);
+      if (ROUND_BLOBS.some(([x2, y2, z2, r2], j) => j !== bi && p.distanceTo(new THREE.Vector3(x2, y2, z2)) < r2 * 0.88)) continue;
+      const size = 0.27 * (0.85 + rand() * 0.3);
+      const leaf = leafGeometry(size, 0.84 + rand() * 0.2);
+      leaf.applyMatrix4(leafMatrix(p, n, n.y > 0.85 ? 0 : 0.35, rand() * 6.28));
+      parts.push(leaf.toNonIndexed());
+    }
+  });
+  const g = mergeGeometries(parts);
+  return tintByHeight(g, 1.0, 3.1, 0.66, 1.05);
+}
+
+// 침엽수 한 층: 꼭대기에서 퍼져 내려와 가장자리가 뾰족뾰족 처진 치마 모양
+// 중간 고리도 살짝 물결져서 가지가 겹친 듯 보이고, 아래는 짙은 밑면으로 막혀 있다
+function pineTier(yb, h, R, turn, bright) {
+  const M = 33; // 11갈래 × 3
+  const verts = [0, yb + h, 0];
+  const colors = [bright * 0.82, bright * 0.86, bright * 0.84];
+  const ring = (t, scallop, droop, shade) => {
+    for (let k = 0; k < M; k++) {
+      const a = turn + (k / M) * Math.PI * 2;
+      const tip = k % 3 === 0;
+      const r = R * t * (tip ? 1 : 1 - scallop);
+      verts.push(Math.cos(a) * r, yb + h * (1 - t) - (tip ? droop : 0), Math.sin(a) * r);
+      const e = bright * shade * (tip ? 1.08 : 0.9);
+      colors.push(e * 0.97, e, e);
+    }
+  };
+  ring(0.55, 0.1, h * 0.05, 0.95);
+  ring(1, 0.2, h * 0.16, 1.05);
+  verts.push(0, yb + h * 0.28, 0);
+  colors.push(0.45, 0.45, 0.45);
+  const under = 1 + 2 * M;
+  const index = [];
+  for (let k = 0; k < M; k++) {
+    const k1 = (k + 1) % M;
+    const m0 = 1 + k, m1 = 1 + k1, r0 = 1 + M + k, r1 = 1 + M + k1;
+    index.push(0, m1, m0, m0, m1, r1, m0, r1, r0, under, r0, r1);
+  }
+  return meshFrom(verts, colors, index);
+}
+
+export function pineCanopy(seed = 11) {
+  const rand = seeded(seed);
+  const tiers = [[0.95, 1.0, 1.08], [1.55, 0.95, 0.9], [2.12, 0.88, 0.72], [2.65, 0.8, 0.52], [3.12, 0.72, 0.32]];
+  const g = mergeGeometries(tiers.map(([yb, h, R], i) => pineTier(yb, h, R, rand() * 6.28, 0.92 + i * 0.03)));
+  return tintByHeight(g, 0.8, 3.9, 0.74, 1.08);
+}
+
 export function trunkGeometry() {
-  // 아래가 살짝 퍼진 줄기 + 굵은 가지 하나
-  return mergeGeometries([
-    new THREE.CylinderGeometry(0.15, 0.27, 1.3, 9).translate(0, 0.65, 0),
-    new THREE.CylinderGeometry(0.06, 0.09, 0.55, 6).rotateZ(-0.8).translate(0.24, 1.1, 0),
-  ]);
+  // 아래로 갈수록 굵어지는 줄기 + 땅을 움켜쥔 듯 퍼진 뿌리 다섯 갈래
+  // 뿌리는 뾰족하지 않게, 길쭉한 공을 바깥으로 갈수록 낮게 눕혀 끝이 뭉툭하게 땅에 묻히도록
+  const parts = [new THREE.CylinderGeometry(0.16, 0.25, 1.45, 10).translate(0, 0.72, 0)];
+  for (let i = 0; i < 5; i++) {
+    parts.push(new THREE.SphereGeometry(0.1, 8, 6)
+      .scale(2.1, 1.0, 1.15)
+      .rotateZ(-0.38)
+      .translate(0.25, 0.07, 0)
+      .rotateY((i / 5) * Math.PI * 2 + 0.3));
+  }
+  return mergeGeometries(parts.map((p) => p.toNonIndexed()));
 }
 
 function buildTrees(group) {
@@ -267,7 +391,7 @@ function buildTrees(group) {
   const Y = new THREE.Vector3(0, 1, 0);
   const base = []; // 나무 번호 → { pos, q, s, leaves: [mesh, index] }
 
-  const trunks = new THREE.InstancedMesh(trunkGeometry(), toon(0xa9744f), WORLD.trees.length);
+  const trunks = new THREE.InstancedMesh(trunkGeometry(), toon(0xc0905c), WORLD.trees.length);
   WORLD.trees.forEach((t, i) => {
     q.setFromAxisAngle(Y, (t.x * 13.7 + t.z) % 6.28);
     base[i] = { pos: new THREE.Vector3(t.x, 0, t.z), q: q.clone(), s: t.s };
@@ -275,18 +399,19 @@ function buildTrees(group) {
   });
   group.add(addOutline(trunks, 0.03));
 
-  [ROUND_BLOBS, TALL_BLOBS].forEach((blobs, k) => {
+  [roundCanopy(), pineCanopy()].forEach((geo, k) => {
     const list = kinds[k];
-    const mesh = new THREE.InstancedMesh(puffyCanopy(blobs), toon(0xffffff, { vertexColors: true }), list.length);
+    const mesh = new THREE.InstancedMesh(geo, toon(0xffffff, { vertexColors: true }), list.length);
     list.forEach(({ t, i }, j) => {
       const b = base[i];
       b.leaves = [mesh, j];
       mesh.setMatrixAt(j, m.compose(b.pos, b.q, s.setScalar(t.s)));
       const h = ((t.x * 7.1) % 1 + 1) % 1;
-      if (k === 0) mesh.setColorAt(j, col.setHSL(0.25 + h * 0.07, 0.55, 0.56));
-      else mesh.setColorAt(j, col.setHSL(0.37 + h * 0.04, 0.45, 0.44));
+      if (k === 0) mesh.setColorAt(j, col.setHSL(0.26 + h * 0.06, 0.58, 0.5));
+      else mesh.setColorAt(j, col.setHSL(0.4 + h * 0.03, 0.42, 0.36));
     });
-    group.add(addOutline(mesh, 0.04));
+    // 잎이 겹친 둥근 나무는 외곽선이 잎마다 생겨 어수선해지므로 침엽수에만 둘러 줌
+    group.add(k === 1 ? addOutline(mesh, 0.025) : mesh);
   });
 
   // 흔들기: 맞은 쪽으로 휘청였다가 흔들흔들 (줄기는 덜)
