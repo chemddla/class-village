@@ -217,7 +217,7 @@ for (const [id, key, list] of [['noseStyle', 'noseStyle', NOSE_STYLES], ['mouthS
   }
 }
 for (const [k, e] of Object.entries(EYE_STYLES)) {
-  button($('eyeStyle'), { label: e.label, onClick: () => villager.set({ eyeStyle: k }), isOn: () => (o.eyeStyle ?? 'classic') === k });
+  button($('eyeStyle'), { label: e.label, onClick: () => villager.set({ eyeStyle: k }), isOn: () => (o.eyeStyle ?? 'basic') === k });
 }
 SKINS.forEach((s, i) => button($('skin'), { label: `피부색 ${i + 1}`, color: s.skin, onClick: () => villager.set(s), isOn: () => o.skin === s.skin }));
 for (const [id, key, list] of [['hairColor', 'hairColor', HAIR_COLORS], ['top-color', 'top', TOP_COLORS], ['bottomColor', 'bottomColor', BOTTOM_COLORS]]) {

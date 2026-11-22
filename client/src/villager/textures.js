@@ -348,7 +348,6 @@ const insideWhite = (g, path, drawIris) => {
 };
 
 export const EYE_STYLES = {
-  classic: { label: '기존 눈' },
   basic: { label: '콩눈', draw(g, iris) { ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3); } },
   shine: { label: '반짝 큰 눈', draw(g, iris) { ovalPath(g, 0, 0, 12.5, 15.5); fillAs(g, iris); shine(g, 4, -6, 4); shine(g, -4, 6, 1.8); } },
   lash: { label: '속눈썹', draw(g, iris) { ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3); outerLashes(g); } },
@@ -453,7 +452,7 @@ export const EYE_STYLES = {
 
 // ── 눈: 세로 1.25배 타원. mode: open | round | happy | closed | angry ──
 // 눈 조각은 실제 크기가 정사각형이므로 그린 비율이 그대로 보인다. 텍스처 오른쪽(+u)이 바깥쪽 눈꼬리.
-export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'classic' }) {
+export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic' }) {
   const c = tex.image;
   const g = c.getContext('2d');
   // 캔버스 실제 크기와 상관없이 512×512 기준으로 그린다 (선 굵기가 그대로 유지됨)
@@ -462,7 +461,7 @@ export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'class
   g.setTransform(c.width / W, 0, 0, c.height / H, 0, 0);
   g.clearRect(0, 0, W, H);
   // 눈 모양을 고른 경우: 평소(뜬 눈)일 때만 그 모양으로, 웃음·감음·놀람·화남은 아래 공통 표정을 쓴다
-  const styled = EYE_STYLES[style];
+  const styled = EYE_STYLES[style] ?? EYE_STYLES.basic; // 모르는 이름(예전에 저장된 'classic' 등)은 콩눈으로
   if (styled?.draw && mode === 'open') {
     g.save();
     g.translate(W / 2, H * 0.52);

@@ -474,9 +474,11 @@ export const BODY_K = 0.9;
 export const LEG_K = 0.88;
 export const SHOULDER = { x: 0.076 * BODY_K, y: 0.184 * TY };
 
-// 소매 윗부분: 어깨 관절을 중심으로 한, 소매와 같은 굵기의 둥근 마감. 넥라인에서 나온 선이 꺾이거나 패이지 않고
-// 둥글게 넘어가 팔로 이어진다 (소매보다 굵지 않아 불룩한 퍼프가 되지 않고, 팔을 어느 쪽으로 들어도 이음매가 그대로다)
-const SHOULDER_CAP = [0, 20, 40, 60, 78, 90].map((d) => [0.0235 * Math.sin((d * PI) / 180), 0.0235 * Math.cos((d * PI) / 180)]);
+// 소매·맨팔 윗부분: 어깨 관절을 중심으로 한 둥근 마감(어깨 살). 팔과 함께 돌기 때문에 팔을 어느 쪽으로 움직여도
+// 몸통 어깨선과 팔이 둥글게 이어지고 따로 떨어져 보이지 않는다. 팔보다 조금 굵게 잡아 팔을 들 때 생기는
+// 몸통 어깨선과 팔 윗면 사이의 오목한 꺾임을 둥글게 메운다
+const CAP_R = 0.027;
+const SHOULDER_CAP = [0, 20, 40, 60, 78, 90].map((d) => [CAP_R * Math.sin((d * PI) / 180), CAP_R * Math.cos((d * PI) / 180)]);
 
 // 셔츠 겉면을 따라가는 세로 단면 조각 (아래→위, off만큼 띄움): 로고·지퍼·주머니 같은 덧댐에 쓴다
 function shirtProf(y0, y1, off = 0.002, n = 8) {
@@ -949,7 +951,7 @@ function buildBody(root, o, live, detail) {
     // 어깨에서 소매 끝까지 일직선으로 떨어진다 (팔 관절에 붙어 있어 팔을 어떻게 움직여도 기울기가 같다)
     if (style.sleeve === 'short') {
       const len = outfit === 'tee' ? 0.074 : 0.084; // 오버핏은 팔꿈치 바로 위까지
-      const r = 0.0235 + 0.073 * len;
+      const r = CAP_R + 0.05 * len;
       mesh(lathe([...SHOULDER_CAP, [r, -len], [r - 0.003, -len - 0.0008], [r - 0.0045, -len + 0.007]], 48),
         sleeveMat, arm, '소매');
     }
@@ -993,13 +995,6 @@ function buildBody(root, o, live, detail) {
     P[`hand${SIDE[s]}`] = hand;
   }
   slimBody(hips, torso, P);
-  // 어깨 둥근 살: 몸통에 붙어 움직이지 않는 공. 팔을 옆·위로 들어도 몸통 어깨선과 팔 윗면이 오목하게 꺾여
-  // 끊겨 보이지 않고 둥글게 이어진다 (팔을 내리면 팔·몸통 속에 거의 묻힌다)
-  for (const s of [-1, 1]) {
-    const r = style.bare ? 0.025 : 0.03;
-    const cap = mesh(ellipsoid(r, r, r * 0.9, 24), style.bare ? handMat : plainMat, torso, '어깨살');
-    cap.position.set(s * SHOULDER.x, SHOULDER.y, 0);
-  }
   bendWaist(root, hips, torso);
   bindLimbs(root);
   for (const j of Object.values(P)) if (j.isObject3D) j.userData.rest = j.position.clone(); // colliders(배열)는 관절이 아님
@@ -1249,13 +1244,13 @@ function buildShoe(foot, o, covered = false) {
 // 프리셋은 모든 커스터마이징 키를 빠짐없이 가진다 (프리셋을 바꾸면 이전 선택이 남지 않도록)
 export const PRESETS = {
   boy: {
-    skin: '#ffd3b4', nose: '#ff8a62', noseStyle: 'classic', mouthStyle: 'classic', hair: 'side', hairColor: '#a65a2e', iris: '#6a4a33', lash: false, eyeStyle: 'classic',
+    skin: '#ffd3b4', nose: '#ff8a62', noseStyle: 'classic', mouthStyle: 'classic', hair: 'side', hairColor: '#a65a2e', iris: '#6a4a33', lash: false, eyeStyle: 'basic',
     top: '#f3efe6', bottom: 'shorts', bottomColor: '#3f5f8f', shoes: '#e2574c',
     plaid: ['#e7b74a', '#b9502f', '#3a2a22'], collar: null, crown: false, glasses: false, backpack: false,
     outfit: 'tee', hat: 'none',
   },
   girl: {
-    skin: '#ffd6b8', nose: '#ff8f6a', noseStyle: 'classic', mouthStyle: 'classic', hair: 'bob', hairColor: '#e4b660', iris: '#3d6fc4', lash: true, eyeStyle: 'classic',
+    skin: '#ffd6b8', nose: '#ff8f6a', noseStyle: 'classic', mouthStyle: 'classic', hair: 'bob', hairColor: '#e4b660', iris: '#3d6fc4', lash: true, eyeStyle: 'basic',
     top: '#f28aa0', bottom: 'skirt', bottomColor: '#fff3dc', shoes: '#7b5bd6', plaid: null,
     collar: '#fffaf2', crown: true, glasses: false, backpack: false, outfit: 'tee', hat: 'none',
   },
