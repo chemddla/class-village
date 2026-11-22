@@ -25,6 +25,10 @@ export const LIFE_SPOTS = [
   { kind: 'tree', x: -3.6, z: 1.2 },
 ];
 
+// 과일 나무 종류. 마을마다 '주된 과일' 하나가 정해져 마을 과일나무에 열린다 (다른 과일은 나중에 상점에서 산다)
+export const FRUITS = ['peach', 'apple', 'orange', 'pear'];
+export const FRUIT_NAMES = { peach: '복숭아', apple: '사과', orange: '오렌지', pear: '배' };
+
 // 캐릭터 색 목록 (파스텔)
 export const COLORS = [
   0xf4a7b9, 0xa7d8f4, 0xb8e6a1, 0xffd98e, 0xcdb4f0, 0xffb38a, 0x9ee3d4, 0xf7f08a,
@@ -152,7 +156,14 @@ export function generateWorld(seed = 20261118) {
   colliders.push({ x: PLAZA.fountain.x, z: PLAZA.fountain.z, r: PLAZA.fountain.r });
   for (const b of PLAZA.benches) colliders.push({ x: b.x, z: b.z, r: 0.6 });
   for (const l of PLAZA.lamps) colliders.push({ x: l.x, z: l.z, r: 0.15 });
-  return { seed, trees, rocks, flowers, colliders };
+  // 과일나무: 광장에서 조금 떨어진 둥근 나무 중 가까운 8그루 (번호 목록)
+  const fruitTrees = trees
+    .map((t, i) => ({ i, d: Math.hypot(t.x - SPAWN.x, t.z - SPAWN.z), k: t.kind }))
+    .filter((o) => o.k === 0 && o.d > 8 && o.d < 24)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 8)
+    .map((o) => o.i);
+  return { seed, trees, rocks, flowers, colliders, fruitTrees };
 }
 
 // 한 번만 만들어 두고 함께 쓴다

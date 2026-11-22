@@ -22,7 +22,7 @@ function noise(x, z) {
 
 function buildGround() {
   const size = 90;
-  const seg = 135;
+  const seg = 200; // 0.45m 간격
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -39,12 +39,12 @@ function buildGround() {
     if (Math.abs(x) < 1.1 && z < SPAWN.z && z > -24) c.copy(SAND);
     // 광장 → 상점·대장간 길
     if (Math.abs(z - SPAWN.z) < 1.1 && Math.abs(x) < 13) c.copy(SAND);
-    // 강가 모래
+    // 강가 모래: 강에서 멀어질수록 풀밭 색으로 부드럽게 (한 점씩 끊으면 격자 모양 계단이 생긴다)
     const dr = Math.abs(z - riverCenterZ(x));
-    if (dr < RIVER_HALF_WIDTH + 0.6) c.copy(BANK);
+    c.lerp(BANK, THREE.MathUtils.clamp((RIVER_HALF_WIDTH + 0.85 - dr) / 0.4, 0, 1));
     colors.set([c.r, c.g, c.b], i * 3);
-    // 강바닥을 살짝 낮춘다
-    if (dr < RIVER_HALF_WIDTH) pos.setY(i, -0.25);
+    // 강바닥: 둑에서 가운데로 비스듬히 내려가게. 물(높이 -0.06)과 땅이 만나는 선이 격자가 아닌 강 모양을 따른다
+    pos.setY(i, -0.3 * THREE.MathUtils.clamp((RIVER_HALF_WIDTH + 0.3 - dr) / 1.2, 0, 1));
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
@@ -134,39 +134,6 @@ function waterTexture() {
   tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  return tex;
-}
-
-// 물거품 텍스처: 아래(v=1, 강둑 쪽)일수록 진한 하얀 거품 방울
-function foamTexture() {
-  const W = 256;
-  const H = 32;
-  const cv = document.createElement('canvas');
-  cv.width = W;
-  cv.height = H;
-  const g = cv.getContext('2d');
-  const rand = seeded(11);
-  const grd = g.createLinearGradient(0, 0, 0, H);
-  grd.addColorStop(0, 'rgba(255,255,255,0)');
-  grd.addColorStop(0.55, 'rgba(255,255,255,0.25)');
-  grd.addColorStop(1, 'rgba(255,255,255,0.95)');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, W, H);
-  g.fillStyle = 'rgba(255,255,255,0.9)';
-  for (let i = 0; i < 70; i++) {
-    const x = rand() * W;
-    const y = H * (0.35 + rand() * 0.65);
-    const r = 1.5 + rand() * 4 * (y / H);
-    for (const dx of [0, -W, W]) {
-      g.beginPath();
-      g.arc(x + dx, y, r, 0, Math.PI * 2);
-      g.fill();
-    }
-  }
-  const tex = new THREE.CanvasTexture(cv);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.flipY = false; // v=0 강 쪽 → v=1 강둑 쪽이 캔버스 위→아래와 같게
-  tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -311,19 +278,10 @@ function buildRiver() {
   group.add(new THREE.Mesh(riverStrip(-w, w, -0.055, 9), flowMat(slow, 0.45)));
   const fast = flowTexture(9, 26);
   group.add(new THREE.Mesh(riverStrip(-w * 0.55, w * 0.55, -0.05, 6), flowMat(fast, 0.55)));
-  // 강둑 물거품: 둑 아래로 들어간 부분은 땅에 가려져, 물과 둑이 만나는 곳에만 하얀 줄이 보인다
-  const foam = foamTexture();
-  const foamMat = basic(0xffffff, { map: foam, transparent: true, depthWrite: false, side: THREE.DoubleSide });
-  const inner = RIVER_HALF_WIDTH - 0.35;
-  const outer = RIVER_HALF_WIDTH + 0.6;
-  group.add(new THREE.Mesh(riverStrip(inner, outer, -0.045, 5), foamMat));
-  group.add(new THREE.Mesh(riverStrip(-inner, -outer, -0.045, 5), foamMat));
   const decor = buildRiverDecor(group);
   const update = (t) => {
     slow.offset.set(t * 0.05, Math.sin(t * 0.4) * 0.02);
     fast.offset.set(t * 0.11, Math.sin(t * 0.7 + 1) * 0.015);
-    foam.offset.set(t * 0.02, 0);
-    foamMat.opacity = 0.6 + Math.sin(t * 1.6) * 0.12; // 밀려왔다 빠지는 느낌
     decor(t);
   };
   return { group, update };
@@ -364,79 +322,111 @@ function meshFrom(verts, colors, index) {
   return g;
 }
 
-// 잎 한 장: 끝이 세 갈래로 둥글게 갈라진 도톰한 잎. 앞면이 +Z, 가운데 갈래가 아래(-Y)를 향함
-// 가운데는 볼록하고 가장자리는 살짝 어두워서, 잎이 겹친 자리마다 경계가 보인다
-function leafGeometry(size, bright) {
-  const N = 12; // 3갈래 × 4
-  const LOBE = [1, 0.86, 0.68, 0.86];
-  const verts = [0, size * 0.15, size * 0.16, 0, size * 0.15, -size * 0.04];
-  const colors = [bright * 1.1, bright * 1.12, bright * 1.04, 0.5, 0.5, 0.5];
-  for (let k = 0; k < N; k++) {
-    // 가운데 갈래가 가장 길고, 잎자루 쪽(위)은 조금 짧게
-    const a = -Math.PI / 2 + (k / N) * Math.PI * 2;
-    const l = LOBE[k % 4];
-    const r = size * l * (k === 0 ? 1.12 : 1) * (Math.sin(a) > 0.3 ? 0.8 : 1);
-    verts.push(Math.cos(a) * r, Math.sin(a) * r, 0);
-    const e = bright * (0.7 + 0.22 * l);
-    colors.push(e, e, e * 0.95);
-  }
-  const index = [];
-  for (let k = 0; k < N; k++) {
-    const a = 2 + k;
-    const b = 2 + ((k + 1) % N);
-    index.push(0, a, b, 1, b, a);
-  }
-  return meshFrom(verts, colors, index);
-}
-
-// 잎을 놓을 자리·방향: 바깥쪽(n)을 보되 살짝 하늘로 젖혀, 잎 끝이 아랫줄 잎을 덮는 기와처럼 겹치게
-const _up = new THREE.Vector3(0, 1, 0);
-function leafMatrix(p, n, lift, spin) {
-  const z = n.clone().addScaledVector(_up, lift).normalize();
-  let y = _up.clone().addScaledVector(z, -_up.dot(z));
-  if (y.lengthSq() < 1e-4) y.set(Math.cos(spin), 0, Math.sin(spin));
-  y.normalize().applyAxisAngle(z, (spin % 1) * 0.5 - 0.25);
-  const x = new THREE.Vector3().crossVectors(y, z);
-  return new THREE.Matrix4().makeBasis(x, y, z).setPosition(p);
-}
-
-// 둥근 활엽수: 공 몇 개를 겹친 울퉁불퉁한 덩어리 [x, y, z, 반지름]
-// 짙은 속 덩어리 겉을 작은 잎이 기와처럼 빽빽이 덮는다
+// 둥근 활엽수: 공 몇 개를 겹친 몽글몽글한 구름 덩어리 [x, y, z, 반지름]
 const ROUND_BLOBS = [
   [0, 1.98, 0, 0.88], [0.66, 1.66, 0.16, 0.6], [-0.6, 1.7, -0.14, 0.62], [0.1, 1.62, 0.66, 0.58],
   [-0.12, 1.64, -0.64, 0.56], [0.34, 2.52, -0.12, 0.56], [-0.38, 2.44, 0.24, 0.5],
 ];
-export function roundCanopy(seed = 7) {
-  const rand = seeded(seed);
-  const parts = [];
-  const c = new THREE.Vector3();
-  for (const [x, y, z, r] of ROUND_BLOBS) {
-    // 속 덩어리: 잎 사이 틈으로 보이는 짙은 그늘
-    const core = new THREE.IcosahedronGeometry(r * 0.92, 1).translate(x, y, z);
-    core.deleteAttribute('uv');
-    core.setAttribute('color', new THREE.Float32BufferAttribute(new Array(core.attributes.position.count * 3).fill(0.5), 3));
-    parts.push(core);
-  }
-  ROUND_BLOBS.forEach(([x, y, z, r], bi) => {
-    c.set(x, y, z);
-    // 공 겉에 고르게 점 찍기(해바라기 씨 배열). 다른 공 속에 묻히거나 맨 밑바닥인 자리는 건너뜀
-    const count = Math.round(r * r * 62);
-    for (let i = 0; i < count; i++) {
-      const yy = 1 - ((i + 0.5) / count) * 2;
-      const rr = Math.sqrt(1 - yy * yy);
-      const th = i * 2.39996 + bi * 1.3;
-      const n = new THREE.Vector3(Math.cos(th) * rr, yy, Math.sin(th) * rr);
-      if (n.y < -0.5) continue;
-      const p = c.clone().addScaledVector(n, r * 0.95);
-      if (ROUND_BLOBS.some(([x2, y2, z2, r2], j) => j !== bi && p.distanceTo(new THREE.Vector3(x2, y2, z2)) < r2 * 0.88)) continue;
-      const size = 0.27 * (0.85 + rand() * 0.3);
-      const leaf = leafGeometry(size, 0.84 + rand() * 0.2);
-      leaf.applyMatrix4(leafMatrix(p, n, n.y > 0.85 ? 0 : 0.35, rand() * 6.28));
-      parts.push(leaf.toNonIndexed());
-    }
+// 잎을 한 장씩 붙이면 작은 구멍·무늬가 빽빽해 보여서, 매끈한 공을 겹쳐 폭신한 덩어리로 만든다
+// 위는 햇빛을 받아 밝고 아래는 그늘지게 꼭짓점 색을 칠함
+export function roundCanopy(seed = 7, BLOBS = ROUND_BLOBS, top = 3.1) {
+  const parts = BLOBS.map(([x, y, z, r]) => {
+    const g = new THREE.SphereGeometry(r, 20, 14).toNonIndexed().translate(x, y, z);
+    g.deleteAttribute('uv');
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count * 3).fill(1), 3));
+    return g;
   });
+  return tintByHeight(mergeGeometries(parts), 1.0, top, 0.72, 1.05);
+}
+
+// 키 큰 달걀꼴 나무: 공을 위로 쌓아 가늘고 길게
+const OVAL_BLOBS = [
+  [0, 1.75, 0, 0.62], [0.28, 2.05, 0.2, 0.5], [-0.3, 2.15, -0.16, 0.5], [0, 2.5, 0, 0.6],
+  [0.12, 2.9, -0.06, 0.52], [-0.06, 3.18, 0.06, 0.4], [0.05, 1.55, -0.4, 0.42],
+];
+export const ovalCanopy = () => roundCanopy(19, OVAL_BLOBS, 3.6);
+
+// 과일나무 잎: 조금 작고 낮게 퍼진 둥근 덩어리
+const FRUIT_BLOBS = [
+  [0, 1.85, 0, 0.8], [0.62, 1.6, 0.2, 0.56], [-0.6, 1.62, -0.1, 0.58], [0.1, 1.55, 0.62, 0.54],
+  [-0.1, 1.58, -0.6, 0.52], [0.25, 2.3, 0.05, 0.5],
+];
+
+// ── 과일 모양 (매단 자리가 원점, 아래로 매달림). 잎 덩어리에 합치기 위해 색을 꼭짓점에 칠하고 uv 는 뺀다 ──
+function tint(g, color, shadeBy = null) {
+  g = g.index ? g.toNonIndexed() : g;
+  g.deleteAttribute('uv');
+  const pos = g.attributes.position;
+  const arr = new Float32Array(pos.count * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    c.set(color);
+    if (shadeBy) shadeBy(c, pos.getX(i), pos.getY(i), pos.getZ(i));
+    arr.set([c.r, c.g, c.b], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
+const stem = () => tint(new THREE.CylinderGeometry(0.012, 0.016, 0.07, 5).translate(0, -0.02, 0), 0x7a5232);
+const smallLeaf = (x = 0.05) => tint(new THREE.SphereGeometry(0.045, 6, 4).scale(1.6, 0.35, 0.8).rotateZ(0.4).translate(x, -0.02, 0), 0x5aa83e);
+// 귀여운 과일: 통통하고 둥글게, 앞쪽(+z)에 하얀 반짝임 점
+const shine = (y) => tint(new THREE.SphereGeometry(0.032, 8, 6).scale(0.8, 1.2, 0.5).translate(-0.06, y + 0.05, 0.13), 0xffffff);
+const FRUIT_MODELS = {
+  apple: () => [
+    tint(new THREE.SphereGeometry(0.15, 16, 12).scale(1.06, 0.92, 1.06).translate(0, -0.15, 0), 0xf0464a),
+    stem(), smallLeaf(), shine(-0.15),
+  ],
+  peach: () => [
+    tint(new THREE.SphereGeometry(0.15, 16, 12).translate(0, -0.16, 0), 0xffc89c,
+      (c, x, y) => c.lerp(new THREE.Color(0xff8f9c), THREE.MathUtils.clamp((y + 0.16) * 4 + 0.35, 0, 0.75))),
+    smallLeaf(0.05), smallLeaf(-0.05), shine(-0.16),
+  ],
+  orange: () => [
+    tint(new THREE.SphereGeometry(0.15, 16, 12).translate(0, -0.16, 0), 0xffa12e),
+    tint(new THREE.SphereGeometry(0.022, 6, 4).translate(0, -0.01, 0), 0x6a9a3a),
+    smallLeaf(), shine(-0.16),
+  ],
+  pear: () => [
+    tint(new THREE.SphereGeometry(0.14, 16, 12).translate(0, -0.22, 0), 0xdfe06e),
+    tint(new THREE.SphereGeometry(0.095, 12, 9).translate(0, -0.11, 0), 0xdfe06e),
+    stem(), smallLeaf(), shine(-0.22),
+  ],
+};
+
+// 과일나무 잎 + 과일: 잎은 꼭짓점 색에 초록을 미리 칠해 두고(과일 색이 물들지 않게), 옆·아래쪽 겉에 과일을 단다
+const fruitCanopyCache = new Map();
+export function fruitCanopy(fruit) {
+  if (fruitCanopyCache.has(fruit)) return fruitCanopyCache.get(fruit);
+  const leaves = roundCanopy(29, FRUIT_BLOBS, 2.8);
+  const col = leaves.attributes.color;
+  const green = new THREE.Color().setHSL(0.27, 0.56, 0.47); // 다른 나무와 같은 방식(색 공간 변환)으로 만든 초록
+  for (let i = 0; i < col.count; i++) col.setXYZ(i, col.getX(i) * green.r, col.getY(i) * green.g, col.getZ(i) * green.b);
+  const parts = [leaves];
+  const make = FRUIT_MODELS[fruit];
+  if (make) {
+    const rand = seeded(31);
+    const spots = [];
+    // 한 나무에 5개만, 서로 멀찍이: 잎 덩어리 옆·아래쪽 겉에 매달고 반짝임이 바깥을 보게 돌린다
+    FRUIT_BLOBS.forEach(([x, y, z, r], bi) => {
+      for (let i = 0; i < 40 && spots.length < 5; i++) {
+        const th = rand() * Math.PI * 2;
+        const ny = -0.55 + rand() * 0.6;
+        const rr = Math.sqrt(1 - ny * ny);
+        const n = new THREE.Vector3(Math.cos(th) * rr, ny, Math.sin(th) * rr);
+        const p = new THREE.Vector3(x, y, z).addScaledVector(n, r * 0.98);
+        if (FRUIT_BLOBS.some(([x2, y2, z2, r2], j) => j !== bi && p.distanceTo(new THREE.Vector3(x2, y2, z2)) < r2 * 0.95)) continue;
+        if (spots.some(({ p: q }) => q.distanceTo(p) < 0.8)) continue;
+        spots.push({ p, n });
+      }
+    });
+    for (const { p, n } of spots) {
+      const face = Math.atan2(n.x, n.z);
+      for (const g of make()) parts.push(g.scale(1.35, 1.35, 1.35).rotateY(face).translate(p.x, p.y, p.z));
+    }
+  }
   const g = mergeGeometries(parts);
-  return tintByHeight(g, 1.0, 3.1, 0.66, 1.05);
+  fruitCanopyCache.set(fruit, g);
+  return g;
 }
 
 // 침엽수 한 층: 꼭대기에서 퍼져 내려와 가장자리가 뾰족뾰족 처진 치마 모양
@@ -490,8 +480,12 @@ export function trunkGeometry() {
   return mergeGeometries(parts.map((p) => p.toNonIndexed()));
 }
 
+// 보이는 나무 종류: 0 둥근 나무 · 1 침엽수 · 2 키 큰 달걀꼴 나무 · 3 과일나무
+const FRUIT_TREE = new Set(WORLD.fruitTrees);
+const looksLike = (t, i) => (FRUIT_TREE.has(i) ? 3 : t.kind === 1 ? 1 : i % 3 === 2 ? 2 : 0);
+
 function buildTrees(group) {
-  const kinds = [0, 1].map((k) => WORLD.trees.map((t, i) => ({ t, i })).filter((o) => o.t.kind === k));
+  const kinds = [0, 1, 2, 3].map((k) => WORLD.trees.map((t, i) => ({ t, i })).filter((o) => looksLike(o.t, o.i) === k));
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const s = new THREE.Vector3();
@@ -507,7 +501,15 @@ function buildTrees(group) {
   });
   group.add(addOutline(trunks, 0.03));
 
-  [roundCanopy(), pineCanopy()].forEach((geo, k) => {
+  // 잎 색: 나무마다 조금씩 다른 초록 (연두 ~ 짙은 초록), 과일나무는 잎 색을 미리 칠해 두어 흰색
+  const tintOf = (k, h, h2) => {
+    if (k === 0) return col.setHSL(0.22 + h * 0.1, 0.5 + h2 * 0.15, 0.46 + h2 * 0.1);
+    if (k === 1) return col.setHSL(0.4 + h * 0.04, 0.4, 0.33 + h2 * 0.06);
+    if (k === 2) return col.setHSL(0.3 + h * 0.06, 0.48, 0.4 + h2 * 0.06);
+    return col.setRGB(1, 1, 1);
+  };
+  let fruitMesh = null;
+  [roundCanopy(), pineCanopy(), ovalCanopy(), fruitCanopy(null)].forEach((geo, k) => {
     const list = kinds[k];
     const mesh = new THREE.InstancedMesh(geo, toon(0xffffff, { vertexColors: true }), list.length);
     list.forEach(({ t, i }, j) => {
@@ -515,11 +517,11 @@ function buildTrees(group) {
       b.leaves = [mesh, j];
       mesh.setMatrixAt(j, m.compose(b.pos, b.q, s.setScalar(t.s)));
       const h = ((t.x * 7.1) % 1 + 1) % 1;
-      if (k === 0) mesh.setColorAt(j, col.setHSL(0.26 + h * 0.06, 0.58, 0.5));
-      else mesh.setColorAt(j, col.setHSL(0.4 + h * 0.03, 0.42, 0.36));
+      const h2 = ((t.z * 3.7) % 1 + 1) % 1;
+      mesh.setColorAt(j, tintOf(k, h, h2));
     });
-    // 잎이 겹친 둥근 나무는 외곽선이 잎마다 생겨 어수선해지므로 침엽수에만 둘러 줌
-    group.add(k === 1 ? addOutline(mesh, 0.025) : mesh);
+    if (k === 3) fruitMesh = mesh;
+    group.add(addOutline(mesh, 0.025));
   });
 
   // 흔들기: 맞은 쪽으로 휘청였다가 흔들흔들 (줄기는 덜)
@@ -536,6 +538,8 @@ function buildTrees(group) {
     mesh.instanceMatrix.needsUpdate = true;
   };
   return {
+    // 마을 주된 과일이 정해지면 과일나무에 그 과일을 단다
+    setFruit(fruit) { fruitMesh.geometry = fruitCanopy(fruit); },
     shake(i, dx, dz, power = 1) { active.set(i, { t: 0, ax: new THREE.Vector3(dz, 0, -dx).normalize(), power }); },
     update(dt) {
       for (const [i, a] of active) {
@@ -954,6 +958,7 @@ export function buildVillage(scene, { low = false } = {}) {
     nearTree: (x, z, reach = 1) => nearest(WORLD.trees, x, z, reach),
     nearRock: (x, z, reach = 1) => nearest(WORLD.rocks, x, z, reach),
     shakeTree: trees.shake,
+    setFruit: trees.setFruit,
     shakeRock: rocks.shake,
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t) {

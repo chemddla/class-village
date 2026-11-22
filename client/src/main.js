@@ -473,6 +473,9 @@ function attach(r) {
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
   });
 
+  // 마을 주된 과일: 과일나무에 그 과일이 열린다
+  $(r.state).listen('fruit', (v) => village.setFruit(v));
+
   // 서버가 이상한 이동이라고 판단하면 되돌림
   r.onMessage('fix', ([x, z]) => {
     if (!me) return;
