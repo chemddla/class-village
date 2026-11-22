@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { ACTIONS, createAnimator } from './actions.js';
-import { EQUIPMENT, attachEquipment, updateEquipment } from './equipment.js';
+import { EQUIPMENT, attachEquipment, updateEquipment, straightenWrists } from './equipment.js';
 import { resolveArmCollision, armPenetration } from './collision.js';
 import { bodyColliders, SHOULDER, HEAD_Y } from './villager.js';
 
@@ -50,6 +50,8 @@ for (const [name, def] of Object.entries(ACTIONS)) {
   const sec = def.duration ?? 3;
   let before = 0;
   const afters = [];
+  let wrist = 0; // 두 손으로 쥔 동안 손목이 가장 많이 꺾인 각도(도)
+  let sag = 1; // 몽둥이를 휘두르는 동안(타격~관성) 끝이 가장 아래를 향한 정도 (세계 기준 y, -1 = 곧장 아래)
   for (let i = 1; i <= Math.round(sec * 60); i++) {
     const t = i / 60;
     const fx = p.update(rig, t, 1 / 60);
@@ -59,11 +61,22 @@ for (const [name, def] of Object.entries(ACTIONS)) {
     if (i > 15) before = Math.max(before, armPenetration(rig));
     resolveArmCollision(rig);
     afters.push(armPenetration(rig));
+    straightenWrists(rig);
+    if ((rig.twoHandW ?? 0) > 0.9) {
+      for (const s of ['R', 'L']) {
+        const h = rig[`hand${s}`];
+        const f = h.getWorldPosition(new THREE.Vector3()).sub(rig[`elbow${s}`].getWorldPosition(new THREE.Vector3())).normalize();
+        const d = new THREE.Vector3(0, -1, 0).applyQuaternion(h.getWorldQuaternion(new THREE.Quaternion()));
+        wrist = Math.max(wrist, THREE.MathUtils.radToDeg(d.angleTo(f)));
+      }
+      const u = t / sec;
+      if (def.equip === 'club' && u >= 0.48 && u <= 0.7) sag = Math.min(sag, new THREE.Vector3(0, 0, 1).applyQuaternion(rig.rightSocket.getWorldQuaternion(new THREE.Quaternion())).y);
+    }
   }
   afters.sort((a, b) => a - b);
   const mm = (v) => +(v * 1000).toFixed(1);
   // after: 가장 깊은 순간, p90: 열 프레임 중 아홉은 이보다 얕음 (자리를 옮기는 도중 한두 프레임은 빼고 본 평소 모습)
-  report.push({ name, before: mm(before), after: mm(afters.at(-1)), p90: mm(afters[Math.floor(afters.length * 0.9)]) });
+  report.push({ name, before: mm(before), after: mm(afters.at(-1)), p90: mm(afters[Math.floor(afters.length * 0.9)]), wrist: +wrist.toFixed(1), sag: +sag.toFixed(2) });
 }
 console.table(report); // 단위: mm(캐릭터 키 1m 기준)
 
@@ -78,6 +91,11 @@ for (const r of report) {
     assert.ok(r.p90 < 35, `${r.name}: 보정 뒤에도 평소 ${r.p90}mm 박힘`);
     assert.ok(r.after < 45, `${r.name}: 보정 뒤에도 순간 ${r.after}mm 박힘`);
   }
+}
+// 1') 두 손으로 쥔 동안 손목은 꺾이지 않는다(아래팔과 한 줄), 몽둥이 연속 공격은 휘두르는 내내 끝이 아래로 처지지 않는다
+for (const r of report) {
+  assert.ok(r.wrist < 15, `${r.name}: 손목이 ${r.wrist}도 꺾임`);
+  if (/^clubSmash/.test(r.name)) assert.ok(r.sag > -0.3, `${r.name}: 몽둥이 끝이 아래로 처짐 (${r.sag})`);
 }
 // 2) 대기 자세는 원래도 손이 셔츠 밑단에 1~2cm 묻혀 있었다: 보정은 팔을 그만큼만 살짝 벌린다
 assert.ok(by.idle.before < 25, `대기 자세가 원래 ${by.idle.before}mm 박혀 있음 (보정 폭이 너무 커짐)`);

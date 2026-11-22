@@ -470,9 +470,11 @@ function twoHandGrip(rig, y, w, dt, aim) {
     const st = (rig.toolFix ??= { dp: dp.clone(), dq: dq.clone() });
     // 더 밀어내야 할 때는 바로(박힌 채로 한두 장 지나가지 않게), 덜 밀어도 될 때는 천천히 돌아온다
     const more = dp.lengthSq() > st.dp.lengthSq() || Math.abs(dq.w) < Math.abs(st.dq.w);
+    // (돌려 놓은 각은 빨리 푼다: 젖힐 때 머리를 피하느라 돌린 각이 타격 순간까지 남으면 몽둥이 끝이 아래로 끌려 처진다)
     const a = 1 - Math.exp(-(more ? 90 : 18) * dt);
+    const aq = 1 - Math.exp(-(more ? 90 : 70) * dt);
     st.dp.lerp(dp, a);
-    st.dq.slerp(dq, a);
+    st.dq.slerp(dq, aq);
     P.add(st.dp.clone().multiplyScalar(scale).applyQuaternion(torsoQ));
     Q.premultiply(torsoQ.clone().multiply(st.dq).multiply(inv));
   }
