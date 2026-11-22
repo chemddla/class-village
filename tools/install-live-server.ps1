@@ -3,6 +3,7 @@
 #
 #   로컬용      http://localhost:5173 (게임 2567) : 이 컴퓨터의 작업 폴더 그대로 (커밋 안 한 내용도 바로 보임)
 #   동시 작업용 http://localhost:5180 (게임 2577) : 원격 main을 몇 초마다 받아와 보여 줌 (어느 컴퓨터에서 푸시하든 반영)
+#               + 원격 main이 바뀌면 https://test.class-village.duckdns.org 에도 올림 (다른 장소에서 접속용, tools/setup-test-server.sh 로 먼저 준비)
 #
 # 지우려면: Unregister-ScheduledTask -TaskName 'ClassVillage live test server' -Confirm:$false
 #           Unregister-ScheduledTask -TaskName 'ClassVillage live main server' -Confirm:$false
@@ -11,7 +12,7 @@ $node = (Get-Command node).Source
 $logDir = Join-Path $env:LOCALAPPDATA 'ClassVillage'
 $servers = @(
   @{ Name = 'ClassVillage live test server'; Args = ''; Log = 'live-server.log'; Desc = '우리 반 마을 로컬 테스트 서버(localhost:5173, 작업 폴더)를 늘 켜 둔다' },
-  @{ Name = 'ClassVillage live main server'; Args = ' --main'; Log = 'live-main-server.log'; Desc = '우리 반 마을 동시 작업 테스트 서버(localhost:5180, 원격 main)를 늘 켜 둔다' }
+  @{ Name = 'ClassVillage live main server'; Args = ' --main --deploy-test'; Log = 'live-main-server.log'; Desc = '우리 반 마을 동시 작업 테스트 서버(localhost:5180, 원격 main)를 늘 켜 두고 test.class-village.duckdns.org 에도 올린다' }
 )
 foreach ($s in $servers) {
   $log = Join-Path $logDir $s.Log # 켤 때마다 새로 씀

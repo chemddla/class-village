@@ -8,6 +8,7 @@
  *
  *   node tools/live-server.cjs                     → http://localhost:5173
  *   node tools/live-server.cjs --main              → http://localhost:5180 (원격 main, 게임 서버 2577)
+ *   node tools/live-server.cjs --main --deploy-test → 위와 같고, 원격 main이 바뀌면 https://test.class-village.duckdns.org 에도 올림
  *   node tools/live-server.cjs --log <파일>         → 화면 없이 켤 때(작업 스케줄러) 기록을 파일로 남김
  *
  * --main: 작업 폴더 대신 전용 작업 폴더(%LOCALAPPDATA%\ClassVillage\live-main)를 몇 초마다 원격 main(origin/main)에
@@ -167,10 +168,44 @@ function sync() {
       shown = target;
       console.log(`[live] ${stamp()} 원격 main → ${target.slice(0, 7)} ${git(['log', '-1', '--format=%s', target], ROOT)}`);
     }
+    if (DEPLOY_TEST) deployTest(target);
   } catch (e) {
     console.warn(`[live] ${stamp()} 원격 main 맞추기 실패 (다음 주기에 다시):`, String(e.stderr || e.message || e).split('\n')[0]);
   }
 }
+
+// ── --deploy-test: 원격 main이 바뀌면 실제 서버의 테스트판(https://test.class-village.duckdns.org)에도 올린다 ──
+// 저장소가 비공개라 서버가 GitHub에서 직접 받아올 수 없으므로, 늘 켜져 있는 이 프로그램이 대신 올려 준다.
+// 올리는 중에 또 바뀌면 끝난 뒤 가장 새 커밋을 한 번 더 올린다. 실패하면 다음 확인 때 다시 시도한다
+const DEPLOY_TEST = MAIN && process.argv.includes('--deploy-test');
+const DEPLOYED_FILE = path.join(DATA, 'test-deployed.txt'); // 테스트판에 마지막으로 올린 커밋
+const BASH = ['C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files (x86)\\Git\\bin\\bash.exe'].find((p) => fs.existsSync(p)) || 'bash';
+let deploying = false;
+let deployFailAt = 0;
+function deployTest(target) {
+  let done = '';
+  try { done = fs.readFileSync(DEPLOYED_FILE, 'utf8').trim(); } catch { /* 처음 */ }
+  if (deploying || done === target || Date.now() - deployFailAt < 60000) return;
+  deploying = true;
+  console.log(`[live] ${stamp()} 테스트판에 올리는 중: ${target.slice(0, 7)}`);
+  const child = spawn(BASH, ['tools/deploy.sh'], {
+    cwd: REPO, windowsHide: true, env: { ...process.env, DEPLOY_TARGET: 'test', DEPLOY_REF: target }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  child.on('exit', (code) => {
+    deploying = false;
+    if (code === 0) {
+      fs.writeFileSync(DEPLOYED_FILE, target);
+      console.log(`[live] ${stamp()} 테스트판에 올림: ${target.slice(0, 7)} → https://test.class-village.duckdns.org`);
+    } else {
+      deployFailAt = Date.now(); // 1분 뒤 다시 시도 (서버가 잠깐 안 될 때 계속 두드리지 않게)
+      console.warn(`[live] ${stamp()} 테스트판에 올리기 실패 (코드 ${code}, 1분 뒤 다시):\n${out.trim().split('\n').slice(-6).join('\n')}`);
+    }
+  });
+}
+
 if (MAIN) {
   ensureWorktree();
   linkModules();

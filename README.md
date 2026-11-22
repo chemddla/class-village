@@ -20,11 +20,13 @@ npm run dev
 |---|---|---|---|---|
 | 로컬용 | http://localhost:5173 | 2567 | 이 컴퓨터의 작업 폴더 (커밋 안 한 내용도 바로 보임) | `ClassVillage live test server` |
 | 동시 작업용 | http://localhost:5180 | 2577 | 원격 `main` (어느 컴퓨터에서 푸시하든 5초 안에 반영) | `ClassVillage live main server` |
+| 다른 장소에서 함께 | https://test.class-village.duckdns.org | 2577 (실제 서버) | 원격 `main` (위 동시 작업용 서버가 바뀔 때마다 올려 줌, 1분쯤 걸림) | — |
 
 - 화면 코드(`client`)가 바뀌면 브라우저가 곧바로 새로 그리고, 게임 서버 코드(`server`·`shared`)가 바뀌면 게임 서버가 저절로 다시 켜집니다.
 - 화면 서버나 게임 서버가 멈추면 4초 뒤 다시 켭니다. 포트를 다른 곳에서 쓰고 있으면 비워질 때까지 기다렸다가 켭니다.
 - 동시 작업용은 전용 폴더 `%LOCALAPPDATA%\ClassVillage\live-main`을 원격 `main`에 강제로 맞춥니다. 거기서는 고치지 마세요. 설치 폴더(`node_modules`)는 작업 폴더의 것을 함께 쓰므로, `main`에 새 패키지가 들어오면 작업 폴더에서도 `npm install`을 해야 합니다.
 - 기록: `%LOCALAPPDATA%\ClassVillage\live-server.log`, `live-main-server.log`
+- 다른 장소용 테스트판은 실제 서버에 따로 있습니다(`class-village-test` 서비스). 처음 한 번 `bash tools/setup-test-server.sh`로 만들고, 그 뒤로는 이 컴퓨터가 켜져 있는 동안 원격 `main`이 바뀔 때마다 자동으로 올라갑니다. 이 컴퓨터가 꺼져 있으면 마지막으로 올린 내용에 머뭅니다.
 - 처음 등록하거나 설정을 바꿀 때: `powershell -NoProfile -ExecutionPolicy Bypass -File tools\install-live-server.ps1`
 - Claude 앱의 미리보기(`.claude/launch.json`의 `village`, `village-main`)는 새로 켜지 않고 이 서버들에 붙습니다. 따로 켜야 할 때는 `village-dev`를 씁니다.
 
