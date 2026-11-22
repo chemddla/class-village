@@ -7,6 +7,11 @@
       "port": 5173
     },
     {
+      "name": "village-main",
+      "url": "http://localhost:5180",
+      "port": 5180
+    },
+    {
       "name": "village-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

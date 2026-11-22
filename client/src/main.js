@@ -17,10 +17,11 @@ const params = new URLSearchParams(location.search);
 const LOW = params.get('q') === 'low';
 // 실제 서버(HTTPS)에서는 같은 주소의 /colyseus 경로로 접속한다 (학교 방화벽 대비 443 포트만 사용)
 // 내 컴퓨터 시험(HTTP)에서는 기존처럼 2567 포트로 접속한다
+// (원격 main을 보여 주는 상시 서버는 VITE_GAME_PORT 로 다른 게임 서버 포트를 알려 준다: tools/live-server.cjs --main)
 const SERVER = params.get('server')
   || (location.protocol === 'https:'
     ? `wss://${location.host}/colyseus`
-    : `ws://${location.hostname}:2567`);
+    : `ws://${location.hostname}:${import.meta.env.VITE_GAME_PORT || 2567}`);
 const SEND_INTERVAL = 0.1; // 초당 10회
 const INTERP_DELAY = 150; // 다른 학생은 150ms 늦게 그림
 
