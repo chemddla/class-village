@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   WORLD, HALF, EDGE, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, riverCenterZ,
+  VILLAGE_FRUIT, FRUIT_MAX,
 } from '../../shared/world.js';
 import {
   toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME,
@@ -369,34 +370,35 @@ function tint(g, color, shadeBy = null) {
 }
 const stem = () => tint(new THREE.CylinderGeometry(0.012, 0.016, 0.07, 5).translate(0, -0.02, 0), 0x7a5232);
 const smallLeaf = (x = 0.05) => tint(new THREE.SphereGeometry(0.045, 6, 4).scale(1.6, 0.35, 0.8).rotateZ(0.4).translate(x, -0.02, 0), 0x5aa83e);
-// 귀여운 과일: 통통하고 둥글게, 앞쪽(+z)에 하얀 반짝임 점
-const shine = (y) => tint(new THREE.SphereGeometry(0.032, 8, 6).scale(0.8, 1.2, 0.5).translate(-0.06, y + 0.05, 0.13), 0xffffff);
+// 귀여운 과일: 통통하고 둥글게
 const FRUIT_MODELS = {
   apple: () => [
     tint(new THREE.SphereGeometry(0.15, 16, 12).scale(1.06, 0.92, 1.06).translate(0, -0.15, 0), 0xf0464a),
-    stem(), smallLeaf(), shine(-0.15),
+    stem(), smallLeaf(),
   ],
   peach: () => [
     tint(new THREE.SphereGeometry(0.15, 16, 12).translate(0, -0.16, 0), 0xffc89c,
       (c, x, y) => c.lerp(new THREE.Color(0xff8f9c), THREE.MathUtils.clamp((y + 0.16) * 4 + 0.35, 0, 0.75))),
-    smallLeaf(0.05), smallLeaf(-0.05), shine(-0.16),
+    smallLeaf(0.05), smallLeaf(-0.05),
   ],
   orange: () => [
     tint(new THREE.SphereGeometry(0.15, 16, 12).translate(0, -0.16, 0), 0xffa12e),
     tint(new THREE.SphereGeometry(0.022, 6, 4).translate(0, -0.01, 0), 0x6a9a3a),
-    smallLeaf(), shine(-0.16),
+    smallLeaf(),
   ],
   pear: () => [
     tint(new THREE.SphereGeometry(0.14, 16, 12).translate(0, -0.22, 0), 0xdfe06e),
     tint(new THREE.SphereGeometry(0.095, 12, 9).translate(0, -0.11, 0), 0xdfe06e),
-    stem(), smallLeaf(), shine(-0.22),
+    stem(), smallLeaf(),
   ],
 };
 
 // 과일나무 잎 + 과일: 잎은 꼭짓점 색에 초록을 미리 칠해 두고(과일 색이 물들지 않게), 옆·아래쪽 겉에 과일을 단다
+// count: 매달 과일 수 (따 가면 줄어든 모양으로 바꿔 끼운다)
 const fruitCanopyCache = new Map();
-export function fruitCanopy(fruit) {
-  if (fruitCanopyCache.has(fruit)) return fruitCanopyCache.get(fruit);
+export function fruitCanopy(fruit, count = FRUIT_MAX) {
+  const key = `${fruit}:${count}`;
+  if (fruitCanopyCache.has(key)) return fruitCanopyCache.get(key);
   const leaves = roundCanopy(29, FRUIT_BLOBS, 2.8);
   const col = leaves.attributes.color;
   const green = new THREE.Color().setHSL(0.27, 0.56, 0.47); // 다른 나무와 같은 방식(색 공간 변환)으로 만든 초록
@@ -408,7 +410,7 @@ export function fruitCanopy(fruit) {
     const spots = [];
     // 한 나무에 5개만, 서로 멀찍이: 잎 덩어리 옆·아래쪽 겉에 매달고 반짝임이 바깥을 보게 돌린다
     FRUIT_BLOBS.forEach(([x, y, z, r], bi) => {
-      for (let i = 0; i < 40 && spots.length < 5; i++) {
+      for (let i = 0; i < 40 && spots.length < FRUIT_MAX; i++) {
         const th = rand() * Math.PI * 2;
         const ny = -0.55 + rand() * 0.6;
         const rr = Math.sqrt(1 - ny * ny);
@@ -419,13 +421,13 @@ export function fruitCanopy(fruit) {
         spots.push({ p, n });
       }
     });
-    for (const { p, n } of spots) {
+    for (const { p, n } of spots.slice(0, count)) {
       const face = Math.atan2(n.x, n.z);
       for (const g of make()) parts.push(g.scale(1.35, 1.35, 1.35).rotateY(face).translate(p.x, p.y, p.z));
     }
   }
   const g = mergeGeometries(parts);
-  fruitCanopyCache.set(fruit, g);
+  fruitCanopyCache.set(key, g);
   return g;
 }
 
@@ -491,7 +493,7 @@ function buildTrees(group) {
   const s = new THREE.Vector3();
   const col = new THREE.Color();
   const Y = new THREE.Vector3(0, 1, 0);
-  const base = []; // 나무 번호 → { pos, q, s, leaves: [mesh, index] }
+  const base = []; // 나무 번호 → { pos, q, s, leaves(matrix): 잎 덩어리 자리 바꾸기 }
 
   const trunks = new THREE.InstancedMesh(trunkGeometry(), toon(0xc0905c), WORLD.trees.length);
   WORLD.trees.forEach((t, i) => {
@@ -508,21 +510,31 @@ function buildTrees(group) {
     if (k === 2) return col.setHSL(0.3 + h * 0.06, 0.48, 0.4 + h2 * 0.06);
     return col.setRGB(1, 1, 1);
   };
-  let fruitMesh = null;
-  [roundCanopy(), pineCanopy(), ovalCanopy(), fruitCanopy(null)].forEach((geo, k) => {
+  const leafMat = swayToon(0xffffff, { vertexColors: true });
+  [roundCanopy(), pineCanopy(), ovalCanopy()].forEach((geo, k) => {
     const list = kinds[k];
-    const mesh = new THREE.InstancedMesh(geo, swayToon(0xffffff, { vertexColors: true }), list.length);
+    const mesh = new THREE.InstancedMesh(geo, leafMat, list.length);
     list.forEach(({ t, i }, j) => {
       const b = base[i];
-      b.leaves = [mesh, j];
+      b.leaves = (mm) => { mesh.setMatrixAt(j, mm); mesh.instanceMatrix.needsUpdate = true; };
       mesh.setMatrixAt(j, m.compose(b.pos, b.q, s.setScalar(t.s)));
       const h = ((t.x * 7.1) % 1 + 1) % 1;
       const h2 = ((t.z * 3.7) % 1 + 1) % 1;
       mesh.setColorAt(j, tintOf(k, h, h2));
     });
-    if (k === 3) fruitMesh = mesh;
     group.add(addOutline(mesh, 0.025, { sway: true }));
   });
+  // 과일나무: 한 그루씩 따로 그려, 남은 과일 수에 맞는 모양으로 바꿔 끼운다 (잎 색은 미리 칠해 둠)
+  const fruitMeshes = new Map(); // 나무 번호 → 잎+과일 덩어리
+  for (const { t, i } of kinds[3]) {
+    const b = base[i];
+    const mesh = new THREE.Mesh(fruitCanopy(VILLAGE_FRUIT), leafMat);
+    mesh.matrixAutoUpdate = false;
+    mesh.matrix.compose(b.pos, b.q, s.setScalar(t.s));
+    b.leaves = (mm) => { mesh.matrix.copy(mm); mesh.matrixWorldNeedsUpdate = true; };
+    group.add(addOutline(mesh, 0.025, { sway: true }));
+    fruitMeshes.set(i, mesh);
+  }
 
   // 흔들기: 맞은 쪽으로 휘청였다가 흔들흔들 (줄기는 덜)
   const active = new Map();
@@ -532,14 +544,19 @@ function buildTrees(group) {
     wq.setFromAxisAngle(ax, ang * 0.3).multiply(b.q);
     trunks.setMatrixAt(i, m.compose(b.pos, wq, s.setScalar(b.s)));
     wq.setFromAxisAngle(ax, ang).multiply(b.q);
-    const [mesh, j] = b.leaves;
-    mesh.setMatrixAt(j, m.compose(b.pos, wq, s.setScalar(b.s)));
+    b.leaves(m.compose(b.pos, wq, s.setScalar(b.s)));
     trunks.instanceMatrix.needsUpdate = true;
-    mesh.instanceMatrix.needsUpdate = true;
   };
   return {
-    // 마을 주된 과일이 정해지면 과일나무에 그 과일을 단다
-    setFruit(fruit) { fruitMesh.geometry = fruitCanopy(fruit); },
+    // 과일나무 k(WORLD.fruitTrees 순서)에 남은 과일 수만큼만 매단다
+    setFruitLeft(k, n) {
+      const mesh = fruitMeshes.get(WORLD.fruitTrees[k]);
+      const geo = fruitCanopy(VILLAGE_FRUIT, Math.max(0, Math.min(FRUIT_MAX, n)));
+      if (!mesh || mesh.geometry === geo) return;
+      mesh.geometry = geo;
+      mesh.clear(); // 외곽선도 새 모양에 맞춰 다시 두른다
+      addOutline(mesh, 0.025, { sway: true });
+    },
     shake(i, dx, dz, power = 1) { active.set(i, { t: 0, ax: new THREE.Vector3(dz, 0, -dx).normalize(), power }); },
     update(dt) {
       for (const [i, a] of active) {
@@ -957,7 +974,7 @@ export function buildVillage(scene, { low = false } = {}) {
     nearTree: (x, z, reach = 1) => nearest(WORLD.trees, x, z, reach),
     nearRock: (x, z, reach = 1) => nearest(WORLD.rocks, x, z, reach),
     shakeTree: trees.shake,
-    setFruit: trees.setFruit,
+    setFruitLeft: trees.setFruitLeft,
     shakeRock: rocks.shake,
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t) {

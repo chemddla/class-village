@@ -29,6 +29,11 @@ export const LIFE_SPOTS = [
 // 과일 나무 종류. 마을마다 '주된 과일' 하나가 정해져 마을 과일나무에 열린다 (다른 과일은 나중에 상점에서 산다)
 export const FRUITS = ['peach', 'apple', 'orange', 'pear'];
 export const FRUIT_NAMES = { peach: '복숭아', apple: '사과', orange: '오렌지', pear: '배' };
+export const VILLAGE_FRUIT = 'peach'; // 마을 과일나무에 열리는 과일
+export const FRUIT_MAX = 5; // 과일나무 한 그루에 열리는 개수
+export const FRUIT_REGROW = 45; // 딴 과일이 다시 열리기까지 (초)
+export const BAG_MAX = 99; // 가방에 넣을 수 있는 과일 한 종류의 최대 개수
+export const PICK_REACH = 2.2; // 과일나무 둘레에서 이만큼 안이면 딸 수 있음 (m)
 
 // 캐릭터 색 목록 (파스텔)
 export const COLORS = [

@@ -2,12 +2,12 @@
 // - 학생 화면이 보낸 위치를 검사만 하고 모두에게 전달한다.
 // - 위치는 메모리에만 두고 데이터베이스에 저장하지 않는다.
 import http from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { Server, Room } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { schema, MapSchema } from '@colyseus/schema';
+import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
-  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, EDGE, isBlocked, toCm, fromCm, cleanLook, FRUITS, FRUIT_NAMES,
+  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, EDGE, isBlocked, toCm, fromCm, cleanLook, FRUITS,
+  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH,
 } from '../shared/world.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
@@ -17,28 +17,6 @@ const RECONNECT_SECONDS = 60;
 const BYE_SECONDS = 8;
 // 테스트 서버에서는 외형을 마음대로 바꿀 수 있다 (실제 수업 서버는 NODE_ENV=production 또는 FREE_LOOK=0 으로 끔)
 const FREE_LOOK = process.env.FREE_LOOK ? process.env.FREE_LOOK === '1' : process.env.NODE_ENV !== 'production';
-
-// ── 마을 설정 (주된 과일): 처음 켤 때 무작위로 하나 정해 파일에 남겨, 서버를 다시 켜도 그대로 ──
-// VILLAGE_FRUIT=apple 처럼 환경 변수로 직접 정할 수도 있다
-const DATA_DIR = new URL('./data/', import.meta.url);
-const VILLAGE_FILE = new URL('village.json', DATA_DIR);
-function loadVillage() {
-  let v = {};
-  let saved = '';
-  try { saved = readFileSync(VILLAGE_FILE, 'utf8'); v = JSON.parse(saved); } catch { /* 처음 켬 */ }
-  const want = process.env.VILLAGE_FRUIT;
-  if (FRUITS.includes(want)) v.fruit = want;
-  if (!FRUITS.includes(v.fruit)) v.fruit = FRUITS[Math.floor(Math.random() * FRUITS.length)];
-  // 바뀐 게 있을 때만 쓴다 (개발 중 서버가 파일 변경을 보고 다시 켜지므로, 매번 쓰면 끝없이 다시 켜진다)
-  const text = JSON.stringify(v, null, 2);
-  if (text !== saved) {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(VILLAGE_FILE, text);
-  }
-  return v;
-}
-const VILLAGE = loadVillage();
-console.log(`마을 주된 과일: ${FRUIT_NAMES[VILLAGE.fruit]}`);
 
 // ── 주고받는 상태 정의 ──
 const Player = schema({
@@ -50,12 +28,13 @@ const Player = schema({
   name: 'string',
   color: 'uint8',
   look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
+  bag: { map: 'uint8' }, // 가방에 든 과일: 과일 이름(FRUITS) → 개수. 나중에 상점에 팔거나 먹는다
 }, 'Player');
 
 const VillageState = schema({
   players: { map: Player },
   freeLook: 'boolean',
-  fruit: 'string', // 마을 주된 과일 (FRUITS)
+  fruitLeft: ['uint8'], // 과일나무마다 남은 과일 개수 (WORLD.fruitTrees 순서)
 }, 'VillageState');
 
 // ── 전송량 측정 ──
@@ -84,7 +63,44 @@ class VillageRoom extends Room {
     this.setState(new VillageState());
     if (!this.state.players) this.state.players = new MapSchema();
     this.state.freeLook = FREE_LOOK;
-    this.state.fruit = VILLAGE.fruit;
+    this.state.fruitLeft = new ArraySchema(...WORLD.fruitTrees.map(() => FRUIT_MAX));
+    this.regrow = []; // 다시 열릴 과일: { k: 나무 번호, at: 시각(ms) }
+    // 딴 과일은 FRUIT_REGROW 초 뒤에 하나씩 다시 열린다
+    this.clock.setInterval(() => {
+      const now = Date.now();
+      this.regrow = this.regrow.filter(({ k, at }) => {
+        if (at > now) return true;
+        this.state.fruitLeft[k] = Math.min(FRUIT_MAX, this.state.fruitLeft[k] + 1);
+        return false;
+      });
+    }, 1000);
+
+    // 과일 따기: [과일나무 번호]. 나무 가까이 있고 과일이 남아 있을 때만 가방에 넣는다
+    this.onMessage('pick', (client, k) => {
+      const p = this.state.players.get(client.sessionId);
+      k = Number(k);
+      if (!p || !Number.isInteger(k) || k < 0 || k >= WORLD.fruitTrees.length) return;
+      const now = Date.now();
+      if (now - (client.userData?.pickAt ?? 0) < 400) return; // 너무 빠른 연속 따기는 무시
+      const t = WORLD.trees[WORLD.fruitTrees[k]];
+      if (Math.hypot(fromCm(p.x) - t.x, fromCm(p.z) - t.z) > t.r + PICK_REACH) return;
+      const have = p.bag.get(VILLAGE_FRUIT) ?? 0;
+      if (this.state.fruitLeft[k] <= 0 || have >= BAG_MAX) return;
+      client.userData = { ...client.userData, pickAt: now };
+      this.state.fruitLeft[k] -= 1;
+      p.bag.set(VILLAGE_FRUIT, have + 1);
+      this.regrow.push({ k, at: now + FRUIT_REGROW * 1000 });
+    });
+
+    // 과일 먹기: [과일 이름]. 가방에 있을 때만 하나 줄인다
+    this.onMessage('eat', (client, fruit) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !FRUITS.includes(fruit)) return;
+      const have = p.bag.get(fruit) ?? 0;
+      if (have <= 0) return;
+      if (have === 1) p.bag.delete(fruit);
+      else p.bag.set(fruit, have - 1);
+    });
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각
     this.bye = new Set(); // 화면을 닫는다고 알려 온 sessionId
@@ -157,6 +173,7 @@ class VillageRoom extends Room {
     p.name = cleanName(options.name);
     p.color = Math.max(0, Math.min(COLORS.length - 1, Number(options.color) | 0));
     p.look = FREE_LOOK ? cleanLook(options.look) : '';
+    if (!p.bag) p.bag = new MapSchema();
     // 같은 이름으로 새로 들어오면, 연결이 끊겨 기다리던 예전 캐릭터는 바로 지운다 (새 탭·다른 기기로 다시 들어온 경우)
     for (const w of this.waiting.values()) if (w.name === p.name) w.wait.reject(false);
     this.state.players.set(client.sessionId, p);
