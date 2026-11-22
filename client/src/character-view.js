@@ -120,6 +120,7 @@ const LIFE_ACTIONS = { gather: '채집', chop: '벌목', chopAgain: '벌목(이�
 const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
   castSpell: '마법 시전', hit: '피격', faint: '기절',
+  swordSlash1: '목검 1타 · 대각선 베기', swordSlash2: '목검 2타 · 가로 되베기', swordSlash3: '목검 3타 · 찌르기',
   // 몽둥이 휘두르기 시안 (비교용)
   clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubSmash3: '몽둥이 3타(이어 치는 1타)', clubAir: '몽둥이 공중 공격', clubSlam: '몽둥이 내리찍기(더블 점프)', clubDash: '몽둥이 대시 공격', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
 };
@@ -189,6 +190,14 @@ button($('combat-action'), {
   onClick: () => {
     villager.setAction('clubSmash', onHit);
     [['clubSmash2', 470], ['clubSmash3', 875], ['clubSmash2', 1280]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
+  },
+  isOn: () => false,
+});
+button($('combat-action'), {
+  label: '목검 연속(1→2→3→1타)',
+  onClick: () => {
+    villager.setAction('swordSlash1', onHit);
+    [['swordSlash2', 350], ['swordSlash3', 650], ['swordSlash4', 1010]].forEach(([a, ms]) => setTimeout(() => villager.setAction(a, onHit), ms));
   },
   isOn: () => false,
 });

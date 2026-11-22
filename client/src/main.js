@@ -123,12 +123,17 @@ const others = new Map(); // sessionId → { char, buf }
 // equip: 퀵슬롯에서 고른 장비 번호 (생활 행동 중에는 그 일에 맞는 도구를 잠깐 들었다가, 끝나면 다시 이것으로 돌아온다)
 const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0 };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·3타 0.62초 × 0.5
-const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300 };
+const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
+  [ANIM.SLASH1]: 258, [ANIM.SLASH2]: 210, [ANIM.SLASH3]: 270, [ANIM.SLASH4]: 258 }; // 목검: 동작 길이 × hitAt
 // 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 2타 → 3타 → …
 // (3타는 2타에서 이어지도록 만든 1타. 2타와 3타가 서로의 끝 자세에서 시작해 끊기지 않고 8자를 그린다)
-const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH2 };
+const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH2,
+  // 목검: 1타 → 2타 → 3타(찌르기) → 이어 치는 1타 → 2타 → …
+  [ANIM.SLASH1]: ANIM.SLASH2, [ANIM.SLASH2]: ANIM.SLASH3, [ANIM.SLASH3]: ANIM.SLASH4, [ANIM.SLASH4]: ANIM.SLASH2 };
 // 다음 타로 넘어가는 때(초): 휘두른 몽둥이가 관성 끝까지 간 직후, 왼손을 놓기 전
-const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.405 };
+const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.405,
+  // 목검: 칼이 관성 끝까지 간 순간 (손을 놓기 전)
+  [ANIM.SLASH1]: 0.347, [ANIM.SLASH2]: 0.3, [ANIM.SLASH3]: 0.36, [ANIM.SLASH4]: 0.347 };
 // 이어 하는 도끼질: 도끼가 나무에 박혀 멈춘 뒤에도 G를 누르고 있으면, 뽑아서 다시 찍는 동작으로 넘어간다
 const NEXT_CHOP = { [ANIM.CHOP]: ANIM.CHOP2, [ANIM.CHOP2]: ANIM.CHOP3, [ANIM.CHOP3]: ANIM.CHOP2 };
 const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 떨림이 잦아든 뒤, 손을 놓기 전
@@ -145,7 +150,7 @@ function getHit(fromX, fromZ) {
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
   const slam = action === 'clubSlam';
-  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격도 타격 연출은 같다
+  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
   if (action === 'chopAgain' || action === 'chopAgain2') action = 'chop';
   const fx = Math.sin(char.targetRot);
   const fz = Math.cos(char.targetRot);
@@ -209,11 +214,11 @@ function hitFx(char, action) {
 Character.onHit = (char, action) => hitFx(char, action);
 
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
-const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏' };
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️' };
 const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟' };
 const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
 const QUICK_SLOTS = 4;
-let invItems = [1, 2]; // 가방에 든 장비 번호 (맨손은 빼고). 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
+let invItems = [1, 2, 4]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무·연못·덤불
 let lifeSpotsMesh = null;
 // 퀵슬롯: 칸마다 장비 번호 또는 null. Q 를 누르면 맨손 → 1칸 → 2칸 → … 차례로 바꿔 든다
@@ -222,7 +227,7 @@ const quick = (() => {
     const v = JSON.parse(store.get(localStorage, 'quick') ?? 'null');
     if (Array.isArray(v)) return Array.from({ length: QUICK_SLOTS }, (_, i) => (Number.isInteger(v[i]) && v[i] > 0 && v[i] < TOOLS.length ? v[i] : null));
   } catch { /* 저장된 값이 깨졌으면 처음부터 */ }
-  return [3, null, null, null]; // 처음에는 몽둥이를 1칸에 넣어 둔다 (가방에 있을 때만 보인다)
+  return [3, 4, null, null]; // 처음에는 몽둥이를 1칸, 목검을 2칸에 넣어 둔다 (가방에 있을 때만 보인다)
 })();
 const saveQuick = () => store.set(localStorage, 'quick', JSON.stringify(quick));
 const slotItem = (i) => (quick[i] !== null && invItems.includes(quick[i]) ? quick[i] : null); // 가방에 없는 장비는 빈칸으로 본다
@@ -354,7 +359,16 @@ const input = createInput({
       ui.inv.classList.toggle('hidden');
     } else if (name === 'attack') {
       // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 꾹 누르고 있을 때만)
-      if (TOOLS[local.tool] !== 'club' || local.hurt > 0) return;
+      if (local.hurt > 0) return;
+      if (TOOLS[local.tool] === 'woodSword') {
+        // 목검은 한 손으로 베기만 한다 (공중·대시 공격 없이 그 자리에서). 계속 누르면 아래에서 다음 타로 이어진다
+        if (local.actLeft > 0) return;
+        const rot = aimRot();
+        if (rot !== null) me.setPose(me.x, me.z, rot);
+        startAct(ANIM.SLASH1);
+        return;
+      }
+      if (TOOLS[local.tool] !== 'club') return;
       const el = actTime(local.act) - local.actLeft; // 지금 동작이 흐른 시간
       const rot = aimRot(); // 마우스가 가리키는 땅 쪽으로 돌아서서 휘두른다 (터치·화면 버튼은 보던 방향 그대로)
       if (local.act === ANIM.JUMP && local.actLeft > 0 && el > 0.08 && el < 0.5) {
@@ -469,7 +483,7 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
-    invItems = free ? [1, 2, 3] : [1, 2];
+    invItems = free ? [1, 2, 3, 4] : [1, 2, 4];
     if (local.equip && !invItems.includes(local.equip)) equipTool(0);
     renderQuick();
     renderInv();
@@ -595,11 +609,12 @@ function updateMe(dt) {
   // 몽둥이를 들고 Z·마우스 왼쪽을 꾹 누르고 있으면 계속 휘두른다. 한 번 눌렀다 떼면 한 번만 휘두른다:
   // 다음 타로 넘어갈지는 미리 예약하지 않고, 넘어가는 그 순간에도 키를 누르고 있는지로 정한다
   // (누른 순간부터 예약하면 짧게 한 번 눌러도 키가 눌려 있던 몇 장면 때문에 2타가 따라 나온다)
-  const holdSwing = TOOLS[local.tool] === 'club' && input.holding('attack') && local.hurt <= 0;
+  const weapon = TOOLS[local.tool];
+  const holdSwing = (weapon === 'club' || weapon === 'woodSword') && input.holding('attack') && local.hurt <= 0;
   if (holdSwing && local.actLeft <= 0) {
     const rot = aimRot();
     if (rot !== null) me.setPose(me.x, me.z, rot);
-    startAct(ANIM.SMASH);
+    startAct(weapon === 'club' ? ANIM.SMASH : ANIM.SLASH1);
   } else if (holdSwing && NEXT_SWING[local.act]) {
     // 넘어가는 때: 휘두른 몽둥이가 관성 끝까지 간 직후의 짧은 구간 (왼손을 놓은 뒤에 넘어가면 동작이 튄다)
     const at = actTime(local.act) - local.actLeft - COMBO_AT[local.act];
