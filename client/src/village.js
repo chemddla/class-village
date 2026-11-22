@@ -925,6 +925,63 @@ function buildFountainWater(group, f) {
   };
 }
 
+// 하늘의 뭉게구름: 공 몇 개를 겹쳐 밑을 납작하게 누른 폭신한 구름이 마을 둘레 높은 곳에서 천천히 흘러감
+// 위는 하얗고 밑은 살짝 푸른 그늘. 멀리 있어도 뿌옇게 묻히지 않게 안개는 받지 않는다
+function cloudGeometry(rand) {
+  const parts = [];
+  const n = 4 + Math.floor(rand() * 3);
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0 : i / (n - 1) - 0.5; // 가운데가 크고 양 끝이 작게
+    const r = 1.0 - Math.abs(t) * 0.9 + rand() * 0.25;
+    const g = new THREE.SphereGeometry(r, 14, 10).toNonIndexed();
+    g.deleteAttribute('uv');
+    parts.push(g.translate(t * 3.2, r * 0.35 + rand() * 0.2, (rand() - 0.5) * 1.0));
+  }
+  const g = mergeGeometries(parts);
+  const pos = g.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const top = new THREE.Color(0xffffff);
+  const under = new THREE.Color(0xd6e4f2);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    let y = pos.getY(i);
+    if (y < 0.1) pos.setY(i, 0.1 + (y - 0.1) * 0.25); // 밑면을 납작하게
+    y = pos.getY(i);
+    c.copy(under).lerp(top, THREE.MathUtils.clamp((y + 0.1) / 0.9, 0, 1));
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+function buildClouds(group) {
+  const rand = seeded(77);
+  const mat = basic(0xffffff, { vertexColors: true, fog: false });
+  const shapes = [0, 1, 2].map(() => cloudGeometry(rand));
+  const SPAN = 85; // 이 범위를 벗어나면 반대편에서 다시 나타남
+  const clouds = [];
+  for (let i = 0; i < 18; i++) {
+    const a = rand() * Math.PI * 2;
+    const r = 32 + rand() * 34; // 마을 바깥쪽 하늘
+    const m = new THREE.Mesh(shapes[i % shapes.length], mat);
+    const s = 2.2 + rand() * 2.2;
+    m.scale.set(s, s * (0.8 + rand() * 0.3), s);
+    m.rotation.y = rand() * Math.PI;
+    // 카메라(기본 높이 약 12.5m)보다 높게: 내려다볼 때는 화면을 가리지 않고, 시점을 들면 나무 위 하늘에 보인다
+    m.position.set(Math.cos(a) * r, 13.5 + rand() * 5, Math.sin(a) * r);
+    m.frustumCulled = false; // 둥근 지평선 효과로 실제 그려지는 자리가 달라서
+    group.add(m);
+    clouds.push({ m, speed: 0.35 + rand() * 0.3 });
+  }
+  return (dt) => {
+    for (const c of clouds) {
+      c.m.position.x += c.speed * dt;
+      if (c.m.position.x > SPAN) c.m.position.x -= SPAN * 2;
+    }
+  };
+}
+
 export function buildVillage(scene, { low = false } = {}) {
   const group = new THREE.Group();
   const labels = []; // 둥근 지평선에 맞춰 매 장면 위치를 고칠 이름표
@@ -938,6 +995,7 @@ export function buildVillage(scene, { low = false } = {}) {
   buildFence(group);
   buildPlots(group, labels);
   const fountain = buildPlaza(group);
+  const clouds = buildClouds(group);
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)
@@ -965,6 +1023,7 @@ export function buildVillage(scene, { low = false } = {}) {
       TIME.value = t;
       river.update(t);
       fountain(t);
+      clouds(dt);
       trees.update(dt);
       rocks.update(dt);
     },
