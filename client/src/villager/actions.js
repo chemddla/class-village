@@ -335,6 +335,8 @@ export const CLUB_STYLES = {
 const CLUB_RAISE = [BACK_R.pos, BACK_R.dir];
 const SLAM_HIT = [[0.02, 0.125, 0.14], [-0.5, -0.3, 0.81]];
 const SLAM_END = [[0.02, 0.118, 0.14], [-0.48, -0.38, 0.79]];
+// 더블 점프 내리찍기의 끝 자세: 찍은 자리에서 멈추지 않고 왼쪽 아래로 더 쓸고 나간다 (몸 가운데에서 끝나면 휘두르다 만 것처럼 어색하다)
+const SLAM_SWEEP = [[0.05, 0.115, 0.135], [-0.3, -0.42, 0.86]];
 // 두 다리를 따로 굽혀 선다: [엉덩이, 무릎] 각도 (k = 0~1 로 원래 자세에서 섞음). 발바닥은 땅과 나란히,
 // 더 아래로 뻗은 발이 땅에 닿도록 몸 높이를 맞춘다 (앞뒤로 벌린 런지 자세에서도 발이 땅에 묻히거나 뜨지 않게).
 // base: 함께 섞을 무릎 굽히기(crouch) 정도
@@ -629,11 +631,11 @@ Object.assign(ACTIONS, {
       const g = sec < TL - 0.12
         // 치켜드는 길: 몸 앞에 세운 몽둥이를 오른쪽 옆으로 눕혔다가 어깨 너머로 넘긴다
         ? gripPath((sec - s0) / Math.max(0.08, TL - 0.12 - s0), [0, CLUB_READY_POS, CLUB_READY], [0.45, ...CLUB_SIDE], [1, ...CLUB_RAISE])
-        : gripPath(sec, [TL - 0.12, ...CLUB_RAISE], [TL + 0.02, ...SLAM_HIT, 'in'], [TL + 0.12, ...SLAM_END, 'out'], [TL + 0.4, ...SLAM_END]);
+        : gripPath(sec, [TL - 0.12, ...CLUB_RAISE], [TL + 0.02, ...SLAM_HIT, 'in'], [TL + 0.16, ...SLAM_SWEEP, 'out'], [TL + 0.4, ...SLAM_SWEEP]);
       fx.grip = { pos: g.pos, dir: unit([g.dir[0], g.dir[1] + shake * 0.08, g.dir[2]]) };
-      fx.trail = sec > TL - 0.12 && sec < TL + 0.05;
-      // 치켜든 동안 허리를 오른쪽으로 감았다가, 찍으며 왼쪽으로 풀어 대각선으로 내리찍는다
-      const tw = kf(sec, [s0, 0], [TL - 0.2, -0.85], [TL - 0.12, -0.85], [TL + 0.02, 0.25, 'in'], [TL + 0.3, 0.2], [1.15, 0]);
+      fx.trail = sec > TL - 0.12 && sec < TL + 0.12;
+      // 치켜든 동안 허리를 오른쪽으로 감았다가, 찍으며 왼쪽으로 풀어 대각선으로 내리찍고, 찍은 뒤에도 허리가 왼쪽으로 더 돌아 나간다
+      const tw = kf(sec, [s0, 0], [TL - 0.2, -0.85], [TL - 0.12, -0.85], [TL + 0.02, 0.25, 'in'], [TL + 0.16, 0.95, 'out'], [TL + 0.3, 0.9], [1.15, 0]);
       P['pelvis.ry'] = tw * 0.4;
       P['spine.ry'] = tw;
       P['head.ry'] = -tw * 0.97; // 몸을 틀어도 눈은 앞을 (덜 돌리면 치켜든 몽둥이가 머리에 걸린다)
@@ -652,11 +654,12 @@ Object.assign(ACTIONS, {
   // 대시 공격: 달리다가 누르면 앞으로 뛰어들며 몽둥이를 오른 어깨 위·뒤로 대각선으로 치켜들었다가, 왼쪽 앞 아래로 땅을 내리찍는다
   // (앞으로 나아가는 것은 게임 쪽에서 움직여 준다). 찍을 때 두 팔을 앞으로 뻗고 왼발을 크게 내딛으며 무릎을 굽힌다
   clubDash: {
-    duration: 0.62, hitAt: 0.48, equip: 'club', rate: 36, rootRate: 120, trail: [0.32, 0.56],
+    duration: 0.62, hitAt: 0.48, equip: 'club', rate: 36, rootRate: 120, trail: [0.32, 0.62],
     fn(u, P, fx) {
       twoHand(P, fx, u < 0.76);
+      // 찍은 자리에서 멈추지 않고 왼쪽 아래로 더 쓸고 나간다 (더블 점프 내리찍기와 같은 끝 자세)
       const g = gripPath(u, [0, CLUB_READY_POS, CLUB_READY], [0.15, ...CLUB_SIDE], [0.3, ...CLUB_RAISE], [0.48, ...SLAM_HIT, 'in'],
-        [0.6, ...SLAM_END, 'out'], [1, ...SLAM_END]);
+        [0.66, ...SLAM_SWEEP, 'out'], [1, ...SLAM_SWEEP]);
       const shake = u > 0.48 ? Math.sin((u - 0.48) * 36) * Math.exp(-(u - 0.48) * 14) : 0;
       fx.grip = { pos: g.pos, dir: unit([g.dir[0], g.dir[1] + shake * 0.06, g.dir[2]]) };
       // 뛰어드는 다리: 오른발로 박차고(뒤로 차고) 왼무릎을 앞으로 끌어올렸다가, 찍으며 왼발을 크게 내딛고 무릎을 굽힌다
@@ -666,7 +669,7 @@ Object.assign(ACTIONS, {
       wideStance(P, 0.5 * k);
       P['spine.rx'] = kf(u, [0, 0.15], [0.3, -0.15], [0.46, 0.55], [0.72, 0.58], [1, 0]) + shake * 0.04;
       P['head.rx'] = -0.55 * P['spine.rx'];
-      const tw = kf(u, [0, 0], [0.3, -0.85], [0.48, 0.25, 'in'], [0.72, 0.2], [1, 0]);
+      const tw = kf(u, [0, 0], [0.3, -0.85], [0.48, 0.25, 'in'], [0.66, 0.95, 'out'], [0.76, 0.9], [1, 0]); // 찍은 뒤에도 허리가 왼쪽으로 더 돌아 나간다
       P['pelvis.ry'] = tw * 0.4;
       P['spine.ry'] = tw;
       P['head.ry'] = -tw * 0.97;
