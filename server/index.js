@@ -12,6 +12,8 @@ import {
 const PORT = Number(process.env.GAME_PORT || 2567);
 const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
 const RECONNECT_SECONDS = 60;
+// 화면을 닫거나 다른 곳으로 갈 때 '나가요(bye)'를 보낸 경우: 새로고침해서 돌아올 만큼만 기다린다
+const BYE_SECONDS = 8;
 // 테스트 서버에서는 외형을 마음대로 바꿀 수 있다 (실제 수업 서버는 NODE_ENV=production 또는 FREE_LOOK=0 으로 끔)
 const FREE_LOOK = process.env.FREE_LOOK ? process.env.FREE_LOOK === '1' : process.env.NODE_ENV !== 'production';
 
@@ -60,6 +62,10 @@ class VillageRoom extends Room {
     this.state.freeLook = FREE_LOOK;
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각
+    this.bye = new Set(); // 화면을 닫는다고 알려 온 sessionId
+    this.waiting = new Map(); // 다시 접속하기를 기다리는 sessionId → { name, wait }
+
+    this.onMessage('bye', (client) => this.bye.add(client.sessionId));
 
     // 이동: [x(cm), z(cm), 방향(0~255), 동작, 도구]
     this.onMessage('m', (client, msg) => {
@@ -116,6 +122,8 @@ class VillageRoom extends Room {
     p.name = cleanName(options.name);
     p.color = Math.max(0, Math.min(COLORS.length - 1, Number(options.color) | 0));
     p.look = FREE_LOOK ? cleanLook(options.look) : '';
+    // 같은 이름으로 새로 들어오면, 연결이 끊겨 기다리던 예전 캐릭터는 바로 지운다 (새 탭·다른 기기로 다시 들어온 경우)
+    for (const w of this.waiting.values()) if (w.name === p.name) w.wait.reject(false);
     this.state.players.set(client.sessionId, p);
     this.last.set(client.sessionId, { x, z, t: Date.now() });
     console.log(`입장: ${p.name} (현재 ${this.clients.length}명)`);
@@ -127,16 +135,22 @@ class VillageRoom extends Room {
     if (!consented) {
       // 와이파이가 끊기거나 화면이 꺼진 경우: 잠시 기다린다
       p.a = ANIM.IDLE;
+      const wait = this.allowReconnection(client, this.bye.has(client.sessionId) ? BYE_SECONDS : RECONNECT_SECONDS);
+      this.waiting.set(client.sessionId, { name: p.name, wait });
       try {
-        const back = await this.allowReconnection(client, RECONNECT_SECONDS);
+        const back = await wait;
+        this.bye.delete(client.sessionId);
         meter(back);
         this.last.set(client.sessionId, { x: fromCm(p.x), z: fromCm(p.z), t: Date.now() });
         console.log(`재접속: ${p.name}`);
         return;
       } catch {
-        // 시간 안에 돌아오지 않음
+        // 시간 안에 돌아오지 않음 (또는 같은 이름으로 새로 들어옴)
+      } finally {
+        this.waiting.delete(client.sessionId);
       }
     }
+    this.bye.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.last.delete(client.sessionId);
     console.log(`퇴장: ${p.name} (현재 ${this.clients.length}명)`);

@@ -539,6 +539,9 @@ ui.form.addEventListener('submit', async (e) => {
   }
 });
 
+// 화면을 닫거나 다른 곳으로 갈 때: 서버에 알려 내 캐릭터가 오래 남아 있지 않게 (새로고침이면 곧바로 돌아온다)
+addEventListener('pagehide', () => { try { room?.send('bye'); } catch { /* 이미 끊김 */ } });
+
 // 새로고침·화면 꺼짐 뒤에는 자동으로 원래 자리로 돌아감
 (async () => {
   const token = store.get(sessionStorage, 'reconnect');
