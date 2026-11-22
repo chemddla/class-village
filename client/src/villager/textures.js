@@ -120,7 +120,7 @@ export const FACE = {
   noseTh: Math.PI * 0.605,
   mouthTh: Math.PI * 0.685, mouthScale: 1.4,
   blushPhi: 0.64, blushTh: Math.PI * 0.665,
-  earTh: Math.PI * 0.62,
+  earTh: Math.PI * 0.565, // 눈 아래~코 높이 (너무 내려가면 귀가 처져 보인다)
 };
 
 // ── 얼굴 피부 (볼 터치 + 입). mouth: smile | grin | o | pout ──
