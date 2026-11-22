@@ -21,21 +21,20 @@ export function dir(phi, th, out = V()) {
 }
 
 export function headShape(n, out = V()) {
-  // 정면 윤곽은 참고 사진 정면 윤곽(정수리→턱 높이별 폭)에 맞춘 값이다:
+  // 정면 윤곽은 참고 사진(짧은 머리 정면) 윤곽의 높이별 폭에 맞춘 값이다:
   // 가로·세로가 거의 같고, 정수리는 둥글게 차오르며, 볼 아래에서 턱까지 둥글게 모인다.
-  // 정면(가로·세로) 방향만 살짝 둥근 사각형이고, 앞뒤(깊이) 방향은 공처럼 둥글게 둔다
-  // → 옆·위에서 봐도 모서리가 서지 않아 각진 상자 느낌이 나지 않는다
+  // 얼굴 앞면은 넓고 평평하게(비스듬히 봐도 먼 쪽 눈이 윤곽 끝에 보이게), 뒤통수는 공처럼 둥글게
   const lower = Math.max(0, -n.y);
-  const p = 2.6 + 0.2 * lower;
-  const k = ((Math.abs(n.x) ** p + Math.abs(n.y) ** p) ** (2 / p) + n.z * n.z) ** 0.5;
+  const p = 2.8;
+  const q = 2 + 1.2 * Math.min(1, Math.max(0, n.z) * 1.6); // 앞쪽만 깊이 방향 지수를 키워 얼굴을 평평하게
+  const k = ((Math.abs(n.x) ** p + Math.abs(n.y) ** p) ** (q / p) + Math.abs(n.z) ** q) ** (1 / q);
   out.copy(n).divideScalar(k).lerp(n, 0.2);
-  out.x *= 0.92;
+  out.x *= 0.94;
   out.y *= 0.95;
-  out.z *= 0.95;
-  // 볼: 입 높이쯤이 가장 넓고 앞으로도 도톰하게
-  const cheek = gauss(n.y + 0.5, 0.35);
-  out.x *= 1 + 0.06 * cheek;
-  out.z *= 1 + 0.03 * cheek;
+  out.z *= 0.93;
+  // 아래 볼살: 입~턱 높이의 얼굴 앞쪽이 앞으로 도톰하게 나와 턱이 둥글게 받쳐진다
+  const jowl = gauss(n.y + 0.55, 0.38) * Math.max(0, n.z) * (1 - 0.5 * lower * lower);
+  out.z *= 1 + 0.15 * jowl;
   return out.multiplyScalar(HEAD_R);
 }
 
@@ -383,7 +382,7 @@ function buildHead(head, o, live) {
       map: live.eyes[i], transparent: true, roughness: 0.22, polygonOffset: true, polygonOffsetFactor: -2,
     });
     // 눈은 크고 동그랗게, 얼굴 폭의 절반쯤 벌어지게 (옆으로 돌아가는 만큼 가로 폭을 더 준다)
-    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.33, 0.29, { flipU: s < 0, bulge: 0.008 });
+    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.3, 0.28, { flipU: s < 0, bulge: 0.008 });
     const m = mesh(geo, mat, eyes, '눈');
     m.castShadow = false;
   }
@@ -408,7 +407,7 @@ function buildHead(head, o, live) {
   const earSkin = new THREE.MeshPhysicalMaterial({ color: shade(o.skin, 1), roughness: 0.55, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c2), sheenRoughness: 0.8 });
   for (const s of [-1, 1]) {
     // 귀는 코 높이쯤, 머리 옆면에 붙어 옆으로 살짝 튀어나온다
-    const ear = mesh(ellipsoid(0.027, 0.05, 0.03), earSkin, head, '귀');
+    const ear = mesh(ellipsoid(0.03, 0.056, 0.034), earSkin, head, '귀');
     ear.position.copy(surf(s * PI * 0.5, FACE.earTh)).multiplyScalar(0.99);
     ear.rotation.z = s * 0.15;
     ear.castShadow = false;
