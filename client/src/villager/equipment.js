@@ -2,6 +2,7 @@
 // 도구 공간: 쥐는 곳이 원점, 손잡이→머리 방향이 +Y. grip()으로 감싸면 +Y가 손의 +Z(팔을 내렸을 때 앞쪽)가 된다.
 // 날(도끼·검)은 휘두르는 방향인 도구 +Z 쪽을 향한다.
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { pointHit, forearmHit } from './collision.js';
 
 const PI = Math.PI;
@@ -130,6 +131,46 @@ function sword() {
   return grip(g);
 }
 
+// ── 목검 ──
+// 납작한 윤곽(x = 날 폭 방향, y = 길이)을 두께 있게 뽑아 날이 ±Z를 향하게 세운다.
+// 각진 모서리는 꼭짓점마다 면 방향이 갈라져 있어 외곽선 껍질을 밀어내면 면끼리 벌어져 선이 떠 보인다:
+// 외곽선에는 같은 자리 꼭짓점을 합쳐 면 방향을 고르게 이은 모양을 따로 쓴다
+function flatBlade(shape, depth, bevel = 0.003) {
+  const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 12 });
+  return geo.translate(0, 0, -depth / 2).rotateY(PI / 2);
+}
+function smoothOutline(mesh) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', mesh.geometry.getAttribute('position').clone());
+  const merged = mergeVertices(g, 1e-5);
+  merged.computeVertexNormals();
+  g.dispose();
+  mesh.userData.outlineGeometry = merged;
+  return mesh;
+}
+const OAK = () => mat('#b98349', { roughness: 0.7 });
+
+// 휜 목검: 길고 가늘게 살짝 휘어진 날 + 동그란 판 코등이 + 끈 감은 손잡이
+function woodSword() {
+  const g = new THREE.Group();
+  g.name = '목검';
+  part(new THREE.CylinderGeometry(0.012, 0.013, 0.09, 8), DARK_WOOD(), g, '목검손잡이', [0, -0.005, 0]);
+  for (let i = 0; i < 4; i++) {
+    const r = part(new THREE.TorusGeometry(0.0128, 0.0028, 5, 12).rotateX(PI / 2), mat('#2f3b5c', { roughness: 0.6 }), g, '손잡이끈', [0, -0.04 + i * 0.022, 0]);
+    r.rotation.z = (i % 2 ? 0.25 : -0.25);
+  }
+  part(new THREE.CylinderGeometry(0.028, 0.028, 0.007, 16), DARK_WOOD(), g, '판코등이', [0, 0.045, 0]);
+  // 날: 뿌리 폭 0.019 → 끝으로 갈수록 살짝 좁아지며 등 쪽(-x)으로 휜다
+  const s = new THREE.Shape();
+  s.moveTo(-0.0095, 0.048);
+  s.quadraticCurveTo(-0.011, 0.27, -0.03, 0.43);
+  s.quadraticCurveTo(-0.016, 0.44, -0.005, 0.425);
+  s.quadraticCurveTo(0.004, 0.27, 0.0095, 0.048);
+  s.closePath();
+  smoothOutline(part(flatBlade(s, 0.008, 0.0025), OAK(), g, '목검날'));
+  return grip(g);
+}
+
 function shield() {
   // 왼쪽 아래팔 바깥에 차는 둥근 방패 (면이 손의 +X = 바깥쪽을 향함)
   const g = new THREE.Group();
@@ -202,6 +243,7 @@ export const EQUIPMENT = {
   rod: { label: '낚싯대', right: fishingRod, carry: [-0.7, 0], twoHand: -0.07 },
   net: { label: '잠자리채', right: bugNet, carry: [-1.0, 0] },
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
+  woodSword: { label: '목검', right: woodSword, carry: [-0.5, 0] },
   bow: { label: '활 + 화살', left: bow, carry: [0, -1.2] },
   staff: { label: '마법 지팡이', right: staff, carry: [-1.35, 0] },
 };
@@ -510,6 +552,38 @@ function twoHandGrip(rig, y, w, dt, aim) {
   hold('L', L0.lerp(gL, w).addScaledVector(arc, 1 - w), handL0.slerp(gripQuat(V(0, 0, 1).applyQuaternion(sock.getWorldQuaternion(qA)), SL, gL, up, inward.L), w));
 }
 
+// ── 한 손 쥐기: 한손검처럼 오른손 하나로 휘두르는 동작 ──
+// aim: { pos, dir } 오른손이 쥘 자리와 칼이 뻗는 방향 (몸통 기준). 왼손은 건드리지 않는다 (동작이 관절 값으로 정한다)
+// w: 0 → 1 로 애니메이션 자세에서 쥘 자리로 섞는 비율. 손 자리를 섞어야 두 자세가 많이 달라도 팔이 휙 뒤집히지 않는다
+function oneHandGrip(rig, w, aim) {
+  const torso = rig.shoulderR.parent;
+  const sock = rig.rightSocket;
+  const torsoQ = torso.getWorldQuaternion(new THREE.Quaternion());
+  const SR = rig.shoulderR.getWorldPosition(V());
+  const P = torso.localToWorld(V(...aim.pos));
+  const up = V(0, 1, 0).applyQuaternion(torsoQ);
+  const want = gripQuat(V(...aim.dir).normalize().applyQuaternion(torsoQ), SR, P, up, V(1, 0, 0).applyQuaternion(torsoQ));
+  const P0 = sock.getWorldPosition(V());
+  const Q0 = rig.handR.getWorldQuaternion(new THREE.Quaternion());
+  const Qs = sock.getWorldQuaternion(new THREE.Quaternion()); // 애니메이션 자세의 칼 방향
+  const Pw = P0.lerp(P, w);
+  const hq = Q0.clone().slerp(want, w);
+  const wq = Math.min(1, w * 5);
+  armIK(rig, 'R', Pw, hq, wq, POLE.R, true);
+  // 손목 펴기: 아래팔과 주먹이 한 줄이 되도록 주먹을 돌리고, 돌린 만큼 소켓을 반대로 돌려 칼 방향은 그대로 둔다
+  const limit = WRIST_MAX + 0.35 + (1 - w) * 0.4; // 한손검은 손목을 조금 꺾어 쥐는 게 자연스럽다
+  for (let n = 0; n < 3; n++) {
+    const f = rig.handR.getWorldPosition(V()).sub(rig.elbowR.getWorldPosition(V())).normalize();
+    const w0 = hq.w, x0 = hq.x;
+    easeWrist(hq, f, limit);
+    if (hq.w === w0 && hq.x === x0) break;
+    armIK(rig, 'R', Pw, hq, 1, POLE.R, true);
+  }
+  // 소켓 월드 회전의 +Z(칼 축)가 dir 을 향하게: 쥔 주먹(want)과 같은 회전
+  sock.quaternion.copy(hq).invert().multiply(Qs.slerp(want, w));
+  sock.updateMatrixWorld(true);
+}
+
 // 몸 충돌 보정(collision.js)이 팔꿈치를 비튼 뒤에 한 번 더 손목을 편다: 팔꿈치만 옮겨지면 손은 그대로라 손목이 다시 꺾인다.
 // 오른손은 돌린 만큼 소켓을 반대로 돌려 도구 방향을 지킨다
 export function straightenWrists(rig) {
@@ -560,6 +634,12 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   else if (fx.twoHand) rig.lastAim = null; // 자리를 직접 정하지 않는 다른 두 손 동작이 시작되면 잊는다
   if (grip != null && rig.twoHandW > 0.001) twoHandGrip(rig, grip, rig.twoHandW, dt, rig.lastAim ?? null);
   else { rig.toolFix = null; rig.lastAim = null; } // 두 손 쥐기가 끝나면 밀어낸 기록을 지운다
+  // 한 손 쥐기 (한손검): 쥘 때는 빠르게, 놓을 때는 조금 느긋하게. 놓는 동안에는 마지막 자리를 기준으로 삼는다
+  if (fx.oneHand) rig.oneAim = fx.oneHand;
+  const w1 = fx.oneHand ? 1 : 0;
+  rig.oneHandW = (rig.oneHandW ?? 0) + (w1 - (rig.oneHandW ?? 0)) * (1 - Math.exp(-(w1 ? 40 : 14) * dt));
+  if (rig.oneAim && rig.oneHandW > 0.001) oneHandGrip(rig, rig.oneHandW, rig.oneAim);
+  else rig.oneAim = null;
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
       const { rod, bow: b, staff: st } = o.userData;

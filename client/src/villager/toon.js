@@ -30,9 +30,11 @@ function outlineMaterial(thickness, color) {
 }
 
 // 메시에 같은 지오메트리를 쓰는 외곽선 껍질을 자식으로 붙임 (메시와 함께 움직이고 함께 사라짐)
+// userData.outlineGeometry 가 있으면 그 모양으로 껍질을 만든다 (각진 부품의 외곽선이 면마다 벌어지지 않게 면 방향을 고르게 이은 것)
 export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
+  const geo = mesh.userData.outlineGeometry ?? mesh.geometry;
   // 휘는 메시(스키닝)는 외곽선 껍질도 같은 뼈를 따라 휘어야 한다
-  const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, outlineMaterial(thickness, color)) : new THREE.Mesh(mesh.geometry, outlineMaterial(thickness, color));
+  const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(geo, outlineMaterial(thickness, color)) : new THREE.Mesh(geo, outlineMaterial(thickness, color));
   if (mesh.isSkinnedMesh) o.bind(mesh.skeleton, mesh.bindMatrix);
   o.name = '외곽선';
   o.userData.isOutline = true;

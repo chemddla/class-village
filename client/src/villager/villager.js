@@ -21,21 +21,20 @@ export function dir(phi, th, out = V()) {
 }
 
 export function headShape(n, out = V()) {
-  // 정면 윤곽은 참고 사진 정면 윤곽(정수리→턱 높이별 폭)에 맞춘 값이다:
+  // 정면 윤곽은 참고 사진(짧은 머리 정면) 윤곽의 높이별 폭에 맞춘 값이다:
   // 가로·세로가 거의 같고, 정수리는 둥글게 차오르며, 볼 아래에서 턱까지 둥글게 모인다.
-  // 정면(가로·세로) 방향만 살짝 둥근 사각형이고, 앞뒤(깊이) 방향은 공처럼 둥글게 둔다
-  // → 옆·위에서 봐도 모서리가 서지 않아 각진 상자 느낌이 나지 않는다
+  // 얼굴 앞면은 넓고 평평하게(비스듬히 봐도 먼 쪽 눈이 윤곽 끝에 보이게), 뒤통수는 공처럼 둥글게
   const lower = Math.max(0, -n.y);
-  const p = 2.6 + 0.2 * lower;
-  const k = ((Math.abs(n.x) ** p + Math.abs(n.y) ** p) ** (2 / p) + n.z * n.z) ** 0.5;
+  const p = 2.8;
+  const q = 2 + 1.2 * Math.min(1, Math.max(0, n.z) * 1.6); // 앞쪽만 깊이 방향 지수를 키워 얼굴을 평평하게
+  const k = ((Math.abs(n.x) ** p + Math.abs(n.y) ** p) ** (q / p) + Math.abs(n.z) ** q) ** (1 / q);
   out.copy(n).divideScalar(k).lerp(n, 0.2);
-  out.x *= 0.92;
+  out.x *= 0.94;
   out.y *= 0.95;
-  out.z *= 0.95;
-  // 볼: 입 높이쯤이 가장 넓고 앞으로도 도톰하게
-  const cheek = gauss(n.y + 0.5, 0.35);
-  out.x *= 1 + 0.06 * cheek;
-  out.z *= 1 + 0.03 * cheek;
+  out.z *= 0.93;
+  // 아래 볼살: 입~턱 높이의 얼굴 앞쪽이 앞으로 도톰하게 나와 턱이 둥글게 받쳐진다
+  const jowl = gauss(n.y + 0.55, 0.38) * Math.max(0, n.z) * (1 - 0.5 * lower * lower);
+  out.z *= 1 + 0.15 * jowl;
   return out.multiplyScalar(HEAD_R);
 }
 
@@ -128,6 +127,8 @@ function ellipsoid(rx, ry, rz, segs = 32) {
 
 // ───────────── 재질 ─────────────
 // 피부: 보송한 솜털 광(sheen)으로 혈색 있게
+// 몸 모든 부위가 함께 쓰는 살색 바탕 (그늘은 조명·툰 명암이 맡는다)
+const flatSkin = (skin) => aoGradient('skinFlat', skin, [[0, 1], [1, 1]]);
 function skinMat(map) {
   return new THREE.MeshPhysicalMaterial({
     color: 0xffffff, map, roughness: 0.55, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c2), sheenRoughness: 0.8,
@@ -383,7 +384,7 @@ function buildHead(head, o, live) {
       map: live.eyes[i], transparent: true, roughness: 0.22, polygonOffset: true, polygonOffsetFactor: -2,
     });
     // 눈은 크고 동그랗게, 얼굴 폭의 절반쯤 벌어지게 (옆으로 돌아가는 만큼 가로 폭을 더 준다)
-    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.33, 0.29, { flipU: s < 0, bulge: 0.008 });
+    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.3, 0.28, { flipU: s < 0, bulge: 0.008 });
     const m = mesh(geo, mat, eyes, '눈');
     m.castShadow = false;
   }
@@ -405,10 +406,20 @@ function buildHead(head, o, live) {
 
   // 귀
   // (얼굴 재질을 그대로 쓰면 얼굴 그림 전체가 귀에도 작게 입혀져 볼 발그레와 입이 귀에 찍힌다: 그림 없는 살색 재질을 쓴다)
-  const earSkin = new THREE.MeshPhysicalMaterial({ color: shade(o.skin, 1), roughness: 0.55, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c2), sheenRoughness: 0.8 });
+  const earSkin = skinMat(flatSkin(o.skin));
   for (const s of [-1, 1]) {
-    // 귀는 코 높이쯤, 머리 옆면에 붙어 옆으로 살짝 튀어나온다
-    const ear = mesh(ellipsoid(0.027, 0.05, 0.03), earSkin, head, '귀');
+    // 귀는 눈 아래~코 높이, 머리 옆면에 붙어 옆으로 살짝 튀어나온다.
+    // 참고 사진처럼 위쪽이 넓고 둥글며 아래(귓불)로 갈수록 좁아지는 달걀 꼴
+    const earGeo = ellipsoid(0.03, 0.056, 0.034);
+    const ep = earGeo.attributes.position;
+    for (let i = 0; i < ep.count; i++) {
+      const t = ep.getY(i) / 0.056; // 아래 -1 ~ 위 1
+      const w = 1 + 0.22 * t;
+      ep.setX(i, ep.getX(i) * w);
+      ep.setZ(i, ep.getZ(i) * w);
+    }
+    earGeo.computeVertexNormals();
+    const ear = mesh(earGeo, earSkin, head, '귀');
     ear.position.copy(surf(s * PI * 0.5, FACE.earTh)).multiplyScalar(0.99);
     ear.rotation.z = s * 0.15;
     ear.castShadow = false;
@@ -425,7 +436,7 @@ const ty = (pts) => pts.map(([r, y]) => [r, y * TY]);
 // 목: 옷 윗단(NECK_Y)을 내리고 머리(HEAD_Y)는 그 위로 띄워, 턱과 옷 사이에 피부색 목 기둥이 또렷이 보인다
 // (옷이 턱까지 올라오면 목이 파묻혀 어깨가 승모근처럼 솟아 보인다)
 export const NECK_Y = 0.218 * TY; // 상의 목둘레 높이
-export const HEAD_Y = 0.245 * TY + 0.206; // 머리 중심 높이 (머리 아래쪽 반지름 약 0.19): 턱 아래로 가는 목이 옷깃 위 2cm쯤 보인다
+export const HEAD_Y = 0.245 * TY + 0.188; // 머리 중심 높이 (머리 아래쪽 반지름 약 0.19): 목은 아주 짧게, 턱 아래로 조금만 보인다
 
 // 상의 단면 [반지름, 높이] (세로 TY배 전): 목둘레 → 밑단, 끝 세 점은 안쪽으로 접힌 밑단 두께.
 // 맨몸 몸통(BODY)을 천 두께만큼만 띄워 그대로 따라간다: 어깨는 둥글게 넘어가고, 겨드랑이 아래로는 종처럼 벌어지지 않고
@@ -458,11 +469,16 @@ function shirtRadius(y) {
 // 어깨 관절: 목둘레 바로 아래, 몸통 곡면보다 안쪽에 둔다 → 소매 윗선이 넥라인에서 곧장 시작해
 // 목 → 어깨 → 팔이 끊기지 않는 한 줄의 A자 경사로 떨어진다 (낮고 바깥이면 몸통 어깨 곡선과 소매 사이가 뚝 끊겨 보인다).
 // 값을 바꾸면 두 손으로 도구를 쥐는 자세가 달라지므로 collision.check.js 를 꼭 돌릴 것 (조금만 달라도 통과·실패가 갈린다)
-export const SHOULDER = { x: 0.076, y: 0.184 * TY };
+// 몸통·다리 굵기 배율 (단면 수치는 그대로 두고 다 만든 뒤 가로·앞뒤로 줄인다: slimBody)
+export const BODY_K = 0.9;
+export const LEG_K = 0.88;
+export const SHOULDER = { x: 0.076 * BODY_K, y: 0.184 * TY };
 
-// 소매 윗부분: 어깨 관절을 중심으로 한, 소매와 같은 굵기의 둥근 마감. 넥라인에서 나온 선이 꺾이거나 패이지 않고
-// 둥글게 넘어가 팔로 이어진다 (소매보다 굵지 않아 불룩한 퍼프가 되지 않고, 팔을 어느 쪽으로 들어도 이음매가 그대로다)
-const SHOULDER_CAP = [0, 20, 40, 60, 78, 90].map((d) => [0.0275 * Math.sin((d * PI) / 180), 0.0275 * Math.cos((d * PI) / 180)]);
+// 소매·맨팔 윗부분: 어깨 관절을 중심으로 한 둥근 마감(어깨 살). 팔과 함께 돌기 때문에 팔을 어느 쪽으로 움직여도
+// 몸통 어깨선과 팔이 둥글게 이어지고 따로 떨어져 보이지 않는다. 팔보다 조금 굵게 잡아 팔을 들 때 생기는
+// 몸통 어깨선과 팔 윗면 사이의 오목한 꺾임을 둥글게 메운다
+const CAP_R = 0.027;
+const SHOULDER_CAP = [0, 20, 40, 60, 78, 90].map((d) => [CAP_R * Math.sin((d * PI) / 180), CAP_R * Math.cos((d * PI) / 180)]);
 
 // 셔츠 겉면을 따라가는 세로 단면 조각 (아래→위, off만큼 띄움): 로고·지퍼·주머니 같은 덧댐에 쓴다
 function shirtProf(y0, y1, off = 0.002, n = 8) {
@@ -477,25 +493,54 @@ function shirtProf(y0, y1, off = 0.002, n = 8) {
 // 좌우 폭(정면 실루엣)은 그대로 두고 앞뒤만 바지 쪽으로 자연스럽게 떨어지게 한다. (buildBody 가 차림에 따라 켠다)
 let hemTaper = 0;
 const depthK = (y) => 1 - 0.3 * hemTaper * smooth(0.12, -0.03, y); // y: 몸통 기준 높이
-// 몸통에 붙는 조각(상의·밑단 띠·덧댐)의 앞뒤 두께를 같은 비율로 맞춘다
-function fitTorso(g) {
-  if (!hemTaper) return g;
+// 옆에서 본 몸통 두께(앞뒤 반두께): 높이 y(몸통 기준), 그 높이의 회전체 반지름 r.
+// 몸통은 앞뒤로 납작(0.78배)하지만, 위쪽은 목 굵기에서 시작해 가슴·등까지 완만하게 불어나는 물방울 꼴로 떨어진다.
+// (어깨 높이까지 납작한 통 두께 그대로 올라가면 옆에서 볼 때 몸통이 상자처럼 머리 밑에 바로 붙어 보인다)
+const NECK_TOP = 0.206; // 이보다 위(목)는 둥근 그대로
+function sideDepth(y, r) {
+  if (y >= NECK_TOP + 0.006) return r;
+  const u = Math.max(0, Math.min(1, (NECK_TOP - y) / (NECK_TOP - 0.12)));
+  const curve = 0.039 + 0.033 * (1 - (1 - u) ** 2); // 목 두께 → 가슴 두께, 위쪽일수록 빨리 불어나는 곡선
+  const flat = 0.78 * r;
+  const d = Math.min(r, flat + (curve - flat) * smooth(0.11, 0.2, y)) * depthK(y);
+  // 둥근 목과 만나는 곳은 두께가 뚝 끊기지 않게 섞는다 (끊기면 목 밑에 주름·외곽선 꺾임이 생긴다)
+  return d + (r - d) * smooth(NECK_TOP - 0.014, NECK_TOP + 0.006, y);
+}
+// 몸통에 붙는 조각(상의·밑단 띠·덧댐)의 앞뒤 두께를 같은 곡선으로 맞춘다. zs: 회전체를 만들 때 이미 곱한 앞뒤 비율
+function fitTorso(g, zs = 0.78) {
   const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) * depthK(p.getY(i)));
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i);
+    const z = p.getZ(i) / zs;
+    const r = Math.hypot(x, z);
+    if (r > 1e-6) p.setZ(i, z * (sideDepth(p.getY(i), r) / r));
+  }
   g.computeVertexNormals();
   return g;
 }
 // 셔츠 앞면에서 가로 x 지점의 앞뒤 위치
-const shirtZ = (y, x) => Math.sqrt(Math.max(0, shirtRadius(y) ** 2 - x * x)) * 0.78 * depthK(y * TY);
+const shirtZ = (y, x) => {
+  const r = shirtRadius(y);
+  return Math.sqrt(Math.max(0, r * r - x * x)) * (sideDepth(y * TY, r) / r);
+};
 
 // 회전체의 한 부분(부채꼴)만 떼어 낸 덧댐 조각: 정면이 phi=0, 캐릭터 왼쪽(+x)이 +phi. 텍스처는 조각에 꽉 차게 입혀진다
 function sector(pts, phiC, dPhi, zs, mat, parent, name) {
   const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), 12, phiC - dPhi, dPhi * 2);
-  if (zs !== 1) fitTorso(g.scale(1, 1, zs)); // 앞뒤로 납작한 조각은 몸통에 붙는 것뿐
+  if (zs !== 1) fitTorso(g.scale(1, 1, zs), zs); // 앞뒤로 납작한 조각은 몸통에 붙는 것뿐
   g.computeVertexNormals();
   const m = mesh(g, mat, parent, name);
   m.castShadow = false;
   m.userData.noOutline = true; // 옷 위에 붙은 무늬라 따로 외곽선을 두르지 않는다
+  return m;
+}
+// 다른 부위 속으로 들어가 이어지는 쪽 끝에는 외곽선을 두르지 않는다 (이음새마다 갈색 고리가 그어지지 않게)
+// f(x, y, z) → 0(외곽선 그대로) ~ 1(없음)
+function fadeLine(m, f) {
+  const p = m.geometry.attributes.position;
+  const a = new Float32Array(p.count);
+  for (let i = 0; i < p.count; i++) a[i] = f(p.getX(i), p.getY(i), p.getZ(i));
+  m.geometry.setAttribute('noLine', new THREE.Float32BufferAttribute(a, 1));
   return m;
 }
 const flatMat = (color, map = null) => new THREE.MeshStandardMaterial({ color: map ? '#ffffff' : color, map, roughness: 0.8, side: THREE.DoubleSide });
@@ -520,7 +565,7 @@ export const HATS = {
 // 손목에서 끊김 없이 이어지는 동그란 손
 function mittenGeometry() {
   // 엄지 없는 동그란 주먹: 손목에서 둥글게 부풀었다가 끝이 둥글게 닫힌다 (앞뒤로 누르지 않아 어느 쪽에서 봐도 동그랗다)
-  return lathe([[0.0285, 0.006], [0.031, -0.006], [0.037, -0.024], [0.0415, -0.044], [0.0405, -0.06], [0.034, -0.076], [0.022, -0.086], [0, -0.09]], 32);
+  return lathe([[0.024, 0.006], [0.028, -0.006], [0.036, -0.024], [0.0415, -0.044], [0.0405, -0.06], [0.034, -0.076], [0.022, -0.086], [0, -0.09]], 32);
 }
 
 // 도톰한 꽃: 두께 있는 꽃잎이 바깥쪽으로 살짝 들려 컵 모양을 이루고, 가운데 꽃술이 봉긋
@@ -637,17 +682,18 @@ function buildBackpack(torso, color) {
 // 소매·팔꿈치가 옷에 살짝 스치는 기본 자세는 그대로 두고 눈에 띄게 박히는 것만 밀어낸다
 const COLLIDER_INSET = 0.012;
 const HEAD_COLLIDER = [0.19, 0.19, 0.19];
+const slimProf = (pts) => pts.map(([r, y]) => [r * BODY_K, y]);
 const inset = (pts, d = COLLIDER_INSET) => pts.map(([r, y]) => [Math.max(0.02, r - (typeof d === 'function' ? d(y) : d)), y]);
 // 셔츠 아랫단·바지는 부드러운 천이라 더 깊이 허용: 내려 둔 손이 엉덩이 옆에 살짝 스쳐도 팔을 벌려 밀어내지 않게
 const HEM_INSET = (y) => THREE.MathUtils.lerp(0.025, COLLIDER_INSET, THREE.MathUtils.smoothstep(y, 0.02 * TY, 0.1 * TY));
 export function bodyColliders(o, hips, torso) {
   const list = [
     // 상의: 어깨 관절 바로 아래부터 밑단까지 (어깨 위는 팔이 붙는 곳이라 뺌)
-    { joint: torso, zs: 0.78, prof: inset(ty(SHIRT.slice(8, 14)), HEM_INSET) },
+    { joint: torso, zs: 0.78, prof: slimProf(inset(ty(SHIRT.slice(8, 14)), HEM_INSET)) },
     // 바지·치마 (골반 공간)
     o.bottom === 'skirt'
-      ? { joint: hips, zs: 0.82, prof: inset([[0.1, 0.015], [0.106, -0.012], [0.124, -0.055], [0.148, -0.108], [0.152, -0.118]], 0.03) }
-      : { joint: hips, zs: 0.8, prof: inset([[0.105, 0.015], [0.108, -0.02], [0.108, -0.045], [0.1, -0.066]], 0.03) },
+      ? { joint: hips, zs: 0.82, prof: slimProf(inset([[0.1, 0.015], [0.106, -0.012], [0.124, -0.055], [0.148, -0.108], [0.152, -0.118]], 0.03)) }
+      : { joint: hips, zs: 0.8, prof: slimProf(inset([[0.105, 0.015], [0.108, -0.02], [0.108, -0.045], [0.1, -0.066]], 0.03)) },
   ];
   // 허리에 묶은 체크 셔츠는 부드러운 천이라 뺀다 (넣으면 차렷 자세의 손까지 밀려 팔이 벌어짐)
   return list;
@@ -696,8 +742,8 @@ function buildBody(root, o, live, detail) {
   }
 
   // 다리: 허벅지 + 무릎 관절 + 종아리 (걷기에서 무릎을 굽힘)
-  const legMat = skinMat(aoGradient('leg2', o.skin, [[0, 0.72], [0.25, 0.95], [0.4, 1], [1, 1]]), o.skin);
-  const shinMat = skinMat(aoGradient('shin', o.skin, [[0, 1], [0.8, 1], [1, 0.8]]), o.skin);
+  const legMat = skinMat(flatSkin(o.skin));
+  const shinMat = legMat;
   const pantsMat = bottom === 'pants'
     ? clothMat(clothTexture('pants', bottomCol, { ao: [[0, 1], [0.9, 1], [1, 0.85]] }), clothBump('pants')) : null;
   // 맨몸은 옷에 가려 어두워지는 데가 없으므로 허벅지 위쪽 그늘을 뺀다 (얼룩처럼 보인다)
@@ -751,7 +797,7 @@ function buildBody(root, o, live, detail) {
   const top = o.top;
   const accent = o.accent ?? style.accent ?? '#ffffff';
   const shirtStitch = outfit === 'tee' ? [0.9] : [];
-  const shirtMat = style.bare ? skinMat(aoGradient('hand2', o.skin, [[0, 1], [1, 0.97]]), o.skin) /* 팔·어깨와 같은 살색: 조각마다 명암이 다르면 어깨가 얼룩져 보인다 */ : clothMat(
+  const shirtMat = style.bare ? skinMat(flatSkin(o.skin)) /* 팔·어깨와 같은 살색: 조각마다 명암이 다르면 어깨가 얼룩져 보인다 */ : clothMat(
     clothTexture(`shirt${shirtStitch.length}`, top, { stitches: shirtStitch, ao: [[0, 0.62], [0.08, 0.95], [0.16, 1], [0.86, 1], [0.95, 0.9], [1, 0.7]] }),
     clothBump(`shirt${shirtStitch.length}`, shirtStitch),
   );
@@ -761,14 +807,10 @@ function buildBody(root, o, live, detail) {
     // 목에서 어깨로 넘어가는 곳은 외곽선 두께(1.2cm)보다 크게 둥글린다: 좁게 꺾이면 외곽선 껍질이 접혀 목에 줄이 생긴다
     ? [...[...NECK.slice(0, 3), [0.0395, 0.222], [0.041, 0.213], [0.045, 0.2055], [0.051, 0.1995], [0.06, 0.1962]].map(([r, y]) => [r, y / TY]), ...BODY.slice(3)]
     : SHIRT;
-  const bodyGeo = lathe(ty(bodyProf), 56, style.bare ? 1 : 0.78);
-  if (style.bare) {
-    // 목은 둥글고 몸통은 앞뒤로 납작하다: 목둘레에서 납작한 정도를 부드럽게 바꾼다
-    const bp = bodyGeo.attributes.position;
-    for (let i = 0; i < bp.count; i++) bp.setZ(i, bp.getZ(i) * (0.78 + 0.22 * smooth(NECK_Y - 0.02, NECK_Y + 0.012, bp.getY(i))));
-    bodyGeo.computeVertexNormals();
-  }
-  mesh(fitTorso(bodyGeo), shirtMat, torso, '상의');
+  // 목은 둥글고 몸통은 앞뒤로 납작하다: 목에서 가슴까지 납작한 정도가 부드럽게 바뀐다 (sideDepth)
+  const bodyZs = style.bare ? 1 : 0.78;
+  const shirtMesh = mesh(fitTorso(lathe(ty(bodyProf), 56, bodyZs), bodyZs), shirtMat, torso, '상의');
+  if (style.bare) fadeLine(shirtMesh, (x, y) => smooth(HEAD_Y - 0.186, HEAD_Y - 0.174, y)); // 맨몸 목 윗끝도 머리 속에서 외곽선 없이
   P.colliders = bodyColliders(o, hips, torso);
   const ribMat = (key, color) => clothMat(clothTexture(key, color, { ao: [[0, 0.9], [0.5, 1], [1, 0.9]] }), clothBump(key), { bumpScale: 1.6 });
   const trim = ribMat('trim', shade(top, 0.9));
@@ -794,8 +836,7 @@ function buildBody(root, o, live, detail) {
       const prof = ty([[0.053, 0.228], [0.063, 0.2275], [0.073, 0.2245], [0.081, 0.218], [0.087, 0.208], [0.09, 0.196]])
         .map(([r, y]) => new THREE.Vector2(r, y)).reverse();
       for (const [start, len] of [[0.05, PI * 0.5], [PI * 1.45, PI * 0.5]]) {
-        const g = new THREE.LatheGeometry(prof, 24, start, len).scale(1, 1, 0.8);
-        g.computeVertexNormals();
+        const g = fitTorso(new THREE.LatheGeometry(prof, 24, start, len).scale(1, 1, 0.8), 0.8);
         const flap = mesh(g, cm, torso, '카라');
         flap.position.y = 0.002;
       }
@@ -863,8 +904,9 @@ function buildBody(root, o, live, detail) {
 
   // 목: 턱 아래로 또렷이 보이는 피부색 기둥. 위쪽은 머리 안으로 넓게 퍼지며 스며듦 (맨몸은 몸통과 한 조각이라 따로 만들지 않는다)
   if (!style.bare) {
-    const neckMat = skinMat(aoGradient('neck3', o.skin, [[0, 1], [0.3, 0.88], [0.6, 0.96], [1, 0.85]]), o.skin);
-    mesh(lathe([...NECK, [0.041, NECK_Y - 0.03]], 32), neckMat, torso, '목');
+    const neckMat = skinMat(flatSkin(o.skin));
+    // 머리 속으로 들어가는 위쪽 끝은 외곽선 없이 (턱 밑에 고리가 그어지지 않게)
+    fadeLine(mesh(lathe([...NECK, [0.041, NECK_Y - 0.03]], 32), neckMat, torso, '목'), (x, y) => smooth(HEAD_Y - 0.186, HEAD_Y - 0.174, y));
   }
 
   // 머리 (목 위)
@@ -884,7 +926,7 @@ function buildBody(root, o, live, detail) {
   // 도구는 목·어깨 위쪽도 지나가면 안 된다 (팔은 거기 붙어 있으므로 팔 검사에는 넣지 않는다)
   P.toolColliders = [...P.colliders, {
     joint: torso, zs: 0.78,
-    prof: [[0.05, HEAD_Y - 0.17], [0.05, NECK_Y], ...inset(ty(SHIRT.slice(1, 9)), 0.006)],
+    prof: [[0.05, HEAD_Y - 0.17], [0.05, NECK_Y], ...slimProf(inset(ty(SHIRT.slice(1, 9)), 0.006))],
   }];
 
   // 팔: 어깨 → 팔꿈치 → 손
@@ -894,10 +936,10 @@ function buildBody(root, o, live, detail) {
   );
   const plainMat = clothMat(clothTexture('plain', top), clothBump('plain'));
   const innerMat = style.inner ? clothMat(clothTexture('plain', accent), clothBump('plain')) : plainMat;
-  const armMat = skinMat(aoGradient('arm2', o.skin, [[0, 0.6], [0.2, 0.9], [0.32, 1], [1, 1]]), o.skin);
-  const handMat = skinMat(aoGradient('hand2', o.skin, [[0, 1], [1, 0.97]]), o.skin);
+  const handMat = skinMat(flatSkin(o.skin));
+  const armMat = handMat;
   const long = style.sleeve === 'long' || style.inner; // 손목까지 덮는가
-  const rE = style.inner ? 0.029 : 0.0312; // 긴소매의 팔꿈치 굵기 (이너는 겉 반팔 속으로 들어가게 더 가늘다)
+  const rE = style.inner ? 0.025 : 0.0268; // 긴소매의 팔꿈치 굵기 (이너는 겉 반팔 속으로 들어가게 더 가늘다)
   for (const s of [-1, 1]) {
     const arm = new THREE.Group();
     arm.position.set(s * SHOULDER.x, SHOULDER.y, 0);
@@ -909,36 +951,38 @@ function buildBody(root, o, live, detail) {
     // 어깨에서 소매 끝까지 일직선으로 떨어진다 (팔 관절에 붙어 있어 팔을 어떻게 움직여도 기울기가 같다)
     if (style.sleeve === 'short') {
       const len = outfit === 'tee' ? 0.074 : 0.084; // 오버핏은 팔꿈치 바로 위까지
-      const r = 0.0275 + 0.073 * len;
+      const r = CAP_R + 0.05 * len;
       mesh(lathe([...SHOULDER_CAP, [r, -len], [r - 0.003, -len - 0.0008], [r - 0.0045, -len + 0.007]], 48),
         sleeveMat, arm, '소매');
     }
     if (long) {
       // 긴소매: 어깨에서 손목까지 한 통 (팔꿈치에서 통째로 휜다)
-      const up = style.inner ? [[0.0255, -0.03], [rE, -0.09]] : [...SHOULDER_CAP, [rE, -0.09]];
-      limb([...up, [rE + 0.0008, -0.13], [rE + 0.0008, -0.156], [rE - 0.0004, -0.1655], [0.0282, -0.165], [0.0275, -0.158]], 48, innerMat, arm, elbow, '긴소매');
+      const up = style.inner ? [[0.0215, -0.03], [rE, -0.09]] : [...SHOULDER_CAP, [rE, -0.09]];
+      limb([...up, [rE + 0.0008, -0.13], [rE + 0.0008, -0.156], [rE - 0.0004, -0.1655], [0.0242, -0.165], [0.0236, -0.158]], 48, innerMat, arm, elbow, '긴소매');
       if (!style.inner) {
         // 소맷부리 시보리
-        mesh(lathe([[rE, -0.058], [rE + 0.0024, -0.062], [rE + 0.0024, -0.0765], [0.0282, -0.0775]], 48), trim, elbow, '소맷부리');
+        mesh(lathe([[rE, -0.058], [rE + 0.0024, -0.062], [rE + 0.0024, -0.0765], [0.0242, -0.0775]], 48), trim, elbow, '소맷부리');
       }
       if (outfit === 'track') {
         // 소매 바깥쪽을 따라 내려오는 배색 줄 (팔꿈치 둘레는 비워 둔다: 휘는 소매 위에서 뜨지 않게)
         const stripe = flatMat(accent);
-        sector([[rE + 0.0008, -0.062], [0.0288, -0.002]], (s * PI) / 2, 0.42, 1, stripe, arm, '소매줄');
+        sector([[rE + 0.0008, -0.062], [0.0248, -0.002]], (s * PI) / 2, 0.42, 1, stripe, arm, '소매줄');
         sector([[rE + 0.002, -0.058], [rE + 0.0018, -0.03]], (s * PI) / 2, 0.42, 1, stripe, elbow, '소매줄');
       }
     } else {
       // 윗팔~아래팔 한 통: 팔꿈치에서 통째로 휘고, 손목에서 손과 같은 굵기로 끝난다
-      limb([[0.024, -0.034], [0.025, -0.06], [0.0258, -0.09], [0.026, -0.11], [0.027, -0.135], [0.028, -0.155], [0.0285, -0.168]], 24, style.bare ? handMat : armMat, arm, elbow, '팔');
-      // 맨몸: 소매 대신 같은 둥근 어깨를 피부로
-      if (style.bare) mesh(lathe([...SHOULDER_CAP, [0.0262, -0.05]], 48), handMat, arm, '어깨');
+      // 어깨 쪽(몸통 속)과 손목 쪽(손 속) 끝은 외곽선 없이 이어진다
+      fadeLine(limb([[0.0205, -0.034], [0.021, -0.06], [0.0215, -0.09], [0.0218, -0.11], [0.0225, -0.135], [0.0232, -0.155], [0.0238, -0.168]], 24, handMat, arm, elbow, '팔'),
+        (x, y) => Math.max(smooth(-0.05, -0.036, y), smooth(-0.15, -0.165, y)));
+      // 맨몸: 소매 대신 같은 둥근 어깨를 피부로 (몸통과 맞닿는 안쪽은 외곽선 없이)
+      if (style.bare) fadeLine(mesh(lathe([...SHOULDER_CAP, [0.0222, -0.05]], 48), handMat, arm, '어깨'), (x) => smooth(0.004, -0.012, x * s));
     }
     const hand = new THREE.Group();
     hand.position.y = -0.078;
     elbow.add(hand);
-    mesh(mittenGeometry(), handMat, hand, '손');
+    fadeLine(mesh(mittenGeometry(), handMat, hand, '손'), (x, y) => smooth(-0.012, 0.002, y)); // 손목 쪽 끝은 외곽선 없이
     // 손목: 도구를 쥐느라 손을 크게 꺾어도 아래팔과 손 사이가 벌어지지 않게
-    mesh(ellipsoid(0.0287, 0.0287, 0.0287, 16), handMat, hand, '손목');
+    mesh(ellipsoid(0.024, 0.024, 0.024, 16), handMat, hand, '손목').userData.noOutline = true; // 팔과 손 사이를 메우는 속 조각
     // 도구 소켓: 주먹 한가운데 (equipment.js 가 여기에 도구를 붙인다)
     hand.name = s < 0 ? 'RightHand' : 'LeftHand';
     const socket = new THREE.Group();
@@ -950,10 +994,48 @@ function buildBody(root, o, live, detail) {
     P[`elbow${SIDE[s]}`] = elbow;
     P[`hand${SIDE[s]}`] = hand;
   }
+  slimBody(hips, torso, P);
   bendWaist(root, hips, torso);
   bindLimbs(root);
   for (const j of Object.values(P)) if (j.isObject3D) j.userData.rest = j.position.clone(); // colliders(배열)는 관절이 아님
   return P;
+}
+
+// ───────────── 몸통·다리 가늘게 ─────────────
+// 다 만든 몸통·바지·다리 조각을 가로·앞뒤로 줄인다. 목둘레 위(목·넥라인)는 목 굵기 그대로 두고 그 아래로 서서히 줄여
+// 목에서 어깨로 이어지는 선이 끊기지 않는다. 신발과 팔·머리는 건드리지 않는다.
+function bakeScale(c, k) {
+  c.updateMatrix();
+  const g = c.geometry.applyMatrix4(c.matrix); // 놓인 자리·기울기를 정점에 넣고 부모 기준으로 줄인다
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const f = k(p.getY(i));
+    p.setX(i, p.getX(i) * f);
+    p.setZ(i, p.getZ(i) * f);
+  }
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  c.position.set(0, 0, 0);
+  c.rotation.set(0, 0, 0);
+  c.scale.set(1, 1, 1);
+}
+function slimBody(hips, torso, P) {
+  const kTorso = (y) => BODY_K + (1 - BODY_K) * smooth(NECK_Y - 0.025, NECK_Y, y);
+  for (const c of torso.children) {
+    if (c.isMesh) bakeScale(c, kTorso);
+    else if (c.name === '가방') c.position.z += 0.076 * (1 - BODY_K); // 얇아진 등판에 붙도록
+  }
+  for (const c of hips.children) if (c.isMesh) bakeScale(c, () => BODY_K);
+  for (const s of ['R', 'L']) {
+    const leg = P[`hip${s}`];
+    leg.position.x *= BODY_K; // 골반 폭을 따라 다리 사이도 좁힌다
+    const foot = P[`foot${s}`];
+    leg.traverse((c) => {
+      if (!c.isMesh) return;
+      for (let a = c.parent; a && a !== leg; a = a.parent) if (a === foot) return; // 신발은 그대로
+      bakeScale(c, () => LEG_K);
+    });
+  }
 }
 
 // ───────────── 팔다리 휘기 ─────────────
@@ -1162,13 +1244,13 @@ function buildShoe(foot, o, covered = false) {
 // 프리셋은 모든 커스터마이징 키를 빠짐없이 가진다 (프리셋을 바꾸면 이전 선택이 남지 않도록)
 export const PRESETS = {
   boy: {
-    skin: '#ffd3b4', nose: '#ff8a62', noseStyle: 'classic', mouthStyle: 'classic', hair: 'side', hairColor: '#a65a2e', iris: '#6a4a33', lash: false, eyeStyle: 'classic',
+    skin: '#ffd3b4', nose: '#ff8a62', noseStyle: 'classic', mouthStyle: 'classic', hair: 'side', hairColor: '#a65a2e', iris: '#6a4a33', lash: false, eyeStyle: 'basic',
     top: '#f3efe6', bottom: 'shorts', bottomColor: '#3f5f8f', shoes: '#e2574c',
     plaid: ['#e7b74a', '#b9502f', '#3a2a22'], collar: null, crown: false, glasses: false, backpack: false,
     outfit: 'tee', hat: 'none',
   },
   girl: {
-    skin: '#ffd6b8', nose: '#ff8f6a', noseStyle: 'classic', mouthStyle: 'classic', hair: 'bob', hairColor: '#e4b660', iris: '#3d6fc4', lash: true, eyeStyle: 'classic',
+    skin: '#ffd6b8', nose: '#ff8f6a', noseStyle: 'classic', mouthStyle: 'classic', hair: 'bob', hairColor: '#e4b660', iris: '#3d6fc4', lash: true, eyeStyle: 'basic',
     top: '#f28aa0', bottom: 'skirt', bottomColor: '#fff3dc', shoes: '#7b5bd6', plaid: null,
     collar: '#fffaf2', crown: true, glasses: false, backpack: false, outfit: 'tee', hat: 'none',
   },

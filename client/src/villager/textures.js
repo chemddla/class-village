@@ -94,20 +94,10 @@ function faceBase(skin, W, H) {
   c.width = W;
   c.height = H;
   const g = c.getContext('2d');
+  // 얼굴 바탕은 몸(목·팔·다리)과 똑같은 살색 한 가지: 결 무늬나 턱 밑 그늘을 그려 넣으면
+  // 얼굴만 색이 달라져 턱과 목 사이에 경계가 보인다 (그늘은 조명·툰 명암이 맡는다)
   g.fillStyle = css(skin);
   g.fillRect(0, 0, W, H);
-  // 아주 옅은 피부 결
-  const r = rng(7);
-  for (let i = 0; i < 9000; i++) {
-    g.fillStyle = `rgba(255,${200 + r() * 40},${170 + r() * 40},${0.03 + r() * 0.03})`;
-    g.fillRect(r() * W, r() * H, 2, 2);
-  }
-  // 턱 밑(목과 닿는 곳) 어둡게
-  const grad = g.createLinearGradient(0, H * 0.78, 0, H);
-  grad.addColorStop(0, 'rgba(150,70,50,0)');
-  grad.addColorStop(1, 'rgba(150,70,50,0.22)');
-  g.fillStyle = grad;
-  g.fillRect(0, H * 0.78, W, H * 0.22);
   faceBases.set(key, c);
   return c;
 }
@@ -116,11 +106,11 @@ function faceBase(skin, W, H) {
 // 정면 사진 기준 비율 (정수리→턱 높이 H, 얼굴 폭 W): 눈 중심 0.57H·눈 사이 0.52W·지름 0.18W,
 // 코 0.67H(가로로 납작), 입 0.8H(폭 0.24W), 볼 터치는 입 높이 바깥, 귀는 코~입 높이
 export const FACE = {
-  eyePhi: 0.54, eyeTh: Math.PI * 0.54,
+  eyePhi: 0.5, eyeTh: Math.PI * 0.54,
   noseTh: Math.PI * 0.605,
   mouthTh: Math.PI * 0.685, mouthScale: 1.4,
   blushPhi: 0.64, blushTh: Math.PI * 0.665,
-  earTh: Math.PI * 0.62,
+  earTh: Math.PI * 0.565, // 눈 아래~코 높이 (너무 내려가면 귀가 처져 보인다)
 };
 
 // ── 얼굴 피부 (볼 터치 + 입). mouth: smile | grin | o | pout ──
@@ -358,7 +348,6 @@ const insideWhite = (g, path, drawIris) => {
 };
 
 export const EYE_STYLES = {
-  classic: { label: '기존 눈' },
   basic: { label: '콩눈', draw(g, iris) { ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3); } },
   shine: { label: '반짝 큰 눈', draw(g, iris) { ovalPath(g, 0, 0, 12.5, 15.5); fillAs(g, iris); shine(g, 4, -6, 4); shine(g, -4, 6, 1.8); } },
   lash: { label: '속눈썹', draw(g, iris) { ovalPath(g, 0, 0, 10, 13); fillAs(g, iris); shine(g, 3.5, -5, 3); outerLashes(g); } },
@@ -463,7 +452,7 @@ export const EYE_STYLES = {
 
 // ── 눈: 세로 1.25배 타원. mode: open | round | happy | closed | angry ──
 // 눈 조각은 실제 크기가 정사각형이므로 그린 비율이 그대로 보인다. 텍스처 오른쪽(+u)이 바깥쪽 눈꼬리.
-export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'classic' }) {
+export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic' }) {
   const c = tex.image;
   const g = c.getContext('2d');
   // 캔버스 실제 크기와 상관없이 512×512 기준으로 그린다 (선 굵기가 그대로 유지됨)
@@ -472,7 +461,7 @@ export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'class
   g.setTransform(c.width / W, 0, 0, c.height / H, 0, 0);
   g.clearRect(0, 0, W, H);
   // 눈 모양을 고른 경우: 평소(뜬 눈)일 때만 그 모양으로, 웃음·감음·놀람·화남은 아래 공통 표정을 쓴다
-  const styled = EYE_STYLES[style];
+  const styled = EYE_STYLES[style] ?? EYE_STYLES.basic; // 모르는 이름(예전에 저장된 'classic' 등)은 콩눈으로
   if (styled?.draw && mode === 'open') {
     g.save();
     g.translate(W / 2, H * 0.52);
