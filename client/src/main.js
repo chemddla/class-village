@@ -142,7 +142,14 @@ const NEXT_CHOP = { [ANIM.CHOP]: ANIM.CHOP2, [ANIM.CHOP2]: ANIM.CHOP3, [ANIM.CHO
 const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 떨림이 잦아든 뒤, 손을 놓기 전
 // 떠 있는 동안의 동작: 움직여도 끊기지 않는다
 const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM]);
+// 공격 동작: 하는 동안에는 방향키로 움직이지 못한다 (떠서 하는 공중 공격·내리찍기도 마찬가지)
+const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
+  ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4]);
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
+// 더블 점프 내리찍기: 내려오며 찍는 동안(초) 보는 쪽으로 살짝 나아간다. 가장 빠를 때 SLAM_SPEED, 모두 0.55m쯤
+// (제자리에 곧장 떨어지면 몸을 실어 찍는 느낌이 나지 않는다)
+const SLAM_STEP = [0.42, 0.72];
+const SLAM_SPEED = 2.9;
 function getHit(fromX, fromZ) {
   local.act = ANIM.SURPRISE; // 'hit' 피격 모션
   local.actLeft = actTime(ANIM.SURPRISE);
@@ -613,31 +620,33 @@ function updateMe(dt) {
   const inp = input.read();
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
-  // 대시 공격: 누른 순간 보던 쪽으로 뛰어들고, 내리친 뒤에는 그 자리에 멈춘다 (그동안 방향 입력은 받지 않는다)
-  const dashing = local.act === ANIM.SMASH_DASH && local.actLeft > 0;
-  if (dashing && local.hurt <= 0) {
-    const u = 1 - local.actLeft / actTime(ANIM.SMASH_DASH);
-    const speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(u, 0.35, 0.6));
-    const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
-    for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
-    const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
-    me.setPose(nx, nz, me.targetRot);
+  // 공격하는 동안은 방향키로 움직이지 못한다. 동작이 스스로 나아가는 만큼만 보는 쪽으로 움직인다:
+  // 대시 공격은 뛰어들었다가 내리친 뒤 멈추고, 더블 점프 내리찍기는 정해진 구간에만 살짝 나아간다
+  if (ATTACKS.has(local.act) && local.actLeft > 0) {
+    const sec = actTime(local.act) - local.actLeft;
+    const glide = ([s0, s1], top) => (sec > s0 && sec < s1 ? top * Math.sin(Math.PI * (sec - s0) / (s1 - s0)) : 0);
+    let speed = 0;
+    if (local.act === ANIM.SMASH_DASH) speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(ANIM.SMASH_DASH), 0.35, 0.6));
+    else if (local.act === ANIM.SMASH_SLAM) speed = glide(SLAM_STEP, SLAM_SPEED);
+    if (speed > 0 && local.hurt <= 0) {
+      const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
+      for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
+      const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
+      me.setPose(nx, nz, me.targetRot);
+    }
   } else if (inp.mag > 0 && local.hurt <= 0) {
     // 화면 기준 방향을 카메라가 돈 만큼 돌려 땅 위 방향으로
     const c = Math.cos(cam.yaw);
     const sn = Math.sin(cam.yaw);
     const wx = inp.x * c + inp.z * sn;
     const wz = -inp.x * sn + inp.z * c;
-    // 휘두르는 중에는 움직여도 공격이 끊기지 않는다: 대신 천천히 움직이고, 몸은 계속 휘두르는 쪽을 본다
-    const swinging = local.actLeft > 0 && !!NEXT_SWING[local.act];
-    const airSwing = local.actLeft > 0 && (local.act === ANIM.SMASH_AIR || local.act === ANIM.SMASH_SLAM); // 공중 공격도 휘두르는 쪽을 본 채 움직인다
-    const speed = (inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag)) * (swinging ? 0.4 : 1);
+    const speed = inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag);
     const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
     for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
     const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
-    me.setPose(nx, nz, swinging || airSwing ? me.targetRot : Math.atan2(wx, wz));
+    me.setPose(nx, nz, Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
-    if (swinging || airSwing) { /* 공격은 그대로 이어 간다 */ } else if (!AIRBORNE.has(local.act)) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
+    if (!AIRBORNE.has(local.act)) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
     else if (local.actLeft > 0) {
       // 달리며 뛰었으면 발이 닿자마자 바로 다시 달린다: 착지 뒤 일어서는 자세를 끝까지 틀면 쪼그린 채로 미끄러져 끊겨 보인다
       const land = local.act === ANIM.JUMP ? LAND.jump : LAND.flip;
