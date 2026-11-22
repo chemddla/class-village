@@ -940,6 +940,60 @@ function buildClouds(group) {
   };
 }
 
+// ── 땅에 떨어진 과일: 나무에서 톡 떨어져 한 번 튀고, 주우면 쏙 작아지며 사라진다 ──
+const groundFruitCache = new Map();
+function groundFruit(fruit) {
+  if (!groundFruitCache.has(fruit)) {
+    const make = FRUIT_MODELS[fruit] ?? FRUIT_MODELS.peach;
+    const g = mergeGeometries(make().map((p) => p.scale(1.35, 1.35, 1.35)));
+    g.computeBoundingBox();
+    g.translate(0, -g.boundingBox.min.y, 0); // 땅 위에 놓이게
+    groundFruitCache.set(fruit, g);
+  }
+  return groundFruitCache.get(fruit);
+}
+function buildDrops(group) {
+  const mat = toon(0xffffff, { vertexColors: true });
+  const list = new Map(); // 번호 → { mesh, t, from, to, gone }
+  const FALL = 0.55;
+  return {
+    // from: 떨어지기 시작하는 자리(나무 잎 높이), 없으면 이미 땅에 있던 과일
+    add(id, fruit, x, z, from = null) {
+      const mesh = new THREE.Mesh(groundFruit(fruit), mat);
+      mesh.rotation.y = Math.random() * Math.PI * 2;
+      mesh.position.set(x, 0, z);
+      addOutline(mesh, 0.018);
+      group.add(mesh);
+      list.set(id, { mesh, t: from ? 0 : FALL, from, to: new THREE.Vector3(x, 0, z), gone: -1 });
+    },
+    remove(id) {
+      const d = list.get(id);
+      if (d) d.gone = 0;
+    },
+    update(dt) {
+      for (const [id, d] of list) {
+        if (d.gone >= 0) { // 주우면 쏙 작아짐
+          d.gone += dt;
+          const s = Math.max(0, 1 - d.gone / 0.18);
+          d.mesh.scale.setScalar(s);
+          d.mesh.position.y += dt * 1.5;
+          if (s <= 0) { group.remove(d.mesh); list.delete(id); }
+          continue;
+        }
+        if (d.t >= FALL) continue;
+        d.t = Math.min(FALL, d.t + dt);
+        const k = d.t / FALL;
+        // 나무에서 땅까지 포물선으로 떨어진 뒤 마지막에 살짝 튄다
+        d.mesh.position.lerpVectors(d.from, d.to, Math.min(1, k * 1.15));
+        const fallY = d.from.y * (1 - Math.min(1, k * 1.15)) ** 2;
+        const bounce = k > 0.87 ? Math.sin(((k - 0.87) / 0.13) * Math.PI) * 0.12 : 0;
+        d.mesh.position.y = fallY + bounce;
+        d.mesh.rotation.x = (1 - k) * 2.5;
+      }
+    },
+  };
+}
+
 export function buildVillage(scene, { low = false } = {}) {
   const group = new THREE.Group();
   const labels = []; // 둥근 지평선에 맞춰 매 장면 위치를 고칠 이름표
@@ -954,6 +1008,7 @@ export function buildVillage(scene, { low = false } = {}) {
   buildPlots(group, labels);
   const fountain = buildPlaza(group);
   const clouds = buildClouds(group);
+  const drops = buildDrops(group);
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)
@@ -975,6 +1030,13 @@ export function buildVillage(scene, { low = false } = {}) {
     nearRock: (x, z, reach = 1) => nearest(WORLD.rocks, x, z, reach),
     shakeTree: trees.shake,
     setFruitLeft: trees.setFruitLeft,
+    // 땅에 떨어진 과일 (k: 떨어진 과일나무 번호, fall: 지금 막 떨어지는 중이면 true)
+    addDrop(id, fruit, x, z, k, fall) {
+      const t = WORLD.trees[WORLD.fruitTrees[k]];
+      const from = fall && t ? new THREE.Vector3(t.x + (x - t.x) * 0.35, 1.9 * t.s, t.z + (z - t.z) * 0.35) : null;
+      drops.add(id, fruit, x, z, from);
+    },
+    removeDrop: drops.remove,
     shakeRock: rocks.shake,
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t) {
@@ -982,6 +1044,7 @@ export function buildVillage(scene, { low = false } = {}) {
       river.update(t);
       fountain(t);
       clouds(dt);
+      drops.update(dt);
       trees.update(dt);
       rocks.update(dt);
     },

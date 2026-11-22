@@ -3,11 +3,11 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, toCm, fromCm, angleToByte, byteToAngle,
-  FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX,
+  FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH,
 } from '../../shared/world.js';
 import { buildVillage } from './village.js';
 import { Character, actTime, LAND } from './character.js';
-import { LIFE, findTarget, findLife, buildLifeSpots, fruitLeft } from './life.js';
+import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft } from './life.js';
 import { createLookEditor } from './look-editor.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
@@ -93,7 +93,7 @@ const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
   fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
-  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
+  toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), pickBtn: $id('pick-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
 let toastTimer = 0;
 function toast(text) {
@@ -198,18 +198,23 @@ function hitFx(char, action) {
       burst('dust', 10, at(hx, hz, 0.05), { ring: true, power: 1.1 });
       burst('stone', 4, at(hx, hz, 0.05), { spread: Math.PI, power: 0.6 });
     }
-  } else if (action === 'gather') {
-    const t = char === me && local.picked ? local.picked : findTarget('none', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 0.6, z: char.z + fz * 0.6 };
-    if (t.pick !== undefined) {
-      // 과일 따기: 나무가 살짝 흔들리고 잎이 팔랑, 딴 자리에서 반짝
-      village.shakeTree(WORLD.fruitTrees[t.pick], fx, fz, 0.5);
-      burst('leaf', 6, at(t.x, t.z, 1.8), { spread: Math.PI, power: 0.7 });
-      burst('sparkle', 10, at(char.x + fx * 0.5, char.z + fz * 0.5, 1.2), { spread: Math.PI });
-      if (char === me) local.picked = null;
-    } else {
-      burst('petal', 7, at(t.x, t.z, 0.3), { spread: Math.PI, power: 0.8 });
-      burst('sparkle', 8, at(t.x, t.z, 0.45), { spread: Math.PI });
+  } else if (action === 'treeShake') {
+    // 줄기를 잡은 순간: (내 캐릭터면) 서버에 흔들기를 알려 과일이 떨어지게 하고, 잎이 우수수
+    const pend = char === me ? local.picked : null;
+    if (pend?.shake !== undefined) { local.picked = null; room?.send('shake', pend.shake); }
+    burst('leaf', 9, at(char.x + fx * 1.0, char.z + fz * 1.0, 2.0), { spread: Math.PI, power: 0.8 });
+  } else if (action === 'pocket') {
+    // 떨어진 과일을 집는 순간: (내 캐릭터면) 서버에 알려 과일이 손에 맞춰 사라지고 가방에 들어간다
+    const pend = char === me && local.picked?.grab !== undefined ? local.picked : null;
+    if (pend) {
+      local.picked = null;
+      room?.send('grab', pend.grab);
     }
+    burst('sparkle', 8, at(char.x + fx * 0.45, char.z + fz * 0.45, 0.25), { spread: Math.PI });
+  } else if (action === 'gather') {
+    const t = findTarget('none', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 0.6, z: char.z + fz * 0.6 };
+    burst('petal', 7, at(t.x, t.z, 0.3), { spread: Math.PI, power: 0.8 });
+    burst('sparkle', 8, at(t.x, t.z, 0.45), { spread: Math.PI });
   } else if (action === 'fish') {
     const t = findTarget('rod', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 1.5, z: char.z + fz * 1.5 };
     burst('splash', 14, at(t.x, t.z, 0), { spread: Math.PI, floor: gy - 0.1 });
@@ -230,6 +235,17 @@ const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
 const QUICK_SLOTS = 4;
 const FRUIT_ICON = { peach: '🍑', apple: '🍎', orange: '🍊', pear: '🍐' };
 const bag = new Map(); // 내 가방에 든 과일: 이름 → 개수 (서버가 정함)
+const drops = new Map(); // 땅에 떨어진 과일: 번호 → { x, z, f } (서버가 정함)
+// 손이 닿는 가장 가까운 떨어진 과일 { id, x, z } 또는 null
+function nearDrop(x, z) {
+  let best = null;
+  let bestD = GRAB_REACH;
+  for (const [id, d] of drops) {
+    const dist = Math.hypot(d.x - x, d.z - z);
+    if (dist < bestD) { bestD = dist; best = { id, x: d.x, z: d.z }; }
+  }
+  return best;
+}
 let invItems = [1, 2, 4]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
@@ -326,31 +342,22 @@ function renderInv() {
     row.appendChild(b);
   }
   ui.inv.appendChild(row);
-  // 과일: 과일나무 앞에서 G로 따서 모은다. 먹을 수 있고, 나중에 상점에 팔 수 있다
+  // 과일: 과일나무를 F로 흔들어 떨어진 과일을 F로 주워 모은다. 나중에 상점에 팔 수 있다
   const fruits = FRUITS.filter((f) => bag.get(f) > 0);
   const title = document.createElement('p');
   title.className = 'inv-help';
-  title.textContent = fruits.length ? '과일: 누르면 하나 먹어요 (상점이 열리면 팔 수도 있어요)' : '과일: 과일나무 앞에서 G를 누르면 딸 수 있어요';
+  title.textContent = fruits.length ? '과일: 상점이 열리면 팔 수 있어요' : '과일: 과일나무 앞에서 F로 흔들고, 떨어진 과일을 F로 주워요';
   ui.inv.appendChild(title);
   if (!fruits.length) return;
   const frow = document.createElement('div');
   frow.className = 'look-row';
   for (const f of fruits) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = `${FRUIT_ICON[f]} ${FRUIT_NAMES[f]} ×${bag.get(f)} · 먹기`;
-    b.onclick = () => eatFruit(f);
+    const b = document.createElement('span');
+    b.className = 'fruit-count';
+    b.textContent = `${FRUIT_ICON[f]} ${FRUIT_NAMES[f]} ×${bag.get(f)}`;
     frow.appendChild(b);
   }
   ui.inv.appendChild(frow);
-}
-// 과일 먹기: 서버에 알려 하나 줄이고, 내 캐릭터는 기뻐하며 반짝인다
-function eatFruit(f) {
-  if (!room || !me || !(bag.get(f) > 0) || local.actLeft > 0) return;
-  room.send('eat', f);
-  startAct(ANIM.CHEER);
-  FX.burst('sparkle', 12, me.x, me.groundY + 1.3, me.z, { floor: me.groundY, spread: Math.PI, power: 0.8 });
-  toast(`냠냠! ${FRUIT_NAMES[f]}를 먹었어요 ${FRUIT_ICON[f]}`);
 }
 showTool();
 renderQuick();
@@ -425,16 +432,23 @@ const input = createInput({
           startAct(ANIM.SMASH);
         }
       }
+    } else if (name === 'pick') {
+      // F: 떨어진 과일이 가까이 있으면 줍고, 없으면 과일나무를 흔들어 과일을 떨어뜨린다
+      if (local.actLeft > 0) return;
+      const d = nearDrop(me.x, me.z);
+      const t = d ? null : findFruit(me.x, me.z);
+      if (!d && !t) { toast(`${FRUIT_NAMES[VILLAGE_FRUIT]}가 열린 과일나무에 바짝 붙어서 F를 눌러 보세요`); return; }
+      if (d && (bag.get(VILLAGE_FRUIT) ?? 0) >= BAG_MAX) { toast(`가방에 ${FRUIT_NAMES[VILLAGE_FRUIT]}가 가득 찼어요`); return; }
+      const aim = d ?? t;
+      local.picked = d ? { grab: d.id, x: d.x, z: d.z } : { shake: t.pick, x: t.x, z: t.z };
+      holdTool(0);
+      me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z)); // 줍거나 흔들 쪽으로 돌아섬
+      startAct(d ? ANIM.POCKET : ANIM.TREE_SHAKE);
     } else if (name === 'life') {
       // 손에 무엇을 들었든, 가장 가까운 생활 대상에 맞는 도구를 꺼내 들고 한다 (끝나면 고른 장비로 돌아온다)
       if (local.actLeft > 0) return;
       const t = findLife(me.x, me.z, lifeSpots);
-      if (!t) { toast('나무·물가·꽃·과일나무 가까이에서 G를 눌러 보세요'); return; }
-      if (t.pick !== undefined) {
-        if ((bag.get(VILLAGE_FRUIT) ?? 0) >= BAG_MAX) { toast(`가방에 ${FRUIT_NAMES[VILLAGE_FRUIT]}가 가득 찼어요`); return; }
-        room?.send('pick', t.pick); // 서버가 확인하고 가방에 넣는다
-        local.picked = t;
-      }
+      if (!t) { toast('나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
       holdTool(TOOLS.indexOf(t.tool));
       me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 대상 쪽으로 돌아섬
       startAct(LIFE[t.tool].anim);
@@ -496,7 +510,7 @@ function attach(r) {
       const setBag = (n, f) => {
         const before = bag.get(f) ?? 0;
         if (n > 0) bag.set(f, n); else bag.delete(f);
-        if (n > before) toast(`${FRUIT_ICON[f] ?? ''} ${FRUIT_NAMES[f] ?? f}를 땄어요! (가방에 ${n}개)`);
+        if (n > before) toast(`${FRUIT_ICON[f] ?? ''} ${FRUIT_NAMES[f] ?? f}를 주웠어요! (가방에 ${n}개)`);
         renderInv();
       };
       $(p).bag.onAdd(setBag, false);
@@ -551,6 +565,23 @@ function attach(r) {
   const setLeft = (n, k) => { fruitLeft[k] = n; village.setFruitLeft(k, n); };
   $(r.state).fruitLeft.onAdd(setLeft);
   $(r.state).fruitLeft.onChange(setLeft);
+
+  // 땅에 떨어진 과일: 들어올 때 이미 있던 것은 그냥 놓고, 그 뒤에 생긴 것은 나무에서 떨어지며 나무가 흔들린다
+  for (const id of drops.keys()) village.removeDrop(id);
+  drops.clear();
+  let dropsReady = false;
+  $(r.state).drops.onAdd((d, id) => {
+    const x = fromCm(d.x);
+    const z = fromCm(d.z);
+    drops.set(id, { x, z, f: d.f });
+    village.addDrop(id, d.f, x, z, d.k, dropsReady);
+    if (dropsReady) {
+      const t = WORLD.trees[WORLD.fruitTrees[d.k]];
+      if (t) village.shakeTree(WORLD.fruitTrees[d.k], (x - t.x) * 0.3, (z - t.z) * 0.3, 0.6);
+    }
+  });
+  $(r.state).drops.onRemove((_, id) => { drops.delete(id); village.removeDrop(id); });
+  setTimeout(() => { dropsReady = true; }, 300);
 
   // 서버가 이상한 이동이라고 판단하면 되돌림
   r.onMessage('fix', ([x, z]) => {
@@ -743,6 +774,11 @@ function updateMe(dt) {
   if (local.lifeTimer <= 0) {
     local.lifeTimer = 0.2;
     showLife(findLife(me.x, me.z, lifeSpots)?.tool ?? null);
+    const grab = nearDrop(me.x, me.z);
+    const shake = !grab && findFruit(me.x, me.z);
+    ui.pickBtn.classList.toggle('hidden', !grab && !shake);
+    const label = grab ? `${FRUIT_ICON[VILLAGE_FRUIT]}<span>F 줍기</span>` : '🌳<span>F 흔들기</span>';
+    if (ui.pickBtn.dataset.label !== label) { ui.pickBtn.dataset.label = label; ui.pickBtn.innerHTML = label; }
   }
   if (local.actLeft > 0) {
     local.actLeft -= dt;

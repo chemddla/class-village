@@ -116,7 +116,7 @@ let spin = false;
 
 // ── 패널 데이터: 버튼 목록은 전부 여기서 만든다 ──
 const ACTION_LABELS = { idle: '대기', walk: '걷기', run: '달리기', jump: '점프', flip: '공중제비', wave: '인사', cheer: '환호' };
-const LIFE_ACTIONS = { gather: '채집', chop: '벌목', chopAgain: '벌목(이어 찍기)', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
+const LIFE_ACTIONS = { gather: '채집', treeShake: '나무 흔들기', pocket: '과일 줍기', chop: '벌목', chopAgain: '벌목(이어 찍기)', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
 const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
   castSpell: '마법 시전', hit: '피격', faint: '기절',
@@ -126,7 +126,7 @@ const COMBAT_ACTIONS = {
 };
 // 타격 시점 콜백을 눈으로 확인할 수 있도록 잠깐 띄우는 문구
 const HIT_TEXT = {
-  gather: '줍기!', chop: '쿵!', fishCast: '퐁당', fish: '월척!', fishCatch: '월척!', slash1: '슥!', slash2: '슥슥!',
+  gather: '줍기!', treeShake: '흔들흔들!', pocket: '쏙!', chop: '쿵!', fishCast: '퐁당', fish: '월척!', fishCatch: '월척!', slash1: '슥!', slash2: '슥슥!',
   smash: '쾅!', bowShot: '슝!', castSpell: '반짝!',
 };
 const SKINS = [

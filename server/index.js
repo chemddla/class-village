@@ -6,8 +6,8 @@ import { Server, Room } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
-  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, EDGE, isBlocked, toCm, fromCm, cleanLook, FRUITS,
-  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH,
+  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, EDGE, isBlocked, toCm, fromCm, cleanLook,
+  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE,
 } from '../shared/world.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
@@ -28,13 +28,22 @@ const Player = schema({
   name: 'string',
   color: 'uint8',
   look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
-  bag: { map: 'uint8' }, // 가방에 든 과일: 과일 이름(FRUITS) → 개수. 나중에 상점에 팔거나 먹는다
+  bag: { map: 'uint8' }, // 가방에 든 과일: 과일 이름(FRUITS) → 개수. 나중에 상점에 판다
 }, 'Player');
+
+// 땅에 떨어진 과일 (누구나 주울 수 있음)
+const Drop = schema({
+  x: 'int16', // cm
+  z: 'int16', // cm
+  f: 'string', // 과일 이름 (FRUITS)
+  k: 'int8', // 떨어진 과일나무 번호 (떨어지는 연출용)
+}, 'Drop');
 
 const VillageState = schema({
   players: { map: Player },
   freeLook: 'boolean',
   fruitLeft: ['uint8'], // 과일나무마다 남은 과일 개수 (WORLD.fruitTrees 순서)
+  drops: { map: Drop }, // 땅에 떨어진 과일: 번호 → 자리
 }, 'VillageState');
 
 // ── 전송량 측정 ──
@@ -64,8 +73,11 @@ class VillageRoom extends Room {
     if (!this.state.players) this.state.players = new MapSchema();
     this.state.freeLook = FREE_LOOK;
     this.state.fruitLeft = new ArraySchema(...WORLD.fruitTrees.map(() => FRUIT_MAX));
+    if (!this.state.drops) this.state.drops = new MapSchema();
     this.regrow = []; // 다시 열릴 과일: { k: 나무 번호, at: 시각(ms) }
-    // 딴 과일은 FRUIT_REGROW 초 뒤에 하나씩 다시 열린다
+    this.dropAt = new Map(); // 떨어진 과일 번호 → 사라질 시각(ms)
+    this.dropId = 0;
+    // 떨어뜨린 과일은 FRUIT_REGROW 초 뒤에 하나씩 다시 열리고, 오래 안 주운 과일은 사라진다
     this.clock.setInterval(() => {
       const now = Date.now();
       this.regrow = this.regrow.filter(({ k, at }) => {
@@ -73,33 +85,62 @@ class VillageRoom extends Room {
         this.state.fruitLeft[k] = Math.min(FRUIT_MAX, this.state.fruitLeft[k] + 1);
         return false;
       });
+      for (const [id, at] of this.dropAt) {
+        if (at > now) continue;
+        this.dropAt.delete(id);
+        this.state.drops.delete(id);
+      }
     }, 1000);
 
-    // 과일 따기: [과일나무 번호]. 나무 가까이 있고 과일이 남아 있을 때만 가방에 넣는다
-    this.onMessage('pick', (client, k) => {
+    // 과일나무 흔들기: [과일나무 번호]. 나무 가까이 있으면 남은 과일 중 3~4개가 나무 둘레 땅에 떨어진다
+    this.onMessage('shake', (client, k) => {
       const p = this.state.players.get(client.sessionId);
       k = Number(k);
       if (!p || !Number.isInteger(k) || k < 0 || k >= WORLD.fruitTrees.length) return;
       const now = Date.now();
-      if (now - (client.userData?.pickAt ?? 0) < 400) return; // 너무 빠른 연속 따기는 무시
+      if (now - (client.userData?.shakeAt ?? 0) < 600) return; // 너무 빠른 연속 흔들기는 무시
       const t = WORLD.trees[WORLD.fruitTrees[k]];
       if (Math.hypot(fromCm(p.x) - t.x, fromCm(p.z) - t.z) > t.r + PICK_REACH) return;
-      const have = p.bag.get(VILLAGE_FRUIT) ?? 0;
-      if (this.state.fruitLeft[k] <= 0 || have >= BAG_MAX) return;
-      client.userData = { ...client.userData, pickAt: now };
-      this.state.fruitLeft[k] -= 1;
-      p.bag.set(VILLAGE_FRUIT, have + 1);
-      this.regrow.push({ k, at: now + FRUIT_REGROW * 1000 });
+      const left = this.state.fruitLeft[k];
+      if (left <= 0) return;
+      client.userData = { ...client.userData, shakeAt: now };
+      const [lo, hi] = SHAKE_DROP;
+      const n = Math.min(left, lo + Math.floor(Math.random() * (hi - lo + 1)));
+      this.state.fruitLeft[k] = left - n;
+      for (let i = 0; i < n; i++) {
+        // 나무 둘레 고리 모양 자리에 흩어진다 (갈 수 없는 곳은 피함)
+        let x = t.x;
+        let z = t.z + t.r + 0.6;
+        for (let tries = 0; tries < 12; tries++) {
+          const a = Math.random() * Math.PI * 2;
+          const d = t.r + 0.45 + Math.random() * 0.8;
+          const tx = t.x + Math.cos(a) * d;
+          const tz = t.z + Math.sin(a) * d;
+          if (!isBlocked(tx, tz, 0.15)) { x = tx; z = tz; break; }
+        }
+        const id = String(++this.dropId);
+        const d = new Drop();
+        d.x = toCm(x);
+        d.z = toCm(z);
+        d.f = VILLAGE_FRUIT;
+        d.k = k;
+        this.state.drops.set(id, d);
+        this.dropAt.set(id, now + DROP_LIFE * 1000);
+        this.regrow.push({ k, at: now + FRUIT_REGROW * 1000 });
+      }
     });
 
-    // 과일 먹기: [과일 이름]. 가방에 있을 때만 하나 줄인다
-    this.onMessage('eat', (client, fruit) => {
+    // 떨어진 과일 줍기: [과일 번호]. 가까이 있을 때만 가방에 넣는다
+    this.onMessage('grab', (client, id) => {
       const p = this.state.players.get(client.sessionId);
-      if (!p || !FRUITS.includes(fruit)) return;
-      const have = p.bag.get(fruit) ?? 0;
-      if (have <= 0) return;
-      if (have === 1) p.bag.delete(fruit);
-      else p.bag.set(fruit, have - 1);
+      const d = this.state.drops.get(String(id));
+      if (!p || !d) return;
+      if (Math.hypot(fromCm(p.x) - fromCm(d.x), fromCm(p.z) - fromCm(d.z)) > GRAB_REACH + 0.4) return;
+      const have = p.bag.get(d.f) ?? 0;
+      if (have >= BAG_MAX) return;
+      this.state.drops.delete(String(id));
+      this.dropAt.delete(String(id));
+      p.bag.set(d.f, have + 1);
     });
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각

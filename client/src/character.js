@@ -1,10 +1,10 @@
 // 마을 캐릭터: 쇼룸과 같은 주민 모델(createVillager)을 마을 이동·애니메이션에 연결한다
 import * as THREE from 'three';
-import { ANIM, COLORS, TOOLS } from '../../shared/world.js';
+import { ANIM, COLORS, TOOLS, WORLD } from '../../shared/world.js';
 import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
-import { ACTIONS } from './villager/actions.js';
+import { ACTIONS, SHAKE } from './villager/actions.js';
 import { syncToon } from './villager/toon.js';
 import { FX } from './fx.js';
 
@@ -61,7 +61,7 @@ const ACTS = {
   [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
   [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3',
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
-  [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
+  [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
 const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP };
@@ -69,6 +69,21 @@ const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP };
 const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5 };
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
 export const LAND = { jump: 0.78 * ACTIONS.jump.duration + 0.015, flip: 0.74 * ACTIONS.flip.duration };
+// 과일나무 흔들기: 두 팔을 앞으로 뻗었을 때 손끝이 몸 가운데에서 나가는 거리(m, 게임 크기)와
+// 줄기 가운데 높이의 반지름(나무 크기 1일 때). 손끝이 줄기 표면에서 이만큼(m) 앞에 멈추게 한다
+const HAND_REACH = 0.2 * SCALE;
+const TRUNK_R = 0.205;
+const SHAKE_GAP = 0.02;
+// 가장 가까운 과일나무 줄기 표면까지 손이 닿도록 내딛을 거리 (주민 몸 크기 단위)
+function shakeStep(x, z) {
+  let gap = Infinity;
+  for (const i of WORLD.fruitTrees) {
+    const t = WORLD.trees[i];
+    gap = Math.min(gap, Math.hypot(t.x - x, t.z - z) - TRUNK_R * t.s);
+  }
+  return Math.max(0, (gap - HAND_REACH - SHAKE_GAP) / SCALE);
+}
+
 export const actTime = (a) => LOOP_TIME[ACTS[a]] ?? ACTIONS[ACTS[a]]?.duration ?? 0;
 
 export class Character {
@@ -142,6 +157,7 @@ export class Character {
       const from = CONTINUES[a];
       this.startAt = from !== undefined && this.anim === from && this.actLeft > 0 ? actTime(from) - this.actLeft : 0;
       this.actLeft = actTime(a) - this.startAt;
+      if (a === ANIM.TREE_SHAKE) this.shakeStep = shakeStep(this.x, this.z);
     }
     this.anim = a;
   }
@@ -162,6 +178,7 @@ export class Character {
       // 동작이 끝나면 원래 들고 있던 도구로 돌아간다
       if (!ACTIONS[want]?.equip && this.villager.state.equipment !== TOOLS[this.tool]) this.villager.equip(TOOLS[this.tool]);
     }
+    SHAKE.step = this.shakeStep ?? 0; // 캐릭터마다 나무까지 거리가 달라서 그릴 때마다 자기 값으로
     this.villager.update(this.time, dt);
     // 발밑에 딱 맞는 크기로, 뛰어오르면 작아져 높이가 읽힌다
     this.shadow.scale.setScalar(0.8 / (1 + this.villager.root.position.y * 0.9));

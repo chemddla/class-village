@@ -1,4 +1,4 @@
-// 생활 행동: 생활 대상(나무·물가·꽃·과일나무) 앞에서 G 를 누르면, 손에 무엇을 들었든 그 일에 맞는 도구를 꺼내 들고 한다
+// 생활 행동: 생활 대상(나무·물가·꽃) 앞에서 G 를 누르면, 손에 무엇을 들었든 그 일에 맞는 도구를 꺼내 들고 한다
 import * as THREE from 'three';
 import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM } from '../../shared/world.js';
 import { toon, swayToon, addOutline } from './materials.js';
@@ -7,7 +7,7 @@ import { roundCanopy, trunkGeometry } from './village.js';
 const REACH = 1.8; // 대상까지 이만큼 안이면 가능 (m)
 // 도구 → 동작, 대상 이름(안내 문구용)
 export const LIFE = {
-  none: { anim: ANIM.GATHER, what: '꽃·과일' },
+  none: { anim: ANIM.GATHER, what: '꽃' },
   axe: { anim: ANIM.CHOP, what: '나무' },
   rod: { anim: ANIM.FISH, what: '물가' },
 };
@@ -15,14 +15,27 @@ export const LIFE = {
 // 과일나무마다 남은 과일 수 (서버 상태를 main.js 가 채움, WORLD.fruitTrees 순서)
 export const fruitLeft = [];
 
+// 과일나무 흔들기(F): 바로 앞에 붙어 선 과일나무 중 과일이 남은 가장 가까운 나무 { x, z, d, pick: 과일나무 번호 } 또는 null
+// 두 손으로 줄기를 잡아야 해서 나무에 거의 붙어 있어야 한다 (부딪히는 원 가장자리에서 SHAKE_REACH 안)
+const SHAKE_REACH = 0.75;
+export function findFruit(x, z) {
+  let best = null;
+  let bestD = SHAKE_REACH;
+  WORLD.fruitTrees.forEach((ti, k) => {
+    const t = WORLD.trees[ti];
+    const d = Math.hypot(t.x - x, t.z - z) - t.r;
+    if (fruitLeft[k] > 0 && d < bestD) { bestD = d; best = { x: t.x, z: t.z, d, pick: k }; }
+  });
+  return best;
+}
+
 // 이 도구로 할 수 있는 가장 가까운 대상 위치(바라볼 곳, d: 거리) 또는 null. spots: 테스트용 생활 요소(없으면 [])
-// 맨손으로 과일이 남은 과일나무를 고르면 pick(과일나무 번호)이 붙는다
 export function findTarget(tool, x, z, spots) {
   let best = null;
   let bestD = REACH;
-  const near = (tx, tz, pad = 0, extra = {}) => {
+  const near = (tx, tz, pad = 0) => {
     const d = Math.hypot(tx - x, tz - z) - pad;
-    if (d < bestD) { bestD = d; best = { x: tx, z: tz, d, ...extra }; }
+    if (d < bestD) { bestD = d; best = { x: tx, z: tz, d }; }
   };
   const of = (kind) => spots.filter((s) => s.kind === kind);
   if (tool === 'axe') {
@@ -33,11 +46,6 @@ export function findTarget(tool, x, z, spots) {
     if (Math.abs(z - rz) < RIVER_HALF_WIDTH + REACH) near(x, rz, RIVER_HALF_WIDTH);
   } else {
     for (const f of WORLD.flowers) near(f.x, f.z);
-    // 과일 따기: 도끼질과 같은 거리로 재므로, 과일이 남아 있으면 맨손(따기)이 먼저 골라진다
-    WORLD.fruitTrees.forEach((ti, k) => {
-      const t = WORLD.trees[ti];
-      if (fruitLeft[k] > 0) near(t.x, t.z, t.r, { pick: k });
-    });
   }
   return best;
 }
