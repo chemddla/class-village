@@ -1,7 +1,7 @@
 // 생활 행동: 생활 대상(나무·물가·꽃) 앞에서 G 를 누르면, 손에 무엇을 들었든 그 일에 맞는 도구를 꺼내 들고 한다
 import * as THREE from 'three';
 import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM } from '../../shared/world.js';
-import { toon, addOutline } from './materials.js';
+import { toon, swayToon, addOutline } from './materials.js';
 import { roundCanopy, trunkGeometry } from './village.js';
 
 const REACH = 1.8; // 대상까지 이만큼 안이면 가능 (m)
@@ -51,9 +51,10 @@ export function buildLifeSpots(scene) {
     o.position.set(s.x, 0, s.z);
     // 마을 나무와 같은 몽글몽글한 나무 (조금 작게)
     const trunk = new THREE.Mesh(trunkGeometry().scale(0.85, 0.85, 0.85), toon(0xc0905c));
-    const leaves = new THREE.Mesh(roundCanopy().scale(0.85, 0.85, 0.85), toon(0x7fc456, { vertexColors: true }));
+    const leaves = new THREE.Mesh(roundCanopy().scale(0.85, 0.85, 0.85), swayToon(0x7fc456, { vertexColors: true }));
     o.add(trunk, leaves);
-    addOutline(trunk, 0.025); // 잎마다 외곽선이 생기면 어수선해서 줄기만
+    addOutline(trunk, 0.025);
+    addOutline(leaves, 0.025, { sway: true }); // 마을 나무처럼 잎이 살랑 흔들림
     g.add(o);
   }
   scene.add(g);

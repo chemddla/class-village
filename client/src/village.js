@@ -5,7 +5,7 @@ import {
   WORLD, HALF, EDGE, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, riverCenterZ,
 } from '../../shared/world.js';
 import {
-  toon, windToon, basic, paint, vertexColorToon, addOutline, TIME,
+  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME,
 } from './materials.js';
 import { makeLabel } from './label.js';
 
@@ -511,7 +511,7 @@ function buildTrees(group) {
   let fruitMesh = null;
   [roundCanopy(), pineCanopy(), ovalCanopy(), fruitCanopy(null)].forEach((geo, k) => {
     const list = kinds[k];
-    const mesh = new THREE.InstancedMesh(geo, toon(0xffffff, { vertexColors: true }), list.length);
+    const mesh = new THREE.InstancedMesh(geo, swayToon(0xffffff, { vertexColors: true }), list.length);
     list.forEach(({ t, i }, j) => {
       const b = base[i];
       b.leaves = [mesh, j];
@@ -521,7 +521,7 @@ function buildTrees(group) {
       mesh.setColorAt(j, tintOf(k, h, h2));
     });
     if (k === 3) fruitMesh = mesh;
-    group.add(addOutline(mesh, 0.025));
+    group.add(addOutline(mesh, 0.025, { sway: true }));
   });
 
   // 흔들기: 맞은 쪽으로 휘청였다가 흔들흔들 (줄기는 덜)
@@ -601,49 +601,7 @@ function grassy(x, z) {
   return true;
 }
 
-// 풀 한 포기: 끝이 뾰족한 잎 몇 장을 바깥으로 살짝 벌려 세움. 법선은 위로 (땅과 같은 밝기로 보이게)
-function grassClump(rand) {
-  const pos = [];
-  const colr = [];
-  const idx = [];
-  const lo = new THREE.Color(0x5f9f45);
-  const hi = new THREE.Color(0xc4e889);
-  const c = new THREE.Color();
-  const blades = 5;
-  for (let b = 0; b < blades; b++) {
-    const a = (b / blades) * Math.PI * 2 + rand() * 0.8;
-    const h = 0.2 + rand() * 0.2;
-    const w = 0.035 + rand() * 0.015;
-    const lean = 0.06 + rand() * 0.1;
-    const dx = Math.cos(a);
-    const dz = Math.sin(a);
-    const v0 = pos.length / 3;
-    for (const [k, wk] of [[0, 1], [0.55, 0.7], [1, 0]]) { // [높이 비율, 너비 비율]
-      const y = h * k;
-      const cx = dx * (0.05 + lean * k * k);
-      const cz = dz * (0.05 + lean * k * k);
-      c.copy(lo).lerp(hi, k);
-      if (wk > 0) {
-        pos.push(cx + dz * w * wk, y, cz - dx * w * wk, cx - dz * w * wk, y, cz + dx * w * wk);
-        colr.push(c.r, c.g, c.b, c.r, c.g, c.b);
-      } else {
-        pos.push(cx, y, cz);
-        colr.push(c.r, c.g, c.b);
-      }
-    }
-    idx.push(v0, v0 + 1, v0 + 2, v0 + 1, v0 + 3, v0 + 2, v0 + 2, v0 + 3, v0 + 4);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
-  const nrm = new Float32Array(pos.length);
-  for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
-  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  geo.setIndex(idx);
-  return geo;
-}
-
-// 바람에 살랑이는 풀잎 수백 포기 + 들꽃 (InstancedMesh 3개로 한 번에 그림)
+// 바람에 살랑이는 들꽃 (줄기·꽃송이 InstancedMesh 2개로 한 번에 그림)
 function buildMeadow(group, { low = false } = {}) {
   const rand = seeded(20261119);
   const m = new THREE.Matrix4();
@@ -651,46 +609,29 @@ function buildMeadow(group, { low = false } = {}) {
   const s = new THREE.Vector3();
   const p = new THREE.Vector3();
   const e = new THREE.Euler();
-  const col = new THREE.Color();
-
-  // 풀: 무더기 자리를 먼저 정하고 그 둘레에 흩뿌림 → 고르게 깔린 것보다 자연스러움
-  const want = low ? 700 : 1600;
-  const spots = [];
-  for (let tries = 0; spots.length < want && tries < want * 6; tries++) {
-    const cx = (rand() * 2 - 1) * (HALF - 1);
-    const cz = (rand() * 2 - 1) * (HALF - 1);
-    const n = 3 + Math.floor(rand() * 6);
-    for (let k = 0; k < n && spots.length < want; k++) {
-      const x = cx + (rand() - 0.5) * 1.6;
-      const z = cz + (rand() - 0.5) * 1.6;
-      if (grassy(x, z)) spots.push([x, z]);
-    }
-  }
-  const grass = new THREE.InstancedMesh(grassClump(seeded(3)), windToon(0xffffff, { vertexColors: true, side: THREE.DoubleSide }), spots.length);
-  spots.forEach(([x, z], i) => {
-    q.setFromEuler(e.set(0, rand() * Math.PI * 2, 0));
-    grass.setMatrixAt(i, m.compose(p.set(x, 0, z), q, s.setScalar(0.8 + rand() * 0.7)));
-    grass.setColorAt(i, col.setHSL(0.24 + rand() * 0.06, 0.5, 0.82 + rand() * 0.18));
-  });
-  group.add(grass);
 
   // 들꽃: 마을 꽃(채집 대상) + 장식용 꽃
-  const palette = [0xff9fb8, 0xfff07a, 0xffffff, 0xc7a8ff, 0xffb38a, 0x9fd0ff].map((c) => new THREE.Color(c));
+  const palette = [0xffa8c5, 0xfff08a, 0xffffff, 0xcdb4ff, 0xffbe94, 0xa8d8ff].map((c) => new THREE.Color(c));
   const flowers = WORLD.flowers.map((f) => ({ ...f }));
   for (let tries = 0; flowers.length < (low ? 220 : 380) && tries < 3000; tries++) {
     const x = (rand() * 2 - 1) * (HALF - 1.5);
     const z = (rand() * 2 - 1) * (HALF - 1.5);
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.6 + rand() * 0.5 });
   }
-  const stemGeo = new THREE.CylinderGeometry(0.018, 0.024, 0.34, 4).translate(0, 0.17, 0);
-  // 꽃송이: 꽃잎 5장(하양 → 인스턴스 색으로 물듦) + 노란 가운데, 하늘을 보도록 살짝 기울임
+  // 줄기 + 동그란 잎 두 장
+  const stemGeo = mergeGeometries([
+    new THREE.CylinderGeometry(0.02, 0.026, 0.3, 6).translate(0, 0.15, 0),
+    new THREE.SphereGeometry(0.05, 8, 6).scale(1.5, 0.35, 0.9).rotateZ(0.5).translate(0.06, 0.1, 0),
+    new THREE.SphereGeometry(0.045, 8, 6).scale(1.5, 0.35, 0.9).rotateZ(-0.5).translate(-0.055, 0.16, 0),
+  ]);
+  // 꽃송이: 통통하고 동그란 꽃잎 5장(하양 → 인스턴스 색으로 물듦) + 볼록한 노란 가운데, 하늘을 보도록 살짝 기울임
   const parts = [];
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
-    parts.push(paint(new THREE.IcosahedronGeometry(0.055, 0).scale(1.25, 0.4, 0.85).rotateY(-a).translate(Math.cos(a) * 0.06, 0, Math.sin(a) * 0.06), 0xffffff));
+    parts.push(paint(new THREE.SphereGeometry(0.06, 10, 6).scale(1, 0.42, 1).translate(Math.cos(a) * 0.075, 0, Math.sin(a) * 0.075), 0xffffff));
   }
-  parts.push(paint(new THREE.IcosahedronGeometry(0.038, 1).scale(1, 0.7, 1).translate(0, 0.012, 0), 0xffe066));
-  const headGeo = mergeGeometries(parts).rotateX(0.25).translate(0, 0.35, 0);
+  parts.push(paint(new THREE.SphereGeometry(0.05, 12, 8).scale(1, 0.75, 1).translate(0, 0.02, 0), 0xffd84a));
+  const headGeo = mergeGeometries(parts).rotateX(0.3).translate(0, 0.31, 0);
   const stems = new THREE.InstancedMesh(stemGeo, windToon(0x6aa84f), flowers.length);
   const heads = new THREE.InstancedMesh(headGeo, windToon(0xffffff, { vertexColors: true }), flowers.length);
   flowers.forEach((f, i) => {
