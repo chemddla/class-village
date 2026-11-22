@@ -21,20 +21,20 @@ export function dir(phi, th, out = V()) {
 }
 
 export function headShape(n, out = V()) {
-  // 정면에서 본 윤곽은 가로·세로가 거의 같은 둥근 사각형(찹쌀떡 모양):
-  // 정수리는 둥근 돔, 옆면은 곧게 내려오고, 턱은 뾰족하지 않고 넓고 납작한 U자.
-  // 아래로 갈수록 지수를 키워 턱 모서리를 더 각지게(넓게) 만든다
+  // 정면 윤곽은 참고 사진 정면 윤곽(정수리→턱 높이별 폭)에 맞춘 값이다:
+  // 가로·세로가 거의 같고, 정수리는 둥글게 차오르며, 볼 아래에서 턱까지 둥글게 모인다.
+  // 정면(가로·세로) 방향만 살짝 둥근 사각형이고, 앞뒤(깊이) 방향은 공처럼 둥글게 둔다
+  // → 옆·위에서 봐도 모서리가 서지 않아 각진 상자 느낌이 나지 않는다
   const lower = Math.max(0, -n.y);
-  const upper = Math.max(0, n.y);
-  const p = 2.7 + 0.9 * lower;
-  const k = (Math.abs(n.x) ** p + Math.abs(n.y) ** p + Math.abs(n.z) ** p) ** (1 / p);
-  out.copy(n).divideScalar(k).lerp(n, 0.12);
-  out.x *= 0.97 - 0.04 * upper; // 정수리 쪽은 볼보다 살짝 좁게
+  const p = 2.6 + 0.2 * lower;
+  const k = ((Math.abs(n.x) ** p + Math.abs(n.y) ** p) ** (2 / p) + n.z * n.z) ** 0.5;
+  out.copy(n).divideScalar(k).lerp(n, 0.2);
+  out.x *= 0.92;
   out.y *= 0.95;
   out.z *= 0.95;
-  // 볼: 코~입 높이가 가장 넓고 앞으로도 도톰하게
-  const cheek = gauss(n.y + 0.35, 0.35);
-  out.x *= 1 + 0.025 * cheek;
+  // 볼: 입 높이쯤이 가장 넓고 앞으로도 도톰하게
+  const cheek = gauss(n.y + 0.5, 0.35);
+  out.x *= 1 + 0.06 * cheek;
   out.z *= 1 + 0.03 * cheek;
   return out.multiplyScalar(HEAD_R);
 }
@@ -383,7 +383,7 @@ function buildHead(head, o, live) {
       map: live.eyes[i], transparent: true, roughness: 0.22, polygonOffset: true, polygonOffsetFactor: -2,
     });
     // 눈은 크고 동그랗게, 얼굴 폭의 절반쯤 벌어지게 (옆으로 돌아가는 만큼 가로 폭을 더 준다)
-    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.29, 0.28, { flipU: s < 0, bulge: 0.008 });
+    const geo = facePatch(s * FACE.eyePhi, FACE.eyeTh, 0.33, 0.29, { flipU: s < 0, bulge: 0.008 });
     const m = mesh(geo, mat, eyes, '눈');
     m.castShadow = false;
   }
@@ -636,7 +636,7 @@ function buildBackpack(torso, color) {
 // 팔이 파고들면 안 되는 몸 부피 (collision.js): 겉옷보다 조금 안쪽으로 잡아,
 // 소매·팔꿈치가 옷에 살짝 스치는 기본 자세는 그대로 두고 눈에 띄게 박히는 것만 밀어낸다
 const COLLIDER_INSET = 0.012;
-const HEAD_COLLIDER = [0.2, 0.19, 0.19];
+const HEAD_COLLIDER = [0.19, 0.19, 0.19];
 const inset = (pts, d = COLLIDER_INSET) => pts.map(([r, y]) => [Math.max(0.02, r - (typeof d === 'function' ? d(y) : d)), y]);
 // 셔츠 아랫단·바지는 부드러운 천이라 더 깊이 허용: 내려 둔 손이 엉덩이 옆에 살짝 스쳐도 팔을 벌려 밀어내지 않게
 const HEM_INSET = (y) => THREE.MathUtils.lerp(0.025, COLLIDER_INSET, THREE.MathUtils.smoothstep(y, 0.02 * TY, 0.1 * TY));

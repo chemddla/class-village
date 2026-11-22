@@ -116,7 +116,7 @@ function faceBase(skin, W, H) {
 // 정면 사진 기준 비율 (정수리→턱 높이 H, 얼굴 폭 W): 눈 중심 0.57H·눈 사이 0.52W·지름 0.18W,
 // 코 0.67H(가로로 납작), 입 0.8H(폭 0.24W), 볼 터치는 입 높이 바깥, 귀는 코~입 높이
 export const FACE = {
-  eyePhi: 0.5, eyeTh: Math.PI * 0.54,
+  eyePhi: 0.54, eyeTh: Math.PI * 0.54,
   noseTh: Math.PI * 0.605,
   mouthTh: Math.PI * 0.685, mouthScale: 1.4,
   blushPhi: 0.64, blushTh: Math.PI * 0.665,
