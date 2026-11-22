@@ -16,6 +16,8 @@ export const ANIM = {
   CHOP2: 15, CHOP3: 16, // 이어 하는 도끼질 (같은 동작, 번갈아 재생)
   SMASH_AIR: 17, SMASH_SLAM: 18, SMASH_DASH: 19, // 몽둥이 공중 공격 · 더블 점프 뒤 내리찍기 · 대시 공격
   SLASH1: 20, SLASH2: 21, SLASH3: 22, SLASH4: 23, // 목검(한손검) 대각선 베기 · 가로 되베기 · 찌르기 · 3타에 이어 치는 1타
+  TREE_SHAKE: 24, // 과일나무 줄기 가운데를 두 손으로 잡고 흔들기
+  POCKET: 25, // 떨어진 과일을 주워 오른쪽 허리 주머니에 넣기
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
@@ -29,6 +31,14 @@ export const LIFE_SPOTS = [
 // 과일 나무 종류. 마을마다 '주된 과일' 하나가 정해져 마을 과일나무에 열린다 (다른 과일은 나중에 상점에서 산다)
 export const FRUITS = ['peach', 'apple', 'orange', 'pear'];
 export const FRUIT_NAMES = { peach: '복숭아', apple: '사과', orange: '오렌지', pear: '배' };
+export const VILLAGE_FRUIT = 'peach'; // 마을 과일나무에 열리는 과일
+export const FRUIT_MAX = 5; // 과일나무 한 그루에 열리는 개수
+export const FRUIT_REGROW = 45; // 딴 과일이 다시 열리기까지 (초)
+export const BAG_MAX = 99; // 가방에 넣을 수 있는 과일 한 종류의 최대 개수
+export const PICK_REACH = 2.2; // 과일나무 둘레에서 이만큼 안이면 흔들 수 있음 (m)
+export const SHAKE_DROP = [3, 4]; // 과일나무를 흔들면 떨어지는 개수 (이 사이에서 무작위, 남은 것보다 많이는 안 떨어짐)
+export const GRAB_REACH = 1.3; // 땅에 떨어진 과일을 주울 수 있는 거리 (m)
+export const DROP_LIFE = 300; // 떨어진 과일이 땅에 남아 있는 시간 (초), 지나면 사라짐
 
 // 캐릭터 색 목록 (파스텔)
 export const COLORS = [

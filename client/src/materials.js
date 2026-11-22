@@ -74,7 +74,7 @@ const SWAY_GLSL = `
 #ifdef USE_INSTANCING
 vec3 sIP = instanceMatrix[3].xyz;
 #else
-vec3 sIP = vec3(0.0);
+vec3 sIP = modelMatrix[3].xyz; // 따로 그리는 나무(과일나무)도 자리마다 박자가 다르게
 #endif
 float sH = max(transformed.y - 1.0, 0.0);
 float sPh = uTime * 1.1 - sIP.x * 0.21 - sIP.z * 0.17;

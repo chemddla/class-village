@@ -12,6 +12,23 @@ export const LIFE = {
   rod: { anim: ANIM.FISH, what: '물가' },
 };
 
+// 과일나무마다 남은 과일 수 (서버 상태를 main.js 가 채움, WORLD.fruitTrees 순서)
+export const fruitLeft = [];
+
+// 과일나무 흔들기(F): 바로 앞에 붙어 선 과일나무 중 과일이 남은 가장 가까운 나무 { x, z, d, pick: 과일나무 번호 } 또는 null
+// 두 손으로 줄기를 잡아야 해서 나무에 거의 붙어 있어야 한다 (부딪히는 원 가장자리에서 SHAKE_REACH 안)
+const SHAKE_REACH = 0.75;
+export function findFruit(x, z) {
+  let best = null;
+  let bestD = SHAKE_REACH;
+  WORLD.fruitTrees.forEach((ti, k) => {
+    const t = WORLD.trees[ti];
+    const d = Math.hypot(t.x - x, t.z - z) - t.r;
+    if (fruitLeft[k] > 0 && d < bestD) { bestD = d; best = { x: t.x, z: t.z, d, pick: k }; }
+  });
+  return best;
+}
+
 // 이 도구로 할 수 있는 가장 가까운 대상 위치(바라볼 곳, d: 거리) 또는 null. spots: 테스트용 생활 요소(없으면 [])
 export function findTarget(tool, x, z, spots) {
   let best = null;
