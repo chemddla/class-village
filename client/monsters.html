@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>쪼렙 몬스터 시안</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Pretendard', 'Malgun Gothic', sans-serif; }
+  #c { width: 100%; height: 100%; display: block; }
+  .tag { position: absolute; transform: translate(-50%, 0); pointer-events: none; text-align: center;
+    background: rgba(255,255,255,.88); border: 2px solid #4a3525; border-radius: 12px; padding: 4px 9px;
+    color: #4a3525; font-size: 13px; white-space: nowrap; box-shadow: 0 2px 0 #4a3525; }
+  .tag b { display: block; font-size: 15px; }
+  .tag small { color: #8a6a55; }
+  #title { position: absolute; left: 16px; top: 12px; color: #4a3525; font-size: 20px; font-weight: 800; }
+  #title span { display: block; font-size: 13px; font-weight: 400; color: #8a6a55; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title">쪼렙 몬스터 시안<span>마우스로 돌려 보기 · 휠로 확대 · 맨 오른쪽은 크기 비교용 주민</span></div>
+<script type="module" src="/src/monster-sketch.js"></script>
+</body>
+</html>
