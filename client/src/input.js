@@ -1,5 +1,5 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터)
-// Space 점프 · 1~4 감정 표현 · Q 퀵슬롯 장비 바꾸기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// Space 점프 · Ctrl+1~4 감정 표현 · Q 퀵슬롯 장비 바꾸기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
@@ -8,6 +8,14 @@ const ACTION_KEYS = {
   Space: 'jump', KeyQ: 'tool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyZ: 'attack',
   Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
   Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
+};
+// 감정 표현은 Ctrl 을 누른 채 숫자를 눌러야 나온다 (숫자만 누르면 아무 일 없음)
+const isEmote = (name) => name.startsWith('emote');
+// 키보드로 누른 키가 어떤 행동인지: Ctrl 조합이 맞지 않으면 없음
+const keyAction = (e) => {
+  const name = ACTION_KEYS[e.code];
+  if (!name) return null;
+  return isEmote(name) === e.ctrlKey ? name : null;
 };
 
 export function createInput({ onAction, onOrbit, onZoom }) {
@@ -27,7 +35,8 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   addEventListener('keydown', (e) => {
     if (!enabled) return;
     if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); }
-    if (ACTION_KEYS[e.code]) { held.add(ACTION_KEYS[e.code]); if (!e.repeat) onAction(ACTION_KEYS[e.code]); e.preventDefault(); }
+    const name = keyAction(e);
+    if (name) { held.add(name); if (!e.repeat) onAction(name); e.preventDefault(); } // Ctrl+숫자의 브라우저 탭 넘기기도 막는다
   });
   addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); if (ACTION_KEYS[e.code]) held.delete(ACTION_KEYS[e.code]); });
   addEventListener('blur', () => { keys.clear(); held.clear(); });
