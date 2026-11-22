@@ -113,6 +113,7 @@ html, body {
 }
 .look-row button.on:not(.swatch) { border-color: var(--ink); }
 .look-row .swatch { width: 30px; }
+.fruit-count { padding: 6px 10px; border-radius: 10px; background: #fff7e8; font-size: 13px; font-weight: 700; }
 
 #hint {
   position: fixed; left: 12px; bottom: 12px; max-width: calc(50% - 170px);
