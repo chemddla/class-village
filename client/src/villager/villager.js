@@ -6,7 +6,7 @@ import {
   aoGradient, liveTexture, drawFace, drawEye, hairTexture, clothTexture, clothBump,
   plaidTexture, soleBump, pocketTexture, shade, logoTexture, canvasTexture, FACE,
 } from './textures.js';
-import { ACTIONS, createAnimator } from './actions.js';
+import { ACTIONS, ARM_REST, createAnimator } from './actions.js';
 import { EQUIPMENT, attachEquipment, updateEquipment, straightenWrists } from './equipment.js';
 import { resolveArmCollision } from './collision.js';
 
@@ -487,6 +487,8 @@ export const SHOULDER = { x: 0.076 * BODY_K, y: 0.184 * TY };
 // 몸통 어깨선과 팔이 둥글게 이어지고 따로 떨어져 보이지 않는다. 팔보다 조금 굵게 잡아 팔을 들 때 생기는
 // 몸통 어깨선과 팔 윗면 사이의 오목한 꺾임을 둥글게 메운다
 const CAP_R = 0.027;
+// 둥근 반구 그대로 둔다: 마감이 팔 각도를 따라 기울어(shoulderBone) 몸통 어깨 호와 볼록하게만 이어진다.
+// 납작하게 누르면 몸통 호가 급히 떨어진 뒤 마감이 다시 솟아 그 사이가 오목하게 꺼진다
 const SHOULDER_CAP = [0, 20, 40, 60, 78, 90].map((d) => [CAP_R * Math.sin((d * PI) / 180), CAP_R * Math.cos((d * PI) / 180)]);
 // 어깨 둥근 마감의 외곽선: 몸통과 맞닿는 쪽(몸 안쪽 반쪽)은 선을 긋지 않는다.
 // 선이 남으면 팔을 들거나 몸을 틀 때 몸통 위에 소매 테두리가 그어져 어깨가 따로 붙은 공처럼 끊겨 보인다.
@@ -1150,10 +1152,15 @@ const CAP_SQUASH = 0.55; // 팔이 앞으로 수평일 때 옆으로 줄이는 �
 const ARM_DOWN = new THREE.Vector3();
 const SQ_AXIS = new THREE.Vector3();
 const SQ_M = new THREE.Matrix4();
-const REST_SQ = new THREE.Quaternion();
 const SQ_Q = new THREE.Quaternion();
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+const CAP_TILT = 2.2; // 마감이 따라 기우는 최대 각 (만세처럼 머리 위로 든 팔까지)
 function shoulderBone(arm, torso, spin, name) {
   const b = new THREE.Object3D();
+  // 마감 뼈는 팔이 옆으로 벌어진 만큼(평소 A자 각도까지만) 같이 기운다: 꼿꼿이 서 있으면 마감 옆면이 수직으로 떨어지다
+  // 아래 소매에서 바깥으로 다시 꺾여 어깨선이 울퉁불퉁해진다. 앞으로 뻗는 팔은 따라가지 않아 등 쪽으로 튀어나오지 않는다
+  const side = Math.sign(arm.position.x);
+  const REST_SQ = new THREE.Quaternion();
   b.name = name;
   b.updateMatrix = function updateShoulderBone() {
     ARM_DOWN.set(0, -1, 0).applyQuaternion(arm.quaternion);
@@ -1163,6 +1170,9 @@ function shoulderBone(arm, torso, spin, name) {
     // 누르는 축: 몸 옆(x)에서 팔 방향 성분을 뺀 방향
     SQ_AXIS.set(1, 0, 0).addScaledVector(ARM_DOWN, -ARM_DOWN.x);
     const n2 = SQ_AXIS.lengthSq();
+    // 정면에서 본 팔의 벌림 각 (앞뒤로 뻗을수록 정면 성분이 줄어 덜 기운다)
+    const fan = Math.atan2(side * ARM_DOWN.x, -ARM_DOWN.y) * Math.hypot(ARM_DOWN.x, ARM_DOWN.y);
+    REST_SQ.setFromAxisAngle(Z_AXIS, side * Math.max(0, Math.min(CAP_TILT, fan)));
     SQ_Q.slerpQuaternions(REST_SQ, arm.quaternion, spin);
     this.matrix.makeRotationFromQuaternion(SQ_Q);
     if (n2 > 1e-6 && k > 1e-4) {

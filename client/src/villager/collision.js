@@ -149,6 +149,7 @@ function measure(el, hand, colliders, only) {
 // 비틀어 볼 각도: 작은 각부터 좌우 번갈아 (가장 덜 비튼 자세를 고르도록)
 const TWISTS = [];
 for (let k = 1; k <= 12; k++) TWISTS.push((k * Math.PI) / 12, (-k * Math.PI) / 12);
+const TWIST_MIN = 0.012; // 팔꿈치가 어깨~손목 축에서 이보다 가까우면 비틀지 않는다 (월드 거리)
 const shQ = new THREE.Quaternion();
 const shQ0 = new THREE.Quaternion();
 const shQ1 = new THREE.Quaternion();
@@ -156,12 +157,19 @@ const hdQ = new THREE.Quaternion();
 
 // 팔꿈치 비틀기: 어깨~손목 축으로 팔을 돌려 팔꿈치가 몸 밖으로 나오는 가장 작은 각을 찾는다.
 // 손목은 축 위라 제자리, 손 방향은 원래대로 되돌린다 (쥔 도구가 흔들리지 않게)
-function twistElbow(sh, el, hand, colliders) {
+// prev: 앞 장면에 비튼 각. 매 장면 새로 찾은 각으로 곧장 가면 팔꿈치가 몸에 닿는 순간·떨어지는 순간 팔이 한 장면 만에 휙 돌므로,
+// 앞 장면 각에서 한 번에 MAX_STEP 까지만 따라간다. 돌려주는 값은 이번에 비튼 각
+// shortcut: 장면당 한계라 프레임이 높을수록 빨리 따라간다, 문제 되면 dt를 받아 초당 한계로
+function twistElbow(sh, el, hand, colliders, prev = 0) {
   sh.getWorldPosition(S);
   hand.getWorldPosition(W);
   axis.subVectors(W, S);
-  if (axis.lengthSq() < 1e-8) return;
+  if (axis.lengthSq() < 1e-8) return 0;
   axis.normalize();
+  // 팔을 거의 다 펴 팔꿈치가 축 가까이 있으면 비틀어도 팔꿈치는 거의 제자리이고 팔만 휙 돈다 (한손검 1타 타격·놓을 때).
+  // 축에 가까울수록 비트는 각을 줄이고(딱 끊으면 그 경계에서 튄다), 남은 것은 2) 어깨째 밀기에 맡긴다
+  el.getWorldPosition(E).sub(S);
+  const keep = THREE.MathUtils.smoothstep(E.addScaledVector(axis, -E.dot(axis)).length(), TWIST_MIN, TWIST_MIN * 2);
   shQ.copy(sh.quaternion);
   hdQ.copy(hand.quaternion);
   hand.getWorldQuaternion(handQ);
@@ -175,7 +183,7 @@ function twistElbow(sh, el, hand, colliders) {
   };
   let bestAng = 0;
   let bestDepth = measure(el, hand, colliders, 'elbow');
-  for (const ang of TWISTS) {
+  for (const ang of keep > 0 && bestDepth > 1e-4 ? TWISTS : []) {
     apply(ang);
     const d = measure(el, hand, colliders, 'elbow');
     if (d < bestDepth - 1e-5) { bestDepth = d; bestAng = ang; }
@@ -193,11 +201,13 @@ function twistElbow(sh, el, hand, colliders) {
       break;
     }
   }
-  if (bestAng === 0) {
+  const ang = prev + THREE.MathUtils.clamp(bestAng * keep - prev, -MAX_STEP, MAX_STEP);
+  if (ang === 0) {
     sh.quaternion.copy(shQ);
     hand.quaternion.copy(hdQ);
     sh.updateMatrixWorld(true);
-  } else apply(bestAng);
+  } else apply(ang);
+  return ang;
 }
 
 // 한 쪽 팔(s = 'R'|'L')을 몸 밖으로. 반환값: 마지막에 남은 최대 깊이(점검용)
@@ -207,8 +217,8 @@ function resolveArm(rig, s, colliders, hold) {
   const sh = rig[`shoulder${s}`];
   const el = rig[`elbow${s}`];
   const hand = rig[`hand${s}`];
-  // 1) 팔꿈치가 박혔으면 먼저 비틀어 본다 (손 자리 유지)
-  if (measure(el, hand, colliders, 'elbow') > 1e-4) twistElbow(sh, el, hand, colliders);
+  // 1) 팔꿈치가 박혔으면 먼저 비틀어 본다 (손 자리 유지). 안 박혔으면 앞 장면에 비튼 각을 서서히 푼다
+  (rig.twist ??= {})[s] = twistElbow(sh, el, hand, colliders, rig.twist[s] ?? 0);
   // 2) 그래도 남으면 어깨째 몸 밖으로 민다. 두 손 쥐기 중에는 도구를 놓치지 않게 손 자리를 그대로 둠
   if (hold >= 1) return measure(el, hand, colliders);
   shQ0.copy(sh.quaternion);

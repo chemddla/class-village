@@ -672,7 +672,7 @@ const input = createInput({
     saveCam();
   },
   onZoom(dy) {
-    cam.zoom = THREE.MathUtils.clamp(cam.zoom * Math.exp(dy * 0.0012), 0.4, 1.6);
+    cam.zoom = THREE.MathUtils.clamp(cam.zoom * Math.exp(dy * 0.0012), 0.2, 3);
     saveCam();
   },
 });

@@ -8,7 +8,7 @@ const PI = Math.PI;
 const sm = THREE.MathUtils.smoothstep;
 const SIDES = ['R', 'L'];
 // 팔을 편히 내렸을 때 옆으로 벌어지는 각도: 물방울 몸통에서 소매가 비스듬히 뻗어 나오는 A자 실루엣
-const ARM_REST = 0.6;
+export const ARM_REST = 0.6;
 // 과일나무 흔들기에서 앞으로 내딛을 거리 (주민 몸 크기 단위). 나무마다 줄기까지 거리가 달라서,
 // 게임에서는 캐릭터가 동작을 시작할 때 손이 줄기 표면에 딱 닿을 만큼으로 정해 넣는다 (character.js)
 export const SHAKE = { step: 0.2 };
@@ -340,7 +340,7 @@ export const CLUB_STYLES = {
   //  곧장 아래로 떨구면 오른 아래팔이 세운 몽둥이 아래쪽을 쥔 왼 주먹을 뚫고 지나가므로 바깥 옆으로 조금 비켜 내린다
   homerun: { label: '3타 · 야구 배트처럼 높이 들었다 내리며 크게', back: [-0.35, 0.93, 0.1], elbowDown: true, hit: [-0.3, -0.04, 0.95], end: [0.65, 0.15, 0.72],
     posBack: [-0.11, 0.215, 0.11], posHit: [-0.06, 0.09, 0.2], posEnd: [0.03, 0.16, 0.14], reach: [0.01, -0.03], charge: true,
-    twist: [-1.6, 0.35, 1.6], lean: [-0.26, 0.2, 0.04], crouch: 0.5, stance: 1, kick: 1, hips: 0.55,
+    twist: [-2.0, 0.35, 1.6], lean: [-0.32, 0.2, 0.04], crouch: 0.5, stance: 1, kick: 1, hips: 0.55,
     from: 'second', duration: 0.78, via: { dir: CLUB_SIDE[1], pos: CLUB_SIDE[0] } },
   // 4타(= 이어 치는 1타): 야구 스윙이 왼쪽 뒤로 넘어간 자리에서 몽둥이를 오른쪽으로 되돌려 오른 어깨 너머로 젖혔다가 다시 왼쪽 아래로 내리친다.
   // 끝 자세가 1타와 같아 2타가 그대로 받는다: 1타 → 2타 → 3타 → 4타 → 2타 → 3타 → …
@@ -417,7 +417,8 @@ const SWORD_STYLES = {
   // 1타: 팔을 오른 어깨 위·뒤로 크게 치켜들어 칼을 등 뒤로 눕혔다가, 팔을 쭉 뻗은 채 오른쪽 위 → 왼쪽 아래로 크게 대각선 베기
   // (치켜들 때 팔꿈치는 오른쪽 바깥을 향하고, 내리면서 아래로 돌아간다)
   slash1: { duration: 0.6, hitAt: 0.47, trail: [0.33, 0.64],
-    keys: [PLANE1(0.33, 140, 0.18), PLANE1(0.47, 0, REACH, 'in'), PLANE1(0.64, -22, REACH, 'out')],
+    // 끝 키의 팔꿈치는 아래에서 살짝 뒤로 돌려 둔다 (2타와 같은 까닭: 손을 놓을 때 팔이 휙 돌지 않게)
+    keys: [PLANE1(0.33, 140, 0.18), PLANE1(0.47, 0, REACH, 'in'), { ...PLANE1(0.64, -22, REACH, 'out'), pole: [-0.6, -1, -0.4] }],
     twist: [[0, 0], [0.12, -0.35], [0.33, -1.15], [0.47, 0.3, 'in'], [0.64, 1.15, 'out']], // 젖힐 때 오른쪽 뒤로 크게 감았다가 휘두르며 왼쪽까지 확 풀어 돈다
     lean: [[0, 0], [0.33, -0.15], [0.47, 0.14], [0.64, 0.22]],
     armL: [[0, 0.6], [0.33, 1.2], [0.47, 0.9], [0.64, 0.35]],
@@ -427,7 +428,8 @@ const SWORD_STYLES = {
   // 2타: 왼쪽 아래 끝 자세에서 칼을 왼 어깨 위로 감아올렸다가, 팔을 쭉 뻗은 채 왼쪽 위 → 오른쪽 아래로 사선 되베기
   // (감아올릴 때 팔꿈치는 가슴 앞 아래를 향한다)
   slash2: { duration: 0.54, hitAt: 0.43, trail: [0.27, 0.62], from: 'slash1',
-    keys: [PLANE2(0.27, 120, 0.17), PLANE2(0.43, 0, REACH, 'in'), PLANE2(0.62, -28, REACH, 'out')],
+    // 끝 키의 팔꿈치는 평소 자세처럼 뒤로 돌려 둔다: 앞 아래로 둔 채 손을 놓으면 평소 자세와 윗팔 비틀림이 180도 가까이 어긋나, 놓는 도중 팔이 휙 돈다
+    keys: [PLANE2(0.27, 120, 0.17), PLANE2(0.43, 0, REACH, 'in'), { ...PLANE2(0.62, -28, REACH, 'out'), pole: [-0.3, -0.5, -1] }],
     twist: [[0, 1.15], [0.27, 1.2], [0.43, 0, 'in'], [0.62, -1.1, 'out']],
     lean: [[0, 0.22], [0.27, 0.05], [0.43, 0.14], [0.62, 0.12]],
     armL: [[0, 0.35], [0.27, 0.3], [0.43, 0.9], [0.62, 1.25]],
@@ -666,10 +668,10 @@ function clubSwing(S) {
         // (발바닥은 땅과 나란히 두고 발끝만 살짝 늘어뜨린다). 휘두르는 동안 뒷다리(오른다리)는 무릎을 더 굽혀 몸을 밀어 돌린다
         // 무릎은 허리 높이까지 높이 들고, 들어 올리는 동안 몸을 위로 쭉 늘였다가 내딛는 순간 꾹 눌러 앉는다
         const lift = kf(u, [0.08, 0], [0.3, 1], [0.4, 1], [0.49, 0, 'in']) * S.kick;
-        P['hipL.rx'] -= 1.05 * lift;
-        P['kneeL.rx'] += 1.4 * lift;
+        P['hipL.rx'] -= 1.45 * lift;
+        P['kneeL.rx'] += 1.8 * lift;
         P['footL.rx'] -= 0.2 * lift;
-        P['hipL.rz'] -= 0.12 * lift; // 든 무릎을 몸 안쪽으로 살짝 모은다 (감는 허리와 함께 몸이 꼬인다)
+        P['hipL.rz'] -= 0.18 * lift; // 든 무릎을 몸 안쪽으로 살짝 모은다 (감는 허리와 함께 몸이 꼬인다)
         P['hipR.rx'] -= 0.12 * lift; // 버티는 뒷다리도 살짝 굽혀 몸을 싣는다
         P['kneeR.rx'] += 0.2 * lift;
         P['footR.rx'] -= 0.08 * lift;
@@ -1335,7 +1337,8 @@ export function createAnimator(rate = 18) {
         const c = cur[k] ?? 0;
         if (ch === 'ry' || k === 'root.rx') {
           // 한 바퀴 도는 회전(제자리 돌기·공중제비)은 가까운 쪽으로 돌도록 각도 차를 -π~π로 감는다
-          cur[k] = THREE.MathUtils.lerp(c, c + wrap(goal - c), a);
+          // 공중제비 회전(root.rx)도 몸 위치처럼 rootRate 로: 공중제비 → 내리찍기로 넘어갈 때 밀려 있던 회전이 한 번에 따라잡아 튀지 않게
+          cur[k] = THREE.MathUtils.lerp(c, c + wrap(goal - c), joint === 'root' ? aRoot : a);
           o.rotation[ch[1]] = cur[k];
         } else if (ch[0] === 'r') {
           cur[k] = THREE.MathUtils.lerp(c, goal, a);
