@@ -1,4 +1,4 @@
-// 광장·들판에 소환하는 쪼렙 몬스터 (날개콩·몽당연필): 정해진 자리를 빙 돌며 걷기·쉬기·특기(날기 시도·물구나무 낙서)·두리번을 되풀이한다.
+// 광장·들판에 소환하는 쪼렙 몬스터 (날개콩·몽당연필·반쪽이): 정해진 자리를 빙 돌며 걷기·쉬기·특기(날기 시도·물구나무 낙서·박박 문지르기)·두리번을 되풀이한다.
 // 가야 할 자리와 동작을 시계(Date.now)로 정하므로, 같은 서버에 들어온 사람들 화면에서 거의 같은 자리·같은 동작으로 보인다.
 // 맞는 판정도 (모두의 화면에 똑같이 보이는) 휘두르는 사람의 자리·방향으로 정하므로, 누가 때려도 모두의 화면에서 함께 맞는다.
 // (서버가 따로 몬스터를 관리하지 않는 맛보기용. 가까이 다가가면 내 화면에서만 깜짝 놀란다)
@@ -6,8 +6,9 @@ import { PLAZA } from '../../../shared/world.js';
 import { curveDrop } from '../materials.js';
 import { createNalgaekong } from './nalgaekong.js';
 import { createMongdang } from './mongdang.js';
+import { createBanjjok } from './banjjok.js';
 
-// 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격
+// 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격 · size(크기 배율, 없으면 1)
 // 성격(temper): 캐릭터를 발견했을 때 어떻게 하는지
 //   'flee'    도망형: 일정 거리까지 도망감. 나한테 맞으면 화가 나서 쫓아와 공격
 //   'neutral' 중립형: 별다른 행동 없이 제 할 일만 함
@@ -15,6 +16,7 @@ import { createMongdang } from './mongdang.js';
 const KINDS = {
   nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter', temper: 'flee' },
   mongdang: { create: createMongdang, r: 0.042, special: 'scribble', temper: 'flee' },
+  banjjok: { create: createBanjjok, r: 0.04, special: 'rub', temper: 'flee', size: 1.35 }, // 납작해서 조금 크게 · 몸통박치기도 0.47초에 닿음
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -46,7 +48,7 @@ const ANGRY = 8; // 도망형이 맞고 화가 나 있는 시간 (초): 그동�
 const LEASH = 7; // 제 길에서 이보다 멀리는 가지 않음 (m)
 const ATTACK_REACH = 0.55; // 몸 가장자리에서 이만큼 안이면 공격 (m)
 const ATTACK_COOL = 1.6; // 공격 사이 쉬는 시간 (초)
-const STRIKE_AT = 0.47; // 공격 동작에서 부리·심이 닿는 순간 (초)
+const STRIKE_AT = 0.47; // 공격 동작에서 부리·심·몸통이 닿는 순간 (초)
 const groundY = (x, z) => (Math.hypot(x - PLAZA.fountain.x, z - PLAZA.fountain.z) < PLAZA.r ? PAVE : 0);
 
 // 한 바퀴 일정 (동작 이름, 초)
@@ -73,14 +75,15 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const BUSY = new Set(['hit', 'die', 'gone', 'spawn']);
 
 // spot: 빙 도는 가운데와 반지름 (기본은 광장 분수 둘레, 분수와 벤치 사이 길) · phase: 일정을 이만큼(초) 어긋나게 (여럿이 같은 동작을 하지 않게)
-// kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필) · temper: 성격 (없으면 종류의 기본 성격)
+// kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필) | 'banjjok'(반쪽이) · temper: 성격 (없으면 종류의 기본 성격)
 // onAttack(x, z): 이 몬스터의 공격이 내 캐릭터에 닿았을 때 불림 (몬스터 자리)
 // blocked(x, z, r): 반지름 r인 몸이 (x, z)에 서면 벽·분수·나무 등에 부딪히는지 (없으면 막히는 데 없음)
 export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fountain.z, r: R = 3.0, phase = 0, kind = 'nalgae', temper, onAttack, blocked: blockedAt = () => false } = {}) {
   const f = { x, z };
   const K = KINDS[kind];
   const TEMPER = temper ?? K.temper;
-  const BODY_R = K.r * SCALE; // 몸 반지름 (m): 캐릭터가 이 안으로 지나가지 못한다
+  const S = SCALE * (K.size ?? 1); // 이 몬스터의 크기
+  const BODY_R = K.r * S; // 몸 반지름 (m): 캐릭터가 이 안으로 지나가지 못한다
   const blocked = (bx, bz) => blockedAt(bx, bz, BODY_R);
   // 벽에 부딪히면 미끄러지듯 이동 (이미 막힌 자리에 있으면 빠져나갈 수 있게 그냥 움직임)
   const move = (ax, az, nx, nz) => {
@@ -100,7 +103,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     return null;
   };
   const mon = K.create({ fxParent: scene, outlineScale: OUTLINE_SCALE });
-  mon.root.scale.setScalar(SCALE);
+  mon.root.scale.setScalar(S);
   scene.add(mon.root);
   let lastKey = '';
   let heading = 0;
@@ -151,7 +154,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         kx *= 0.5;
         kz *= 0.5;
       } else mon.play('hit');
-      return { x: px, z: pz, y: 0.07 * SCALE };
+      return { x: px, z: pz, y: 0.07 * S };
     },
     // me: 내 캐릭터 (없으면 아직 입장 전)
     update(dt, me) {

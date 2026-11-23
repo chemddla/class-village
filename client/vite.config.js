@@ -18,6 +18,7 @@ export default defineConfig({
         monsters: fileURLToPath(new URL('./monsters.html', import.meta.url)),
         nalgaekong: fileURLToPath(new URL('./nalgaekong.html', import.meta.url)),
         mongdang: fileURLToPath(new URL('./mongdang.html', import.meta.url)),
+        banjjok: fileURLToPath(new URL('./banjjok.html', import.meta.url)),
       },
     },
   },
