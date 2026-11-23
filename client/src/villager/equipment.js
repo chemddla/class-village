@@ -124,15 +124,53 @@ function fishingRod() {
 function bugNet() {
   const g = new THREE.Group();
   g.name = '잠자리채';
-  part(new THREE.CylinderGeometry(0.008, 0.01, 0.48, 8), mat('#e7c39b', { roughness: 0.8 }), g, '채자루', [0, 0.2, 0]);
-  const hoopY = 0.44 + 0.075;
-  part(new THREE.TorusGeometry(0.075, 0.005, 6, 28), mat('#3b8f5a', { roughness: 0.5 }), g, '테', [0, hoopY, 0]);
-  // 그물 주머니: 반투명 원뿔 + 그물코 선
-  const bag = new THREE.ConeGeometry(0.073, 0.13, 14, 3, true).rotateX(PI / 2);
-  part(bag, new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
-    g, '그물', [0, hoopY, -0.065]).castShadow = false;
-  part(bag, new THREE.MeshBasicMaterial({ color: '#e8f3f6', wireframe: true }), g, '그물코', [0, hoopY, -0.065]).castShadow = false;
+  // 자루: 마디 있는 대나무 + 손잡이에 감은 초록 천
+  const BAMBOO = mat('#e2c27f', { roughness: 0.6 });
+  const L = 0.6;
+  part(new THREE.CylinderGeometry(0.0065, 0.0085, L, 10), BAMBOO, g, '채자루', [0, L / 2 - 0.08, 0]);
+  for (const y of [0.1, 0.27, 0.42]) part(new THREE.CylinderGeometry(0.0085, 0.0085, 0.008, 10), mat('#c9a35c', { roughness: 0.6 }), g, '마디', [0, y, 0]);
+  part(new THREE.CylinderGeometry(0.0105, 0.0105, 0.11, 12), mat('#4f9a5c', { roughness: 0.7 }), g, '손잡이', [0, -0.03, 0]);
+  // 테: 자루 끝에서 이어지는 둥근 철사 고리 (자루와 같은 면에 서서, 휘두르는 쪽(+Z)으로 입을 벌린다)
+  const R = 0.11;
+  const top = L - 0.08;
+  const hoopY = top + R;
+  const WIRE = mat('#3b8f5a', { roughness: 0.4, metalness: 0.2 });
+  part(new THREE.TorusGeometry(R, 0.0045, 8, 36), WIRE, g, '테', [0, hoopY, 0]);
+  part(new THREE.CylinderGeometry(0.0095, 0.0085, 0.03, 10), mat('#cfd6de', { roughness: 0.3, metalness: 0.6 }), g, '쇠고리', [0, top - 0.005, 0]);
+  // 그물 주머니: 테보다 깊은 자루 모양. 휘두르는 반대쪽(-Z)으로 늘어지며 끝이 아래로 처진다
+  const D = 0.27;
+  const prof = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    prof.push(new THREE.Vector2(R * Math.sqrt(Math.max(0, 1 - t ** 2.2)) * (1 - 0.15 * t) + 0.0005, -D * t));
+  }
+  const sack = new THREE.LatheGeometry(prof, 20).rotateX(PI / 2); // 축 -Z 로
+  const sp = sack.attributes.position;
+  for (let i = 0; i < sp.count; i++) {
+    const k = -sp.getZ(i) / D; // 0(테) → 1(끝)
+    sp.setY(i, sp.getY(i) * (1 - 0.25 * k) - 0.09 * k * k); // 끝으로 갈수록 좁아지며 아래로 처짐
+  }
+  sack.computeVertexNormals();
+  part(sack, new THREE.MeshStandardMaterial({ color: '#f3fbf6', transparent: true, opacity: 0.42, roughness: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+    g, '그물', [0, hoopY, 0]).castShadow = false;
+  const netLines = new THREE.LineSegments(new THREE.WireframeGeometry(sack), new THREE.LineBasicMaterial({ color: '#d6e9df', transparent: true, opacity: 0.8 }));
+  netLines.position.set(0, hoopY, 0);
+  g.add(netLines);
   return grip(g);
+}
+
+// 채집통: 왼손에 손잡이를 쥐고 드는 투명한 통 (초록 뚜껑·바닥, 안에 풀잎 하나). 손 아래(-y)로 매달린다
+function bugCase() {
+  const g = new THREE.Group();
+  g.name = '채집통';
+  const GREEN = mat('#4f9a5c', { roughness: 0.45 });
+  part(new THREE.BoxGeometry(0.078, 0.064, 0.056), new THREE.MeshStandardMaterial({ color: '#dff3f6', transparent: true, opacity: 0.45, roughness: 0.15, depthWrite: false }),
+    g, '통', [0, -0.07, 0]).castShadow = false;
+  part(new THREE.BoxGeometry(0.084, 0.012, 0.062), GREEN, g, '뚜껑', [0, -0.033, 0]);
+  part(new THREE.BoxGeometry(0.084, 0.008, 0.062), GREEN, g, '바닥', [0, -0.104, 0]);
+  part(new THREE.TorusGeometry(0.022, 0.0035, 6, 14, PI), mat('#e9e3d6', { roughness: 0.5 }), g, '손잡이', [0, -0.027, 0]);
+  part(new THREE.BoxGeometry(0.004, 0.035, 0.012).rotateZ(0.3), mat('#7fbf4f', { roughness: 0.6 }), g, '풀잎', [0.012, -0.082, 0]).castShadow = false;
+  return g;
 }
 
 // ── 사냥 무기 ──
@@ -275,7 +313,7 @@ export const EQUIPMENT = {
   axe: { label: '도끼', right: axe, carry: [-0.9, 0], twoHand: -0.07 },
   club: { label: '나무 몽둥이', right: club, carry: [-0.9, 0], twoHand: -0.056 }, // 두 주먹이 맞닿는 간격
   rod: { label: '낚싯대', right: fishingRod, carry: [-0.7, 0], twoHand: -0.07 },
-  net: { label: '잠자리채', right: bugNet, carry: [-1.0, 0] },
+  net: { label: '잠자리채', right: bugNet, left: bugCase, carry: [-1.0, 0] }, // 오른손 잠자리채 + 왼손 채집통
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
   woodSword: { label: '목검', right: woodSword, carry: [-0.5, 0] },
   bow: { label: '활 + 화살', left: bow, carry: [0, -1.2] },

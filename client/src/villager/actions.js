@@ -584,6 +584,40 @@ function swordSwing(name) {
   };
 }
 
+// ── 잠자리채 휘두르기: 오른 어깨 뒤로 채를 젖혔다가, 팔을 쭉 뻗은 채 오른쪽 → 앞 → 왼쪽으로 크게 쓸어 담는다 ──
+// level: 0 가슴 높이로 가로 쓸기, 1 머리 위로 높이 쓸기(나는 곤충), -1 쪼그려 앉으며 발 앞을 낮게 쓸기(땅·꽃 곤충)
+// 그물 테가 실제로 지나간 자리에 곤충이 있어야 잡힌다 (character.js 가 그 길을 모아 main.js 가 서버로 보낸다)
+const NET_LEAD = 50 * PI / 180;
+function netSweep(level) {
+  const y = [-0.55, 0.02, 1.1][level + 1];
+  const plane = slashPlane([0.05, y, 1 - Math.abs(y) * 0.3], [-1, 0.25 + Math.max(0, -y) * 0.6, -0.1], [-0.4, -1, 0.1], NET_LEAD);
+  const keys = [{ ...SWORD_READY, u: 0 }, plane(0.3, 115, 0.17), plane(0.45, 0, REACH, 'in'), { ...plane(0.6, -45, REACH, 'out'), pole: [-0.5, -1, -0.4] }];
+  const low = level < 0 ? 1 : 0;
+  return {
+    duration: 0.95, hitAt: 0.6, equip: 'net', rate: 32, trail: [0.3, 0.6],
+    fn(u, P, fx) {
+      const back = sm(u, 0.7, 1); // 0 → 1: 평소 자세로 풀기
+      const tw = kf(u, [0, 0], [0.3, -0.95], [0.45, 0.15, 'in'], [0.6, 0.9, 'out'], [0.7, 0.8], [1, 0]);
+      P['spine.ry'] = tw * 0.6;
+      P['pelvis.ry'] = tw * 0.4;
+      P['head.ry'] = -tw * 0.5; // 눈은 채가 지나가는 앞쪽을
+      P['head.rx'] = (low * 0.35 - (level > 0 ? 0.25 : 0)) * kf(u, [0, 0], [0.3, 1], [0.7, 1], [1, 0]);
+      crouch(P, kf(u, [0, 0.05], [0.3, 0.2 + low * 0.5], [0.45, 0.35 + low * 0.75, 'in'], [0.7, 0.3 + low * 0.6], [1, 0]));
+      wideStance(P, kf(u, [0, 0], [0.3, 0.8], [0.7, 0.8], [1, 0]));
+      P['spine.rx'] += kf(u, [0, 0], [0.3, -0.1], [0.45, 0.18 + low * 0.3], [0.6, 0.2 + low * 0.25], [1, 0]) * (1 - back);
+      // 왼손(채집통): 채와 반대쪽으로 벌려 균형을 잡는다
+      P['shoulderL.rz'] = kf(u, [0, ARM_REST], [0.3, 0.9], [0.45, 0.7], [0.6, 0.45], [1, ARM_REST]);
+      P['shoulderL.rx'] = kf(u, [0, 0], [0.3, -0.35], [0.6, 0.1], [1, 0]);
+      P['elbowL.rx'] = kf(u, [0, -0.08], [0.3, -0.5], [0.6, -0.4], [1, -0.08]);
+      if (u < 0.7) {
+        const g = swordPath(Math.min(u, 0.6), keys);
+        fx.oneHand = { arm: g.pos.map((x, n) => x - SHOULDER_R[n]), dir: g.dir, pole: g.pole, body: true };
+      }
+      fx.carry = true;
+    },
+  };
+}
+
 // 목검 공중·대시 공격에서 쓰는 도우미: 키 자세 경로의 v 지점으로 오른손을 쥐게 한다 (몸이 서 있는 방향 기준)
 // tilt: 손 안의 칼을 앞으로 기울여 쥐는 정도 (팔과 칼 사이를 좁게 벌린 베기에서 손목을 덜 꺾게)
 // wrist: 손목을 꺾는 한계 (작게 주면 손목을 편 채 어깨·팔꿈치로만 칼 방향을 맞춘다)
@@ -901,6 +935,9 @@ Object.assign(ACTIONS, {
       P['root.sy'] = kf(u, [0.7, 0], [0.76, -0.05], [0.84, 0.05], [0.96, -0.04], [1, 0]);
     },
   },
+  // 잠자리채 휘두르기: 채를 머리 위로 높이 들었다가(예비 동작) 한 발 내딛으며 앞쪽 아래로 크게 덮어씌우고(0.5),
+  // 잠깐 누른 채 있다가 채를 들어 올리며 제자리로. 왼손 채집통은 몸 옆에서 조금 따라 흔들린다
+  netSwing: netSweep(0), netHigh: netSweep(1), netLow: netSweep(-1),
   // 과일 줍기: 쪼그려 앉아 오른손으로 발 앞의 과일을 집고 → 일어나며 배 앞에서 한 번 내려다보고 (입 쪽으로 올리면 먹는 것처럼 보여서) →
   // 오른쪽 허리 주머니에 쏙 넣고 톡톡 두드린 뒤 제자리로
   pocket: {
