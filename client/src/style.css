@@ -1,3 +1,17 @@
+/* 게임 글꼴: 메이플스토리체 (넥슨 무료 글꼴, 상업 이용 가능, public/fonts에 함께 둠) — 얇은 굵기는 Light, 굵은 글씨는 Bold */
+@font-face {
+  font-family: 'Maplestory';
+  src: url('/fonts/Maplestory-Light.woff') format('woff');
+  font-weight: 100 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maplestory';
+  src: url('/fonts/Maplestory-Bold.woff') format('woff');
+  font-weight: 600 900;
+  font-display: swap;
+}
+
 :root {
   --bg: #bfe6ff;
   --card: #fffaf0;
@@ -16,7 +30,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--ink);
-  font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  font-family: 'Maplestory', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   /* 확대·당겨서 새로고침·글자 선택 막기 */
   touch-action: none;
   overscroll-behavior: none;
@@ -24,6 +38,9 @@ html, body {
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* 버튼·입력칸은 기본으로 글꼴을 물려받지 않으므로 맞춰 줌 */
+button, input, textarea, select { font-family: inherit; }
 
 #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
@@ -86,6 +103,8 @@ html, body {
   background: var(--card); font-size: 26px; line-height: 1; cursor: pointer; touch-action: none; padding: 0; color: var(--ink);
 }
 #quick button small { position: absolute; left: 5px; top: 3px; font-size: 11px; font-weight: 800; color: var(--muted); }
+#quick button .ammo { position: absolute; right: 4px; bottom: 2px; font-size: 11px; font-weight: 800; font-style: normal; color: #7a4a24; }
+#quick button .ammo.out { color: #d9534f; }
 #quick button.on { border-color: var(--accent-dark); background: #eef8e6; }
 #quick button.empty { background: rgba(243, 234, 216, 0.6); border-style: dashed; border-color: #e0d4bd; }
 #quick .quick-key { font-size: 12px; font-weight: 800; color: var(--muted); padding: 0 4px; }
@@ -119,6 +138,30 @@ html, body {
   width: min(300px, calc(100% - 24px)); padding: 14px 16px;
 }
 #inv-panel h3 { margin: 0 0 8px; font-size: 14px; }
+/* 인벤토리 칸: 퀵슬롯 4칸 + 가방 네모 칸 */
+.inv-label { margin: 6px 0 5px; font-size: 12px; font-weight: 800; color: var(--muted); }
+.inv-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 6px; border-radius: 12px; background: #f6efe1; }
+.inv-grid { display: grid; gap: 5px; padding: 6px; border-radius: 12px; background: #efe5d2; }
+.inv-cell {
+  position: relative; aspect-ratio: 1; min-width: 0; padding: 0; border-radius: 9px;
+  border: 2px solid #e2d5bc; background: #fffaf0; color: var(--ink); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; touch-action: manipulation;
+}
+.inv-cell i { font-style: normal; font-size: 24px; line-height: 1; }
+.inv-cell small { position: absolute; left: 4px; top: 2px; font-size: 10px; font-weight: 800; color: var(--muted); }
+.inv-cell em { position: absolute; right: 4px; bottom: 2px; font-size: 11px; font-weight: 800; font-style: normal; color: #7a4a24; }
+.inv-cell em.out { color: #d9534f; }
+.inv-cell b { position: absolute; left: 6px; right: 6px; bottom: 3px; height: 3px; border-radius: 2px; } /* 물고기 색 */
+.inv-cell:hover:not(.empty) { border-color: #c9b58f; }
+.inv-cell.empty { background: rgba(255, 250, 240, 0.45); border-style: dashed; cursor: default; }
+.inv-quick .inv-cell.empty { cursor: default; }
+.inv-cell.on { border-color: var(--accent-dark); background: #eef8e6; }
+.inv-cell.in-quick { border-color: #d8b46a; background: #fff3d6; }
+.inv-cell.in-quick small { color: #a5761c; }
+.inv-cell.life { background: #e6f5f1; }
+.inv-cell.life.on { border-color: #3f9c8c; background: #cdeee6; }
+.inv-cell.drop { border-color: var(--accent); border-style: solid; background: #eef8e6; }
+.inv-info { margin: 8px 0 0; min-height: 2.6em; }
 #look-panel h3:first-child { margin-top: 0; }
 .look-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .look-row button:not(.swatch) {

@@ -1,5 +1,5 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터, 같은 방향 두 번 연타 후 누르고 있으면 달리기)
-// Shift 회피 구르기(마우스 쪽으로) · Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// Shift 회피 구르기(방향키 쪽으로, 안 누르면 정면으로) · Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속, 활은 누르면 조준·떼면 발사) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
@@ -18,7 +18,8 @@ const keyAction = (e) => {
   return isEmote(name) === e.ctrlKey ? name : null;
 };
 
-export function createInput({ onAction, onOrbit, onZoom }) {
+// aimsWhileHeld(): 꾹 눌러 공격하는 중에 마우스를 움직이면 시점 대신 겨누는 쪽을 바꾸는지 (활 조준)
+export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => false }) {
   const keys = new Set();
   const held = new Set(); // 누르고 있는 행동 키·화면 버튼 (꾹 누르면 연속 공격)
   const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
@@ -103,6 +104,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   });
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerId === drag.id) {
+      if (drag.attacking && aimsWhileHeld()) { drag.x = e.clientX; drag.y = e.clientY; return; } // 겨누는 중: 마우스 자리(pointer)만 따라간다
       onOrbit(e.clientX - drag.x, e.clientY - drag.y);
       drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
       drag.x = e.clientX;

@@ -1,13 +1,16 @@
 // 몬스터 동작 시안 화면: 버튼으로 동작을 하나씩 틀어 보거나, 자동으로 전부 돌려 본다
-// 어떤 몬스터를 볼지는 <body data-mon="mongdang"> 으로 고른다 (없으면 날개콩)
+// 어떤 몬스터를 볼지는 <body data-mon="mongdang"> 처럼 고른다 (mongdang | banjjok, 없으면 날개콩)
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { canvasTexture } from './villager/textures.js';
 import { createNalgaekong, NALGAE_MOTIONS } from './monsters/nalgaekong.js';
 import { createMongdang, MONGDANG_MOTIONS } from './monsters/mongdang.js';
+import { createBanjjok, BANJJOK_MOTIONS } from './monsters/banjjok.js';
 
-const MONGDANG = document.body.dataset.mon === 'mongdang';
-const MOTIONS = MONGDANG ? MONGDANG_MOTIONS : NALGAE_MOTIONS;
+const KIND = document.body.dataset.mon;
+const MONGDANG = KIND === 'mongdang';
+const BANJJOK = KIND === 'banjjok';
+const MOTIONS = MONGDANG ? MONGDANG_MOTIONS : BANJJOK ? BANJJOK_MOTIONS : NALGAE_MOTIONS;
 
 const PI = Math.PI;
 const canvas = document.getElementById('c');
@@ -73,13 +76,13 @@ ground.receiveShadow = true;
 scene.add(ground);
 
 // ── 날개콩 ──
-const AUTO_ORDER = ['idle', 'walk', MONGDANG ? 'scribble' : 'flutter', 'notice', 'attack', 'hit', 'die'];
+const AUTO_ORDER = ['idle', 'walk', MONGDANG ? 'scribble' : BANJJOK ? 'rub' : 'flutter', 'notice', 'attack', 'hit', 'die'];
 const LOOP_HOLD = { idle: 3, walk: 4 }; // 자동 재생에서 반복 동작을 보여 줄 시간
 let auto = true;
 let autoIdx = 0;
 let holdLeft = LOOP_HOLD.idle;
 
-const mon = (MONGDANG ? createMongdang : createNalgaekong)({
+const mon = (MONGDANG ? createMongdang : BANJJOK ? createBanjjok : createNalgaekong)({
   fxParent: scene,
   onDone(name) {
     if (name === 'die') return; // 사라진 뒤 잠깐 있다 다시 등장 (아래에서 처리)

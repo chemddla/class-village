@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
-  PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
+  ARROW, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel } from './village.js';
 import { buildField } from './field.js';
@@ -16,6 +16,7 @@ import { createInput } from './input.js';
 import { setCurveCenter, curveDrop } from './materials.js';
 import { FX } from './fx.js';
 import { createPlazaMonsters } from './monsters/plaza-monsters.js';
+import { createArrows } from './arrows.js';
 
 const params = new URLSearchParams(location.search);
 const LOW = params.get('q') === 'low';
@@ -147,12 +148,16 @@ const COMBO_AT = { [ANIM.SMASH]: 0.47, [ANIM.SMASH2]: 0.405, [ANIM.SMASH3]: 0.55
 const NEXT_CHOP = { [ANIM.CHOP]: ANIM.CHOP2, [ANIM.CHOP2]: ANIM.CHOP3, [ANIM.CHOP3]: ANIM.CHOP2 };
 const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 떨림이 잦아든 뒤, 손을 놓기 전
 // 떠 있는 동안의 동작: 움직여도 끊기지 않는다
+// 활: 공격키를 누르고 있는 동안 조준(BOW_AIM), 떼면 쏜다(BOW_SHOT). 하는 동안 방향키로는 걷지 않고 돌아서기만 한다
+const BOWS = new Set([ANIM.BOW_AIM, ANIM.BOW_SHOT]);
+const MIN_DRAW = 0.4; // 화살을 메기고 시위를 당기기까지 걸리는 시간(초): 짧게 눌렀다 떼도 이만큼 당긴 뒤에 쏜다
+const REDRAW_AT = 0.3; // 쏘고 나서 이만큼(초) 지나면 다음 화살을 당길 수 있다
 const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SLASH_AIR, ANIM.SLASH_SLAM]);
 // 공격 동작: 하는 동안에는 방향키로 움직이지 못한다 (떠서 하는 공중 공격·내리찍기도 마찬가지)
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH]);
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
-const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 마우스 쪽으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
+const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 방향키 쪽(없으면 정면)으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
 const THRUST_STEP = [0.17, 0.33];
 const THRUST_SPEED = 9.8; // 0.1초에 1m 안쪽이라 서버 이동 검사(0.1초에 1.3m)도 통과한다
@@ -175,6 +180,7 @@ function getHit(fromX, fromZ) {
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
+  if (action === 'bowRelease') { arrows.shoot(char, char === me); return; } // 활: 시위를 놓는 순간 화살이 날아간다 (맞는 건 arrowHit)
   const slam = action === 'clubSlam' || action === 'swordSlam';
   const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
   if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
@@ -262,6 +268,28 @@ function hitFx(char, action) {
 }
 Character.onHit = (char, action) => hitFx(char, action);
 
+// 날아가는 화살이 무언가에 맞았는지: 사람(쏜 사람 빼고) → 몬스터 순서. 맞았으면 true (화살은 사라진다)
+const ARROW_HIT_R = 0.4; // 화살촉이 이만큼(m) 안으로 들어오면 맞음 (사람·몬스터 몸 둘레)
+function arrowHit(a, from, mine) {
+  const { x, y, z } = a.tip;
+  const bx = x - a.dir.x; // 날아온 쪽 (맞은 쪽이 그 반대로 밀리고, 그쪽을 돌아본다)
+  const bz = z - a.dir.z;
+  const burst = (kind, n, px, py, pz, opts = {}) => FX.burst(kind, n, px, py, pz, { floor: py - 1, dir: [a.dir.x, a.dir.z], spread: Math.PI, ...opts });
+  for (const c of [me, ...[...others.values()].map((o) => o.char)]) {
+    if (!c || c === from || Math.hypot(c.x - x, c.z - z) > ARROW_HIT_R || y > c.groundY + 1.7) continue;
+    c.shake();
+    burst('star', 8, c.x, c.groundY + 1.3, c.z, { power: 0.8 });
+    if (c === me && local.dodge <= 0 && local.hurt <= 0) { getHit(bx, bz); FX.hitstop(0.05); } // 구르는 중에는 피한다
+    return true;
+  }
+  const m = hereMonsters().map((mon) => mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine)).find(Boolean);
+  if (!m) return false;
+  burst('star', 8, m.x, from.groundY + m.y, m.z, { power: 0.8 });
+  if (mine) FX.hitstop(0.04);
+  return true;
+}
+const arrows = createArrows(scene, arrowHit);
+
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
 // 잠자리채 + 채집통 아이콘 (그림 문자에 없어서 직접 그림)
 const NET_ICON = `<svg class="ico" viewBox="0 0 32 32" aria-hidden="true">
@@ -275,7 +303,7 @@ const NET_ICON = `<svg class="ico" viewBox="0 0 32 32" aria-hidden="true">
 <path d="M22.5 20.6 Q24.75 17.6 27 20.6" stroke="#8a8f96" stroke-width="1.1" fill="none"/>
 <path d="M23 29 Q24 25.5 23.5 24 M25.5 29 Q26.5 26 27.2 25" stroke="#7fbf4f" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 </svg>`;
-const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', net: NET_ICON };
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹', net: NET_ICON };
 const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', net: NET_ICON };
 const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', net: '곤충' };
 const QUICK_SLOTS = 4;
@@ -294,11 +322,22 @@ function nearDrop(x, z) {
   }
   return best;
 }
-let invItems = [1, 2, 4, 5]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채(5)는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
+// 화살통에 든 화살 (이 브라우저에 저장). 다 쓰면 화살통이 비어 활을 쏠 수 없다
+local.arrows = (() => { const v = store.get(localStorage, 'arrows'); const n = Number(v); return v !== null && Number.isInteger(n) && n >= 0 && n <= ARROW.max ? n : ARROW.max; })();
+function setArrows(n) {
+  local.arrows = Math.max(0, Math.min(ARROW.max, n));
+  store.set(localStorage, 'arrows', String(local.arrows));
+  me?.setArrows(local.arrows);
+  renderQuick();
+  renderInv();
+}
+const BOW = TOOLS.indexOf('bow');
+const NET = TOOLS.indexOf('net');
+let invItems = [1, 2, 4, NET]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
-let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필)
-// 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필을 번갈아)
+let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이)
+// 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필·반쪽이를 돌아가며)
 // 몬스터 공통 설정: 공격이 닿으면 내가 맞음 (구르는 중·이미 맞는 중이면 피함) · 도망·쫓을 때 벽·분수·광장 나무에 막힘
 const monsterOpts = {
   onAttack(x, z) {
@@ -306,7 +345,8 @@ const monsterOpts = {
   },
   blocked: (x, z, r) => isBlocked(x, z, r) || (lifeSpots.length > 0 && LIFE_COLLIDERS.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r)),
 };
-const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: i % 2 ? 'mongdang' : 'nalgae' }));
+const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok'];
+const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -401,7 +441,8 @@ function renderQuick() {
     b.type = 'button';
     b.className = t !== null && t === local.equip ? 'on' : t === null ? 'empty' : '';
     b.title = t === null ? '빈칸 (가방에서 무기를 넣을 수 있어요)' : EQUIPMENT[TOOLS[t]].label;
-    b.innerHTML = `<small>${i + 1}</small>${t === null ? '' : TOOL_ICON[TOOLS[t]]}`;
+    b.innerHTML = `<small>${i + 1}</small>${t === null ? '' : TOOL_ICON[TOOLS[t]]}`
+      + (t === BOW ? `<em class="ammo${local.arrows ? '' : ' out'}">${local.arrows}</em>` : ''); // 활 칸에는 남은 화살 개수
     // 든 장비 칸을 다시 누르면 내려놓고 맨손이 된다
     b.onclick = () => { if (t === null) ui.inv.classList.remove('hidden'); else equipTool(t === local.equip ? 0 : t); };
     ui.quick.appendChild(b);
@@ -411,59 +452,137 @@ function renderQuick() {
   q.textContent = 'Q';
   ui.quick.appendChild(q);
 }
-// 가방: 장비를 누르면 퀵슬롯에 넣고, 이미 넣은 장비를 누르면 뺀다
+// 가방: 위에는 퀵슬롯 4칸, 아래에는 네모 칸마다 물건 하나씩 (아이콘 + 개수)
+// 무기 칸을 누르면 빈 퀵슬롯에 넣고, 이미 넣은 무기를 누르면 뺀다. 무기를 퀵슬롯 칸으로 끌어다 놓아도 된다
+const INV_COLS = 5;
+const INV_MIN_CELLS = 15; // 물건이 적어도 빈칸을 보여 가방처럼 보이게
+let invInfo = ''; // 마지막으로 누른 칸의 설명 (손가락으로 누를 때도 이름을 볼 수 있게)
+function setQuickSlot(slot, t) {
+  const was = quick.findIndex((v, i) => v === t && slotItem(i) === t);
+  if (was >= 0) quick[was] = slotItem(slot); // 다른 칸에 있던 무기를 옮기면 두 칸을 맞바꾼다
+  quick[slot] = t;
+  saveQuick();
+  renderQuick();
+  renderInv();
+}
 function renderInv() {
-  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3><p class="inv-help">무기를 누르면 퀵슬롯(1~4)에 넣거나 뺍니다. 생활 도구(도끼·낚싯대)는 R이나 생활 도구 칸으로 들어요.</p>';
-  const row = document.createElement('div');
-  row.className = 'look-row';
-  for (const t of invItems.filter((x) => !isLifeItem(x))) {
-    const slot = quick.findIndex((v, i) => v === t && slotItem(i) === t);
+  ui.inv.innerHTML = '<h3>🎒 인벤토리 <small>(I)</small></h3>';
+  const cell = (icon, { count, title, cls = '', badge, color } = {}) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = slot >= 0 ? 'on' : '';
-    b.textContent = `${TOOL_ICON[TOOLS[t]]} ${EQUIPMENT[TOOLS[t]].label}${slot >= 0 ? ` · ${slot + 1}칸` : ''}`;
+    b.className = `inv-cell ${cls}`;
+    if (title) b.title = title;
+    b.innerHTML = `<i>${icon}</i>`
+      + (badge ? `<small>${badge}</small>` : '')
+      + (count !== undefined ? `<em${count ? '' : ' class="out"'}>${count}</em>` : '')
+      + (color ? `<b style="background:${color}"></b>` : '');
+    return b;
+  };
+
+  // 퀵슬롯 (1~4): 누르면 뺀다
+  const qTitle = document.createElement('p');
+  qTitle.className = 'inv-label';
+  qTitle.textContent = '퀵슬롯 (Q로 바꿔 들기)';
+  ui.inv.appendChild(qTitle);
+  const qRow = document.createElement('div');
+  qRow.className = 'inv-quick';
+  for (let i = 0; i < QUICK_SLOTS; i++) {
+    const t = slotItem(i);
+    const b = t === null
+      ? cell('', { cls: 'empty', badge: i + 1, title: '빈칸: 아래 무기를 눌러 넣어요' })
+      : cell(TOOL_ICON[TOOLS[t]], { cls: t === local.equip ? 'on' : '', badge: i + 1, title: `${EQUIPMENT[TOOLS[t]].label} (눌러서 빼기)` });
+    b.onclick = () => {
+      if (t === null) return;
+      quick[i] = null;
+      if (local.equip === t) equipTool(0);
+      invInfo = `${EQUIPMENT[TOOLS[t]].label}을(를) 퀵슬롯에서 뺐어요`;
+      saveQuick();
+      renderQuick();
+      renderInv();
+    };
+    // 가방의 무기를 끌어다 놓으면 이 칸에 넣는다
+    b.ondragover = (e) => { e.preventDefault(); b.classList.add('drop'); };
+    b.ondragleave = () => b.classList.remove('drop');
+    b.ondrop = (e) => {
+      e.preventDefault();
+      const d = Number(e.dataTransfer.getData('text/plain'));
+      if (invItems.includes(d) && !isLifeItem(d)) setQuickSlot(i, d);
+    };
+    qRow.appendChild(b);
+  }
+  ui.inv.appendChild(qRow);
+
+  // 가방 칸
+  const gTitle = document.createElement('p');
+  gTitle.className = 'inv-label';
+  gTitle.textContent = '가방';
+  ui.inv.appendChild(gTitle);
+  const grid = document.createElement('div');
+  grid.className = 'inv-grid';
+  grid.style.gridTemplateColumns = `repeat(${INV_COLS}, 1fr)`;
+  const cells = [];
+  // 무기: 퀵슬롯에 넣거나 뺀다
+  for (const t of invItems.filter((x) => !isLifeItem(x))) {
+    const slot = quick.findIndex((v, i) => v === t && slotItem(i) === t);
+    const name = EQUIPMENT[TOOLS[t]].label;
+    const b = cell(TOOL_ICON[TOOLS[t]], { cls: slot >= 0 ? 'in-quick' : '', badge: slot >= 0 ? slot + 1 : undefined, title: name });
+    b.draggable = true;
+    b.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(t));
     b.onclick = () => {
       if (slot >= 0) {
         quick[slot] = null;
         if (local.equip === t) equipTool(0);
+        invInfo = `${name}을(를) 퀵슬롯에서 뺐어요`;
       } else {
         const empty = quick.findIndex((_, i) => slotItem(i) === null);
-        if (empty < 0) { toast('퀵슬롯이 가득 찼어요. 넣어 둔 장비를 눌러 빼 주세요'); return; }
+        if (empty < 0) { toast('퀵슬롯이 가득 찼어요. 넣어 둔 무기를 눌러 빼 주세요'); return; }
         quick[empty] = t;
+        invInfo = `${name}을(를) 퀵슬롯 ${empty + 1}칸에 넣었어요`;
       }
       saveQuick();
       renderQuick();
       renderInv();
     };
-    row.appendChild(b);
+    cells.push(b);
   }
-  ui.inv.appendChild(row);
-  // 과일·물고기: 모아 두었다가 상점이 열리면 판다
-  const section = (help, items) => {
-    const title = document.createElement('p');
-    title.className = 'inv-help';
-    title.textContent = help;
-    ui.inv.appendChild(title);
-    if (!items.length) return;
-    const row = document.createElement('div');
-    row.className = 'look-row';
-    for (const text of items) {
-      const b = document.createElement('span');
-      b.className = 'fruit-count';
-      b.textContent = text;
-      row.appendChild(b);
-    }
-    ui.inv.appendChild(row);
-  };
-  const fruits = FRUITS.filter((f) => bag.get(f) > 0);
-  section(fruits.length ? '과일: 상점이 열리면 팔 수 있어요' : '과일: 과일나무 앞에서 F로 흔들고, 떨어진 과일을 F로 주워요',
-    fruits.map((f) => `${FRUIT_ICON[f]} ${FRUIT_NAMES[f]} ×${bag.get(f)}`));
-  const fish = FISH.filter((f) => bag.get(f.id) > 0);
-  section(fish.length ? '물고기: 희귀할수록 비싸게 팔 수 있어요' : '물고기: 강둑이나 바닷가에서 G로 낚시해요',
-    fish.map((f) => `🐟 ${f.name} ×${bag.get(f.id)}`));
-  const bugsGot = BUGS.filter((b) => bag.get(b.id) > 0);
-  section(bugsGot.length ? '곤충: 희귀할수록 비싸게 팔 수 있어요' : '곤충: 잠자리채(R)를 들고 곤충 가까이에서 G',
-    bugsGot.map((b) => `🦋 ${b.name} ×${bag.get(b.id)}`));
+  // 생활 도구: 누르면 들고, 든 것을 다시 누르면 내려놓는다
+  for (const t of LIFE_ITEMS.filter((x) => invItems.includes(x))) {
+    const name = EQUIPMENT[TOOLS[t]].label;
+    const b = cell(TOOL_ICON[TOOLS[t]], { cls: `life${t === local.equip ? ' on' : ''}`, title: `${name} (생활 도구, R)` });
+    b.onclick = () => {
+      invInfo = t === local.equip ? `${name}을(를) 내려놓았어요` : `${name}을(를) 들었어요 (생활 도구는 R로도 들어요)`;
+      equipTool(t === local.equip ? 0 : t);
+    };
+    cells.push(b);
+  }
+  // 소모품·모은 것: 누르면 이름과 설명만 보여 준다
+  const info = (b, text) => { b.onclick = () => { invInfo = text; renderInv(); }; return b; };
+  if (invItems.includes(BOW) || local.arrows > 0) {
+    cells.push(info(cell('➶', { count: local.arrows, title: `화살 ×${local.arrows}` }),
+      local.arrows ? `화살 ×${local.arrows}: 활을 들면 등의 화살통에 들어가요 (한 발에 하나씩 써요)` : '화살을 다 썼어요. 화살이 있어야 활을 쏠 수 있어요'));
+  }
+  for (const f of FRUITS.filter((x) => bag.get(x) > 0)) {
+    cells.push(info(cell(FRUIT_ICON[f], { count: bag.get(f), title: `${FRUIT_NAMES[f]} ×${bag.get(f)}` }),
+      `${FRUIT_NAMES[f]} ×${bag.get(f)}: 상점이 열리면 팔 수 있어요`));
+  }
+  for (const f of FISH.filter((x) => bag.get(x.id) > 0)) {
+    const color = `#${f.color.toString(16).padStart(6, '0')}`;
+    cells.push(info(cell('🐟', { count: bag.get(f.id), title: `${f.name} ×${bag.get(f.id)}`, color }),
+      `${f.name} ×${bag.get(f.id)} (${RARITY[f.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
+  }
+  for (const b of BUGS.filter((x) => bag.get(x.id) > 0)) {
+    cells.push(info(cell('🦋', { count: bag.get(b.id), title: `${b.name} ×${bag.get(b.id)}` }),
+      `${b.name} ×${bag.get(b.id)} (${RARITY[b.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
+  }
+  const total = Math.max(INV_MIN_CELLS, Math.ceil(cells.length / INV_COLS) * INV_COLS);
+  for (let i = cells.length; i < total; i++) cells.push(cell('', { cls: 'empty' }));
+  for (const c of cells) grid.appendChild(c);
+  ui.inv.appendChild(grid);
+
+  const help = document.createElement('p');
+  help.className = 'inv-help inv-info';
+  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해, 곤충은 잠자리채(R)를 들고 G로 잡아 모아요.';
+  ui.inv.appendChild(help);
 }
 
 // ── 도감 (B): 강·바다 물고기를 모두 보여 주고, 잡아 본 것만 이름·희귀도·값이 보인다 ──
@@ -669,6 +788,19 @@ function aimRot() {
   return Math.hypot(dx, dz) < 0.25 ? null : Math.atan2(dx, dz);
 }
 
+// 활: 시위를 당기기 시작한다 (공격키를 떼면 updateMe 가 쏜다). 화살이 없으면 당기지 못한다
+function drawBow() {
+  const shotAgo = local.act === ANIM.BOW_SHOT ? actTime(ANIM.BOW_SHOT) - local.actLeft : Infinity;
+  if (local.actLeft > 0 && shotAgo < REDRAW_AT) return; // 방금 쏜 시위가 아직 떨리는 중 (쏜 뒤 남은 동작은 끊고 바로 다시 당긴다)
+  if (local.actLeft > 0 && local.act !== ANIM.BOW_SHOT) return;
+  if (local.arrows <= 0) { toast('화살통이 비었어요! 화살이 있어야 쏠 수 있어요'); return; }
+  if (local.fishing) stopFishing();
+  const rot = aimRot();
+  if (rot !== null) me.setPose(me.x, me.z, rot);
+  local.act = ANIM.BOW_AIM;
+  local.actLeft = actTime(ANIM.BOW_AIM);
+}
+
 function startAct(a) {
   if (local.actLeft > 0) return; // 하던 동작이 끝나야 다음 동작
   local.act = a;
@@ -687,13 +819,16 @@ const input = createInput({
       } else startAct(ANIM.JUMP);
     }
     else if (name === 'dodge') {
-      // 공격 중·맞는 중·쿨타임에는 못 한다. 마우스가 없으면(터치) 보던 쪽으로
+      // 공격 중·맞는 중·쿨타임에는 못 한다. 방향키(조이스틱)를 누르고 있으면 그쪽으로, 아니면 보던 쪽(정면)으로
       if (local.hurt > 0 || local.dodge > -DODGE.cool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
       if (local.fishing) stopFishing();
       local.act = ANIM.ROLL;
       local.actLeft = actTime(ANIM.ROLL);
       local.dodge = DODGE.time;
-      local.dodgeRot = aimRot() ?? me.targetRot;
+      const inp = input.read();
+      local.dodgeRot = inp.mag > 0
+        ? Math.atan2(inp.x * Math.cos(cam.yaw) + inp.z * Math.sin(cam.yaw), -inp.x * Math.sin(cam.yaw) + inp.z * Math.cos(cam.yaw))
+        : me.targetRot;
       me.setPose(me.x, me.z, local.dodgeRot);
     }
     else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
@@ -712,6 +847,7 @@ const input = createInput({
     } else if (name === 'attack') {
       // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 꾹 누르고 있을 때만)
       if (local.hurt > 0) return;
+      if (local.tool === BOW) { drawBow(); return; }
       // 몽둥이와 목검은 같은 흐름: 점프 중이면 공중 공격, 더블 점프 중이면 착지하며 내리치기, 달리는 중이면 대시 공격, 아니면 1타
       // (계속 누르면 아래에서 다음 타로 이어진다)
       const sword = TOOLS[local.tool] === 'woodSword';
@@ -769,6 +905,8 @@ const input = createInput({
       startAct(LIFE[t.tool].anim);
     }
   },
+  // 활을 들고 마우스를 꾹 누른 채 움직이면 시점을 돌리지 않고 그쪽으로 겨눈다
+  aimsWhileHeld: () => local.tool === BOW,
   onOrbit(dx, dy) {
     cam.yaw -= dx * 0.006;
     cam.pitch = THREE.MathUtils.clamp(cam.pitch + dy * 0.004, 0.3, 1.3);
@@ -815,6 +953,7 @@ function attach(r) {
     if (id === r.sessionId) {
       me = new Character(p.name, p.color, parseLook(p.look));
       me.setTool(local.tool);
+      me.setArrows(local.arrows);
       me.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
       me.root.rotation.y = me.targetRot;
       scene.add(me.root);
@@ -842,6 +981,7 @@ function attach(r) {
     } else {
       const char = new Character(p.name, p.color, parseLook(p.look));
       char.setTool(p.t);
+      char.setArrows(p.q);
       char.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
       char.root.rotation.y = char.targetRot;
       scene.add(char.root);
@@ -856,6 +996,7 @@ function attach(r) {
         o.buf.push({ t, x: fromCm(p.x), z: fromCm(p.z), r: byteToAngle(p.r), a: p.a });
         if (o.buf.length > 30) o.buf.shift();
         char.setTool(p.t);
+        char.setArrows(p.q);
       };
       push();
       $(p).onChange(push);
@@ -876,14 +1017,22 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
-    invItems = free ? [1, 2, 3, 4, 5] : [1, 2, 4, 5];
+    invItems = free ? [1, 2, 3, 4, BOW, NET] : [1, 2, 4, NET];
+    // 활을 처음 받으면 빈 퀵슬롯에 넣어 준다 (한 번만). 테스트 서버에서는 들어올 때마다 화살통을 가득 채워 준다 (아직 화살을 얻는 곳이 없음)
+    if (free && !store.get(localStorage, 'bowGiven')) {
+      store.set(localStorage, 'bowGiven', '1');
+      const empty = quick.indexOf(null);
+      if (!quick.includes(BOW) && empty >= 0) { quick[empty] = BOW; saveQuick(); }
+    }
+    if (free) setArrows(ARROW.max);
     if (local.equip && !invItems.includes(local.equip)) equipTool(0);
     renderQuick();
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
     if (free && !plazaMonsters.length) {
-      // 몽당연필은 날개콩과 같은 분수 둘레 길을 일정 반 바퀴 어긋나게 돈다
-      plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 })];
+      // 몽당연필·반쪽이는 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
+      plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 }),
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 })];
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });
@@ -1146,6 +1295,14 @@ function updateMe(dt) {
       const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
       me.setPose(nx, nz, me.targetRot);
     }
+  } else if (BOWS.has(local.act) && local.actLeft > 0) {
+    // 활: 조준하는 동안 방향키를 누르면 그쪽으로, 아니면 마우스가 가리키는 쪽으로 돌아선다 (걷지는 않는다)
+    if (local.act === ANIM.BOW_AIM && local.hurt <= 0) {
+      let rot = null;
+      if (inp.mag > 0) rot = Math.atan2(inp.x * Math.cos(cam.yaw) + inp.z * Math.sin(cam.yaw), -inp.x * Math.sin(cam.yaw) + inp.z * Math.cos(cam.yaw));
+      else rot = aimRot();
+      if (rot !== null) me.setPose(me.x, me.z, rot);
+    }
   } else if (inp.mag > 0 && local.hurt <= 0) {
     // 화면 기준 방향을 카메라가 돈 만큼 돌려 땅 위 방향으로
     const c = Math.cos(cam.yaw);
@@ -1185,6 +1342,16 @@ function updateMe(dt) {
       if (rot !== null) me.setPose(me.x, me.z, rot); // 그때마다 마우스 쪽으로 다시 돌아선다
       local.act = NEXT_SWING[local.act];
       local.actLeft = actTime(local.act);
+    }
+  }
+  // 활: 공격키를 떼면 (시위를 충분히 당긴 뒤에) 쏜다. 활을 내려놓았으면 조준을 그만둔다
+  if (local.act === ANIM.BOW_AIM && local.actLeft > 0) {
+    const drawn = actTime(ANIM.BOW_AIM) - local.actLeft;
+    if (local.tool !== BOW) local.actLeft = 0;
+    else if (!input.holding('attack') && drawn >= MIN_DRAW) {
+      setArrows(local.arrows - 1);
+      local.act = ANIM.BOW_SHOT;
+      local.actLeft = actTime(ANIM.BOW_SHOT);
     }
   }
   // 도끼를 들고 G를 누르고 있으면 계속 찍는다: 나무에 박혀 멈춘 도끼를 뽑아 다시 뒤로 보냈다가 또 찍는다
@@ -1234,7 +1401,7 @@ function updateMe(dt) {
   local.sendTimer += dt;
   if (local.sendTimer >= SEND_INTERVAL && room) {
     local.sendTimer = 0;
-    const msg = [toCm(me.x), toCm(me.z), angleToByte(me.targetRot), anim, local.tool];
+    const msg = [toCm(me.x), toCm(me.z), angleToByte(me.targetRot), anim, local.tool, local.arrows];
     const l = local.last;
     if (!l || msg.some((v, i) => v !== l[i])) {
       room.send('m', msg);
@@ -1274,7 +1441,7 @@ function updateOthers(now) {
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
 // step: 화면이 가려져 그리기가 멈춘 동안에도 내 캐릭터만 정해진 시간만큼 움직여 보는 점검용
-if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, FX, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
+if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
@@ -1308,6 +1475,7 @@ renderer.setAnimationLoop(() => {
   if (me) me.update(dt);
   for (const { char } of others.values()) char.update(dt);
   for (const m of hereMonsters()) m.update(dt, me);
+  arrows.update(dt);
   FX.update(dt);
   updateShows(dt);
 

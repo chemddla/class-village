@@ -256,27 +256,121 @@ function shield() {
   return g;
 }
 
+// 화살깃 한 장 (대를 사이에 두고 양쪽으로 펼친 모양): 앞(촉 쪽)은 대에 붙어 가늘게 시작해 뒤로 갈수록 넓어지고,
+// 뒤끝은 비스듬히 잘려 꼬리 쪽으로 살짝 들어간다. X = 대에서 바깥쪽, Y = 꼬리에서 촉 쪽 (rotateX 로 Y 를 화살 +Z 에 맞춘다)
+function fletchGeometry() {
+  const s = new THREE.Shape();
+  s.moveTo(0, 0.088);
+  s.quadraticCurveTo(0.005, 0.04, 0.021, 0.02);
+  s.lineTo(0.018, 0.005);
+  s.lineTo(0, 0.013);
+  s.lineTo(-0.018, 0.005);
+  s.lineTo(-0.021, 0.02);
+  s.quadraticCurveTo(-0.005, 0.04, 0, 0.088);
+  return new THREE.ShapeGeometry(s, 8).rotateX(PI / 2);
+}
+
+// 화살: +Z 방향으로 뻗음 (꼬리가 원점, 길이 ARROW_LEN). 활에 메긴 화살·화살통에 꽂힌 화살·날아가는 화살이 모두 이것
+export const ARROW_LEN = 0.345;
+export function makeArrow() {
+  const arrow = new THREE.Group();
+  arrow.name = '화살';
+  part(new THREE.CylinderGeometry(0.0035, 0.0035, 0.3, 6).rotateX(PI / 2), mat('#e7c39b'), arrow, '화살대', [0, 0, 0.15]);
+  part(new THREE.ConeGeometry(0.014, 0.045, 8).rotateX(PI / 2), METAL(), arrow, '화살촉', [0, 0, 0.3225]); // 굵은 촉 (대 끝 0.3 ~ 0.345)
+  for (const r of [0, PI / 2]) {
+    const f = part(fletchGeometry(), new THREE.MeshStandardMaterial({ color: '#f28aa0', side: THREE.DoubleSide }), arrow, '깃');
+    f.rotation.z = r;
+  }
+  // 윤곽선 두께를 부품마다 같게 (크기로 정하면 길쭉한 화살대만 두껍고 촉·깃은 가늘어 들쭉날쭉하다)
+  arrow.traverse((m) => { if (m.isMesh) m.userData.outlineWidth = ARROW_OUTLINE; });
+  return arrow;
+}
+const ARROW_OUTLINE = 0.003;
+
+// 화살통: 등에 비스듬히 메고(입구가 오른쪽 어깨 뒤로), 남은 화살 수만큼 깃이 위로 삐죽 나와 보인다
+export const QUIVER_SHOW = 6; // 화살통에 보이는 화살 최대 개수 (더 있어도 이만큼만 그린다)
+function quiver() {
+  const g = new THREE.Group();
+  g.name = '화살통';
+  const H = 0.24;
+  const R = 0.026;
+  part(new THREE.CylinderGeometry(R, R * 0.85, H, 14, 1, true), mat('#8a5434', { roughness: 0.6, side: THREE.DoubleSide }), g, '통', [0, H / 2, 0]);
+  part(new THREE.CircleGeometry(R * 0.85, 14).rotateX(PI / 2), LEATHER(), g, '바닥');
+  const band = mat('#e7b74a', { roughness: 0.35, metalness: 0.5 });
+  for (const y of [0.025, H - 0.012]) part(new THREE.TorusGeometry(R * (y < 0.1 ? 0.88 : 1.0), 0.0045, 6, 18).rotateX(PI / 2), band, g, '테', [0, y, 0]);
+  // 화살: 통 안에 둥글게 모아 꽂는다. 촉은 바닥 가운데로 모이고(통 밖으로 뚫고 나오지 않게) 깃 쪽이 살짝 벌어진다
+  const arrows = [];
+  const Zp = V(0, 0, 1);
+  for (let i = 0; i < QUIVER_SHOW; i++) {
+    const a = makeArrow();
+    const t = (i / QUIVER_SHOW) * PI * 2;
+    const out = i === 0 ? V() : V(Math.cos(t), 0, Math.sin(t));
+    const tip = V().addScaledVector(out, 0.005).setY(0.01 + (i % 2) * 0.008);
+    const dir = V(0, -1, 0).addScaledVector(out, -0.07).normalize(); // 꼬리 → 촉 (아래로, 꼬리가 바깥쪽)
+    a.position.copy(tip).addScaledVector(dir, -ARROW_LEN);
+    a.quaternion.setFromUnitVectors(Zp, dir);
+    a.rotateZ(t); // 깃 방향을 조금씩 다르게
+    g.add(a);
+    arrows.push(a);
+  }
+  g.userData.quiver = { arrows };
+  return g;
+}
+
+// 굵기가 바뀌는 관: 가운데(손잡이)가 가장 굵고 양 끝으로 갈수록 가늘어지며, 끝은 둥글게 모인다 (활대)
+// 꼭짓점을 고리끼리 나눠 써서 면 방향이 매끈하게 이어진다 (외곽선이 끊기지 않게)
+function taperTube(curve, segs, radial, rMid, rEnd) {
+  const { tangents, normals, binormals } = curve.computeFrenetFrames(segs, false);
+  const pos = [];
+  const idx = [];
+  const p = V();
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const r = rEnd + (rMid - rEnd) * Math.pow(Math.sin(PI * t), 0.7);
+    curve.getPointAt(t, p);
+    for (let j = 0; j < radial; j++) {
+      const a = (j / radial) * PI * 2;
+      const n = normals[i].clone().multiplyScalar(Math.cos(a)).addScaledVector(binormals[i], Math.sin(a));
+      pos.push(p.x + n.x * r, p.y + n.y * r, p.z + n.z * r);
+    }
+  }
+  for (let i = 0; i < segs; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = i * radial + j, b = i * radial + ((j + 1) % radial), c = a + radial, d = b + radial;
+      idx.push(a, b, c, b, d, c); // 바깥을 보는 면 (윤곽선 껍질이 바깥으로 밀려 나가야 한다)
+    }
+  }
+  // 양 끝 마개: 끝 고리에서 바깥으로 반지름만큼 나간 한 점에 모은다
+  for (const [i, sign] of [[0, -1], [segs, 1]]) {
+    curve.getPointAt(i / segs, p);
+    const tip = pos.length / 3;
+    p.addScaledVector(tangents[i], sign * rEnd);
+    pos.push(p.x, p.y, p.z);
+    for (let j = 0; j < radial; j++) {
+      const a = i * radial + j, b = i * radial + ((j + 1) % radial);
+      if (sign > 0) idx.push(a, b, tip); else idx.push(b, a, tip);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function bow() {
   const g = new THREE.Group();
   g.name = '활';
   const top = V(0, 0.25, -0.075);
   const bottom = V(0, -0.25, -0.075);
   const curve = new THREE.QuadraticBezierCurve3(top, V(0, 0, 0.06), bottom);
-  part(new THREE.TubeGeometry(curve, 24, 0.0075, 6), WOOD(), g, '활대');
+  // 가늘수록 윤곽선이 나무 색을 덮어 검은 줄처럼 보이므로: 조금 굵게, 윤곽선은 굵기에 맞춰 얇게
+  part(taperTube(curve, 32, 8, 0.011, 0.0035), WOOD(), g, '활대').userData.outlineWidth = 0.0045;
   part(new THREE.CylinderGeometry(0.012, 0.012, 0.05, 8), LEATHER(), g, '줌통');
   const rest = V(0, 0, -0.075);
   const str = line([top, rest.clone(), bottom], '#fffaf0');
   g.add(str);
-  // 화살: +Z 방향으로 뻗음 (꼬리가 원점)
-  const arrow = new THREE.Group();
-  arrow.name = '화살';
-  part(new THREE.CylinderGeometry(0.0035, 0.0035, 0.3, 6).rotateX(PI / 2), mat('#e7c39b'), arrow, '화살대', [0, 0, 0.15]);
-  part(new THREE.ConeGeometry(0.009, 0.03, 6).rotateX(PI / 2), METAL(), arrow, '화살촉', [0, 0, 0.315]);
-  for (const r of [0, PI / 2]) {
-    const f = part(new THREE.PlaneGeometry(0.022, 0.045).rotateX(PI / 2), new THREE.MeshStandardMaterial({ color: '#f28aa0', side: THREE.DoubleSide }),
-      arrow, '깃', [0, 0, 0.025]);
-    f.rotation.z = r;
-  }
+  const arrow = makeArrow();
   arrow.visible = false;
   g.add(arrow);
   g.userData.bow = { top, bottom, rest, string: str, arrow, nock: rest.clone() };
@@ -316,7 +410,8 @@ export const EQUIPMENT = {
   net: { label: '잠자리채', right: bugNet, left: bugCase, carry: [-1.0, 0] }, // 오른손 잠자리채 + 왼손 채집통
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
   woodSword: { label: '목검', right: woodSword, carry: [-0.5, 0] },
-  bow: { label: '활 + 화살', left: bow, carry: [0, -1.2] },
+  // 활은 시위가 팔 뒤쪽(몸 뒤 안쪽)으로 가게 세워 든다 (carryL: 왼손 소켓 회전을 직접 정함)
+  bow: { label: '활', left: bow, back: quiver, carry: [0, 0], carryL: [-0.75, 0.75, 0.2] },
   staff: { label: '마법 지팡이', right: staff, carry: [-1.35, 0] },
 };
 const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'roll', 'wave', 'cheer']);
@@ -331,7 +426,23 @@ export function attachEquipment(rig, id) {
     }
     if (make) sock.add(make());
   }
+  // 등에 메는 것 (활을 들면 화살통): 몸통에 붙인다
+  for (const c of rig.spine.children.filter((x) => x.userData.back)) {
+    rig.spine.remove(c);
+    c.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); });
+  }
+  rig.quiver = null;
+  if (e.back) {
+    const b = e.back();
+    b.userData.back = true;
+    b.position.set(...BACK_AT.pos);
+    b.rotation.set(...BACK_AT.rot);
+    rig.spine.add(b);
+    rig.quiver = b.userData.quiver ?? null;
+  }
 }
+// 등에 메는 자리 (몸통 기준): 허리 위 등 뒤, 입구가 오른쪽(-x) 어깨 뒤로 오게 비스듬히
+const BACK_AT = { pos: [0.015, 0.06, -0.07], rot: [-0.2, 0, 0.7] }; // 깃이 큰 머리(머리카락)에 닿지 않을 만큼 눕힌다
 
 // ── 두 손 쥐기 IK ──
 // 애니메이션이 정한 도구 방향은 그대로 두고, 두 손 사이가 몸 한가운데 오도록 도구를 옆으로 옮긴 뒤
@@ -770,11 +881,90 @@ export function straightenWrists(rig) {
   }
 }
 
+// ── 활 당기기 IK ──
+// 조준선: 쏘는 쪽(몸의 앞, root +Z)으로 곧게 뻗은 선. 몸을 옆으로 돌린 자세에서 가슴 앞·턱 밑 높이를 지난다.
+// 왼손은 그 선 위 팔이 닿는 곳에서 활을 쥐고(시위가 나를 향하게, 윗날은 얼굴 반대쪽으로 눕혀 머리를 피함),
+// 오른손은 같은 선 위에서 시위를 활 쪽부터 뒤로 당긴다 → 메긴 화살이 조준하는 쪽을 곧게 가리킨다
+const BOW = {
+  height: 0.4, // 조준선 높이 (주민 크기 단위, 발바닥 기준): 어깨(0.46)보다 조금 아래, 턱(0.51) 밑
+  front: 0.1, // 조준선을 몸통 가운데 줄에서 가슴 앞쪽으로 비키는 거리 (화살이 가슴을 뚫지 않게)
+  nock: 0.03, // 당기기 전 오른손이 활에서 떨어진 거리
+  pull: 0.24, // 다 당겼을 때 더 뒤로 간 거리 (화살 길이 0.33 안쪽)
+  cant: 0.7, // 활 윗날을 얼굴 반대쪽으로 눕히는 각 (라디안)
+  lean: 0.3, // 윗날을 앞으로 숙이는 정도
+};
+function bowDraw(rig, root, wL, wR, draw) {
+  const sc = rig.shoulderL.getWorldScale(V()).x;
+  const rootQ = root.getWorldQuaternion(new THREE.Quaternion());
+  const D = V(0, 0, 1).applyQuaternion(rootQ); // 쏘는 쪽
+  const up = V(0, 1, 0);
+  const left = V().crossVectors(up, D); // 쏘는 쪽에서 본 왼쪽
+  const torsoQ = rig.shoulderL.parent.getWorldQuaternion(new THREE.Quaternion());
+  const chest = V(0, 0, 1).applyQuaternion(torsoQ); // 몸통 앞 (옆으로 돌아 오른쪽을 본다)
+  chest.addScaledVector(D, -chest.dot(D)).addScaledVector(up, -chest.y);
+  if (chest.lengthSq() < 1e-6) chest.copy(left).negate();
+  chest.normalize();
+  const toTorso = torsoQ.clone().invert();
+  // 조준선 위 한 점: 발바닥 기준 높이, 몸 가운데에서 가슴 앞쪽으로
+  const base = root.getWorldPosition(V());
+  const SL = rig.shoulderL.getWorldPosition(V());
+  const line0 = base.clone().addScaledVector(up, BOW.height * sc).addScaledVector(chest, BOW.front * sc);
+  const onLine = (t) => line0.clone().addScaledVector(D, t);
+  // 왼손 회전: 활 소켓 축이 +Z = 활 윗날 방향, +Y = 시위 쪽(나를 향함)이 되게
+  const U = up.clone().multiplyScalar(Math.cos(BOW.cant)).addScaledVector(chest, Math.sin(BOW.cant)).addScaledVector(D, BOW.lean).normalize();
+  const S = D.clone().negate();
+  const Ux = U.clone().addScaledVector(S, -U.dot(S)).normalize();
+  const sockQ = new THREE.Quaternion().setFromRotationMatrix(m4.makeBasis(V().crossVectors(S, Ux), S, Ux));
+  // 왼손: 활을 쥔 팔을 쫙 편다. 손목(팔 끝)이 어깨에서 팔 길이만큼 떨어지도록 조준선 위 쥘 자리(G)를 고른다
+  // (G 는 주먹 가운데라 손목보다 소켓 오프셋만큼 앞에 있다: 그만큼 빼고 잰다)
+  // 주먹은 아래팔과 한 줄로 둔다 (손목을 꺾지 않음): 팔이 뻗은 쪽이 손의 -Y, 활 윗날 쪽이 손의 +Z.
+  // 주먹 방향이 정해지면 소켓 오프셋이 바뀌어 쥘 자리도 조금 옮겨지므로 두 번 되풀이한다
+  const reach = (SL.distanceTo(rig.elbowL.getWorldPosition(V())) + rig.elbowL.getWorldPosition(V()).distanceTo(rig.handL.getWorldPosition(V()))) * 0.999;
+  let handQL = sockQ.clone().multiply(rig.leftSocket.quaternion.clone().invert());
+  let G = null;
+  for (let n = 0; n < 3; n++) {
+    const off = rig.leftSocket.position.clone().multiply(rig.handL.getWorldScale(V())).applyQuaternion(handQL);
+    const P0 = line0.clone().sub(off).sub(SL); // |P0 + D·t| = reach 를 푼다 (앞쪽 근)
+    const pd = P0.dot(D);
+    const t = -pd + Math.sqrt(Math.max(0, pd * pd - P0.lengthSq() + reach * reach));
+    G = onLine(t);
+    if (n === 2) break;
+    const Y = G.clone().sub(off).sub(SL).normalize().negate(); // 손의 +Y = 팔꿈치 쪽
+    const Z = U.clone().addScaledVector(Y, -U.dot(Y)).normalize();
+    handQL = new THREE.Quaternion().setFromRotationMatrix(m4.makeBasis(V().crossVectors(Y, Z), Y, Z));
+  }
+  if (wL > 0.001) {
+    const pole = up.clone().negate().addScaledVector(left, 0.4).normalize().applyQuaternion(toTorso); // 팔꿈치 안쪽은 아래로
+    armIK(rig, 'L', G, handQL, wL, pole);
+    // 활은 조준선에 맞춘 방향 그대로: 손 안에서 소켓을 돌려 맞춘다
+    const want = rig.handL.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(sockQ);
+    rig.leftSocket.quaternion.slerp(want, wL);
+    rig.leftSocket.updateMatrixWorld(true);
+  }
+  if (wR > 0.001) {
+    // 오른손: 손가락(손의 -Y)이 쏘는 쪽을 향해 시위를 건다. 팔꿈치는 뒤로, 어깨 높이로 당긴다
+    const N = G.clone().addScaledVector(D, -(BOW.nock + BOW.pull * draw) * sc);
+    const Y = D.clone().negate();
+    const Z = up.clone().addScaledVector(Y, -up.dot(Y)).normalize();
+    const handQ = new THREE.Quaternion().setFromRotationMatrix(m4.makeBasis(V().crossVectors(Y, Z), Y, Z));
+    const pole = D.clone().negate().addScaledVector(up, 0.2).addScaledVector(chest, -0.3).normalize().applyQuaternion(toTorso);
+    armIK(rig, 'R', N, handQ, wR, pole);
+  }
+}
+
+// 활시위 튕김: 놓은 뒤 시위 가운데가 앞뒤로 떠는 폭(활 크기 단위)·1초에 떠는 횟수·잦아드는 빠르기·떠는 시간(초)
+const STRING = { amp: 0.04, hz: 11, decay: 6, time: 0.7 };
+
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
 const v1 = V();
 const v2 = V();
 const CARRY_OUT = 0.75; // 손목을 세운 각도에 곱해 바깥으로 돌리는 비율
-export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
+export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrows }) {
+  // 화살통: 남은 화살만큼 보인다 (활에 메긴 한 발은 통에서 꺼낸 것). arrows 를 모르면(쇼룸) 가득
+  if (rig.quiver) {
+    const n = Math.min(QUIVER_SHOW, Math.max(0, (arrows ?? QUIVER_SHOW) - (fx.arrow ? 1 : 0)));
+    rig.quiver.arrows.forEach((a, i) => { a.visible = i < n; });
+  }
   // 들고 다니는 자세: 소켓 자체를 부드럽게 기울임 (액션 관절값과 따로 움직임)
   // 두 손으로 쥔 손이 다 풀린 뒤에 손목을 세운다 (풀리는 도중에 세우면 도구가 휙 돌아 손이 튄다)
   const carry = (CARRY_ACTIONS.has(action) || fx.carry) && !((rig.twoHandW ?? 0) > 0.4) ? EQUIPMENT[equipment]?.carry ?? [0, 0] : [0, 0];
@@ -786,6 +976,11 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   // 세운 만큼 도구 머리를 몸 바깥쪽으로도 눕힌다 (얼굴 쪽으로 기울지 않게)
   rig.rightSocket.rotation.set(cx[0], cx[0] * CARRY_OUT, 0);
   rig.leftSocket.rotation.set(cx[1], -cx[1] * CARRY_OUT, 0);
+  // 왼손 회전을 직접 정한 장비 (활): 세 축을 따로 부드럽게 옮긴다
+  const wantL = (CARRY_ACTIONS.has(action) || fx.carry) ? EQUIPMENT[equipment]?.carryL ?? [0, 0, 0] : [0, 0, 0];
+  const cl = (rig.carryL ??= [0, 0, 0]);
+  for (let i = 0; i < 3; i++) cl[i] += (wantL[i] - cl[i]) * k;
+  if (cl.some((v) => Math.abs(v) > 1e-4)) rig.leftSocket.rotation.set(rig.leftSocket.rotation.x + cl[0], cl[1], cl[2]);
   root.updateMatrixWorld(true);
   const grip = EQUIPMENT[equipment]?.twoHand;
   // 쥘 때는 빠르게(0.15초쯤), 놓을 때는 느긋하게
@@ -808,6 +1003,8 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   rig.oneHandW = (rig.oneHandW ?? 0) + (w1 - (rig.oneHandW ?? 0)) * (1 - Math.exp(-(w1 ? 40 : 14) * dt));
   if (rig.oneAim && rig.oneHandW > 0.001) oneHandGrip(rig, rig.oneHandW, rig.oneAim);
   else { rig.oneAim = null; rig.elbowPrev = null; rig.oneFist = null; }
+  // 활 당기기: 두 팔을 조준선 위에 놓는다 (시위·화살은 아래에서 오른손을 따라간다)
+  if ((fx.bowL ?? 0) > 0.001 || (fx.bowR ?? 0) > 0.001) bowDraw(rig, root, fx.bowL ?? 0, fx.bowR ?? 0, fx.draw ?? 0);
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
       const { rod, bow: b, staff: st } = o.userData;
@@ -823,9 +1020,21 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
         setLine(rod.line, [rod.tip.position, rod.bobber.position]);
       }
       if (b) {
-        // 시위: 당기는 동안 오른손을 따라가고, 놓으면 빠르게 제자리로 튕김
-        const goal = fx.nock ? o.worldToLocal(rig.rightSocket.getWorldPosition(v1)) : b.rest;
-        b.nock.lerp(goal, 1 - Math.exp(-(fx.nock ? 30 : 45) * dt));
+        // 시위: 당기는 동안 오른손을 따라가고, 놓으면 빠르게 제자리로 돌아오며 앞뒤로 부르르 떨다 잦아든다
+        // base: 떨림을 뺀 시위 가운데 자리, twang: 놓은 뒤 흐른 초 (-1 이면 떨지 않음)
+        b.base ??= b.rest.clone();
+        b.twang ??= -1;
+        if (fx.nock) {
+          b.base.lerp(o.worldToLocal(rig.rightSocket.getWorldPosition(v1)), 1 - Math.exp(-30 * dt));
+          b.pulled = true;
+          b.twang = -1;
+        } else {
+          if (b.pulled) { b.pulled = false; b.twang = 0; } // 방금 놓았다
+          b.base.lerp(b.rest, 1 - Math.exp(-45 * dt));
+          if (b.twang >= 0) b.twang = b.twang + dt > STRING.time ? -1 : b.twang + dt;
+        }
+        b.nock.copy(b.base);
+        if (b.twang >= 0) b.nock.z += STRING.amp * Math.exp(-STRING.decay * b.twang) * Math.sin(PI * 2 * STRING.hz * b.twang); // 활 앞뒤(시위가 오가는 쪽)로
         setLine(b.string, [b.top, b.nock, b.bottom]);
         b.arrow.visible = !!fx.arrow;
         if (fx.arrow) {
