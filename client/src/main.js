@@ -1251,6 +1251,7 @@ function enterGame() {
   $id('dex-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
   $id('minimap').classList.remove('hidden');
+  $id('map-size').classList.remove('hidden');
   input.enable(true);
 }
 
@@ -1484,6 +1485,42 @@ if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam,
 // ── 매 장면 ──
 const clock = new THREE.Clock();
 const minimap = createMinimap($id('minimap'));
+// 미니맵 크기: 왼쪽 위 손잡이를 끌어 키우고 줄인다 (이 브라우저에 기억). 고르기 전에는 화면 크기에 맞춘 기본 크기 (style.css)
+const MAP_MIN = 90;
+const mapMax = () => Math.max(MAP_MIN, Math.min(innerWidth, innerHeight) * 0.45); // 화면 짧은 변의 45%까지
+const mapNow = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--map'));
+function setMapSize(px) {
+  const v = Math.round(Math.max(MAP_MIN, Math.min(mapMax(), px)));
+  document.documentElement.style.setProperty('--map', `${v}px`);
+  return v;
+}
+{
+  const saved = Number(store.get(localStorage, 'mapPx'));
+  if (saved > 0) setMapSize(saved);
+  const grip = $id('map-size');
+  let drag = null;
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add('drag');
+    drag = { x: e.clientX, y: e.clientY, size: mapNow() };
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    // 지도는 오른쪽 아래에 붙어 있으니 왼쪽·위로 끌면 커지고, 오른쪽·아래로 끌면 작아진다
+    setMapSize(drag.size + Math.max(drag.x - e.clientX, drag.y - e.clientY));
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    grip.classList.remove('drag');
+    store.set(localStorage, 'mapPx', String(mapNow()));
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+  addEventListener('resize', () => { if (store.get(localStorage, 'mapPx') !== null) setMapSize(mapNow()); });
+}
 let fpsFrames = 0;
 let fpsTime = 0;
 
