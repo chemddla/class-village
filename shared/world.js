@@ -39,10 +39,11 @@ export const ANIM = {
   SMASH4: 29, // 몽둥이 3타(야구 스윙, SMASH3)에 이어 치는 1타
   ROLL: 33, // Shift 회피 구르기
   BOW_AIM: 34, BOW_SHOT: 35, // 활: 공격키를 누르고 있는 동안 시위를 당겨 조준 · 떼면 놓아 쏘기
+  NET_SWING: 36, NET_HIGH: 37, NET_LOW: 38, // 잠자리채 휘두르기: 가슴 높이 · 머리 위 · 발 앞 낮게 (곤충 채집)
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
-export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow'];
+export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net']; // net: 잠자리채(+ 왼손 채집통)
 // 활: 화살통에 넣고 다니는 화살 최대 개수 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
 export const ARROW = { max: 30, speed: 24, range: 20 };
 export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이·목검)는 인벤토리에서 꺼냄
@@ -442,4 +443,46 @@ export function cleanLook(look) {
     for (const k in LOOK_RULES) if (k in look && LOOK_RULES[k](look[k])) out[k] = look[k];
   }
   return JSON.stringify(out);
+}
+
+// ── 곤충 채집 ──
+// move: 움직이는 모양 — fly 날아다님(where 'river' 면 강 위·강둑) · flower 꽃 위에 앉음 · tree 나무줄기에 붙음 · ground 풀밭에서 폴짝
+// model: 화면에 그릴 모양 · price 상점에서 팔 값(희귀할수록 비쌈) · color/color2 몸·날개 색 · size 크기 비율
+export const BUGS = [
+  { id: 'cabbagewhite', name: '배추흰나비', rarity: 'common', move: 'fly', model: 'butterfly', price: 60, color: 0xf7f4e6, color2: 0x3a3a3a, size: 0.9 },
+  { id: 'ladybug', name: '무당벌레', rarity: 'common', move: 'flower', model: 'ladybug', price: 50, color: 0xe03a2f, color2: 0x1d1d1d, size: 0.7 },
+  { id: 'honeybee', name: '꿀벌', rarity: 'common', move: 'flower', model: 'bee', price: 80, color: 0xf3c13a, color2: 0x2b2b2b, size: 0.75 },
+  { id: 'grasshopper', name: '메뚜기', rarity: 'common', move: 'ground', model: 'hopper', price: 70, color: 0x7fbf4f, color2: 0x5a9a35, size: 0.95 },
+  { id: 'swallowtail', name: '호랑나비', rarity: 'uncommon', move: 'fly', model: 'butterfly', price: 250, color: 0xf2d04b, color2: 0x2a2a2a, size: 1.15 },
+  { id: 'reddragonfly', name: '고추잠자리', rarity: 'uncommon', move: 'fly', where: 'river', model: 'dragonfly', price: 220, color: 0xd9452f, color2: 0xe9f6ff, size: 1.0 },
+  { id: 'cicada', name: '매미', rarity: 'uncommon', move: 'tree', model: 'cicada', price: 300, color: 0x5b4a32, color2: 0xdfeee8, size: 1.0 },
+  { id: 'cricket', name: '귀뚜라미', rarity: 'uncommon', move: 'ground', model: 'hopper', price: 200, color: 0x4a3a2a, color2: 0x2e241a, size: 0.8 },
+  { id: 'rhinobeetle', name: '장수풍뎅이', rarity: 'rare', move: 'tree', model: 'rhino', price: 1200, color: 0x5a321c, color2: 0x2b170c, size: 1.3 },
+  { id: 'stagbeetle', name: '사슴벌레', rarity: 'rare', move: 'tree', model: 'stag', price: 1500, color: 0x2e2018, color2: 0x1a120c, size: 1.25 },
+  { id: 'bluewing', name: '청띠제비나비', rarity: 'rare', move: 'fly', model: 'butterfly', price: 1000, color: 0x1f2a36, color2: 0x41b6e6, size: 1.15 },
+  { id: 'emperordragonfly', name: '왕잠자리', rarity: 'rare', move: 'fly', where: 'river', model: 'dragonfly', price: 900, color: 0x3d8fd0, color2: 0xe9f6ff, size: 1.3 },
+  { id: 'morpho', name: '모르포나비', rarity: 'legend', move: 'fly', model: 'butterfly', price: 5000, color: 0x2a7fe0, color2: 0x0d2550, size: 1.35 },
+  { id: 'goldbeetle', name: '황금풍뎅이', rarity: 'legend', move: 'tree', model: 'goldbeetle', price: 6000, color: 0xe6b83a, color2: 0x8a6a1a, size: 1.05 },
+];
+export const BUG_BY_ID = Object.fromEntries(BUGS.map((b) => [b.id, b]));
+// 희귀도별로 얼마나 잘 도망가는지: run 달려서 이만큼 안에 오면 · walk 걸어서 이만큼 안에 오면 (m, 0 이면 안 도망감) · miss 헛손질에 놀라 도망감
+// 흔한 곤충은 그냥 다가가 잡으면 되고, 희귀할수록 멀리서부터 살금살금 다가가야 한다 (멈춘 채 휘두르면 안 놀람)
+// run: 달려오면 이 거리(m)부터 놀람 · walk: 걸어서 이만큼 가까이 오면 놀람 · miss: 헛스윙에 놀라 날아갈 확률
+// (놀라도 곧바로 날아가지 않고 매 순간 조금씩 확률로 → 살금살금 다가갈 틈이 있다)
+export const BUG_SHY = {
+  common: { run: 0, walk: 0, miss: 0 },
+  uncommon: { run: 1.8, walk: 0, miss: 0.4 },
+  rare: { run: 2.4, walk: 0.8, miss: 0.6 },
+  legend: { run: 2.8, walk: 0.95, miss: 0.8 },
+};
+export const NET_CATCH = 0.42; // 그물 테가 지나간 길에서 이만큼 안에 있던 곤충이 잡힌다 (m)
+export const NET_ROOM = 3.2; // 휘두른 길은 캐릭터 둘레 이만큼 안이어야 믿는다 (m)
+export const BUG_COUNT = 11; // 마을에 늘 있는 곤충 수
+// 곤충이 머무를 수 있는 풀밭: 갈 수 있는 곳이면서 광장·길·모래사장·강에서 떨어진 곳
+export function onGrass(x, z) {
+  if (isBlocked(x, z, 0.3)) return false;
+  if (shoreN(x, z) - islandN(x, z) < BEACH.grass + 1) return false;
+  if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + 1) return false;
+  if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < PLAZA.r + 0.5) return false;
+  return true;
 }

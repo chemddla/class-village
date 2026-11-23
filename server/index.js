@@ -10,6 +10,7 @@ import {
   WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE,
   PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
 } from '../shared/world.js';
+import { setupBugs } from './bugs.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
 const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
@@ -42,11 +43,22 @@ const Drop = schema({
   k: 'int8', // 떨어진 과일나무 번호 (떨어지는 연출용)
 }, 'Drop');
 
+// 마을의 곤충 (누구나 잠자리채로 잡을 수 있음, 움직임은 서버가 정함: server/bugs.js)
+const Bug = schema({
+  s: 'string', // 곤충 종류 (BUGS id)
+  x: 'int16', // cm
+  z: 'int16', // cm
+  y: 'uint16', // 높이 cm
+  r: 'uint8', // 바라보는 방향 0~255
+  f: 'uint8', // 1 이면 날거나 뛰는 중 (날개짓·다리 동작)
+}, 'Bug');
+
 const VillageState = schema({
   players: { map: Player },
   freeLook: 'boolean',
   fruitLeft: ['uint8'], // 과일나무마다 남은 과일 개수 (WORLD.fruitTrees 순서)
   drops: { map: Drop }, // 땅에 떨어진 과일: 번호 → 자리
+  bugs: { map: Bug }, // 곤충: 번호 → 종류·자리
 }, 'VillageState');
 
 // ── 전송량 측정 ──
@@ -77,6 +89,13 @@ class VillageRoom extends Room {
     this.state.freeLook = FREE_LOOK;
     this.state.fruitLeft = new ArraySchema(...WORLD.fruitTrees.map(() => FRUIT_MAX));
     if (!this.state.drops) this.state.drops = new MapSchema();
+    if (!this.state.bugs) this.state.bugs = new MapSchema();
+    // 학생마다 지금 움직이는 빠르기 (곤충이 놀라는지 볼 때 씀): 0.4초 넘게 움직임이 없으면 멈춘 것으로 본다
+    this.speeds = new Map();
+    setupBugs(this, Bug, (sid) => {
+      const v = this.speeds.get(sid);
+      return v && Date.now() - v.t < 400 ? v.v : 0;
+    });
     this.regrow = []; // 다시 열릴 과일: { k: 나무 번호, at: 시각(ms) }
     this.dropAt = new Map(); // 떨어진 과일 번호 → 사라질 시각(ms)
     this.dropId = 0;
@@ -251,6 +270,7 @@ class VillageRoom extends Room {
         return;
       }
       this.last.set(client.sessionId, { x, z, t: now });
+      if (dt > 0.03) this.speeds.set(client.sessionId, { v: dist / dt, t: now });
       p.x = cx;
       p.z = cz;
       p.r = r & 255;

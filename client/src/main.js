@@ -3,12 +3,12 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, PORTALS, PORTAL, inField, FIELD_MONSTERS, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
+  ARROW, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
-import { buildVillage, fishModel } from './village.js';
+import { buildVillage, fishModel, bugModel } from './village.js';
 import { buildField } from './field.js';
 import { Character, actTime, LAND } from './character.js';
-import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft } from './life.js';
+import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft, bugSpots } from './life.js';
 import { createLookEditor } from './look-editor.js';
 import { createMinimap } from './minimap.js';
 import { EQUIPMENT } from './villager/equipment.js';
@@ -234,6 +234,10 @@ function hitFx(char, action) {
       burst('dust', 10, at(hx, hz, 0.05), { ring: true, power: 1.1 });
       burst('stone', 4, at(hx, hz, 0.05), { spread: Math.PI, power: 0.6 });
     }
+  } else if (action === 'netSwing' || action === 'netHigh' || action === 'netLow') {
+    // 다 쓸고 난 순간: (내 캐릭터면) 그물 테가 지나간 길을 서버에 보내, 그 길에 걸린 곤충을 잡는다
+    if (char === me) room?.send('swing', (char.netPath ?? []).map((p) => p.map((v) => Math.round(v * 100))));
+    burst('leaf', 4, at(char.x + fx * 1.3, char.z + fz * 1.3, 0.4), { spread: Math.PI, power: 0.5 });
   } else if (action === 'treeShake') {
     // 줄기를 잡은 순간: (내 캐릭터면) 서버에 흔들기를 알려 과일이 떨어지게 하고, 잎이 우수수
     const pend = char === me ? local.picked : null;
@@ -287,9 +291,21 @@ function arrowHit(a, from, mine) {
 const arrows = createArrows(scene, arrowHit);
 
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
-const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹' };
-const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟' };
-const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시' };
+// 잠자리채 + 채집통 아이콘 (그림 문자에 없어서 직접 그림)
+const NET_ICON = `<svg class="ico" viewBox="0 0 32 32" aria-hidden="true">
+<path d="M4 29 L15.5 14.5" stroke="#c9a35c" stroke-width="2.6" stroke-linecap="round"/>
+<path d="M4 29 L7.2 25" stroke="#4f9a5c" stroke-width="3.6" stroke-linecap="round"/>
+<path d="M14 9.5 Q14.5 22 23 19.5 Q27.5 17 25 9.5" fill="#eef8f2" stroke="#9cc7ad" stroke-width="1"/>
+<path d="M16.5 11 Q18 18 21 18 M19.5 10.5 Q21.5 16 24 16" stroke="#b9dbc6" stroke-width="0.8" fill="none"/>
+<ellipse cx="19.5" cy="8.6" rx="6.2" ry="3.4" fill="none" stroke="#3b8f5a" stroke-width="2"/>
+<rect x="20" y="22" width="9.5" height="8" rx="1.6" fill="#dff3f6" stroke="#7fb7c2" stroke-width="1"/>
+<rect x="19.4" y="20.6" width="10.7" height="2.6" rx="1" fill="#4f9a5c"/>
+<path d="M22.5 20.6 Q24.75 17.6 27 20.6" stroke="#8a8f96" stroke-width="1.1" fill="none"/>
+<path d="M23 29 Q24 25.5 23.5 24 M25.5 29 Q26.5 26 27.2 25" stroke="#7fbf4f" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+</svg>`;
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹', net: NET_ICON };
+const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', net: NET_ICON };
+const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', net: '곤충' };
 const QUICK_SLOTS = 4;
 const FRUIT_ICON = { peach: '🍑', apple: '🍎', orange: '🍊', pear: '🍐' };
 const bag = new Map(); // 내 가방에 든 과일: 이름 → 개수 (서버가 정함)
@@ -316,7 +332,8 @@ function setArrows(n) {
   renderInv();
 }
 const BOW = TOOLS.indexOf('bow');
-let invItems = [1, 2, 4]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
+const NET = TOOLS.indexOf('net');
+let invItems = [1, 2, 4, NET]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
 let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이)
@@ -351,7 +368,7 @@ const quick = (() => {
 })();
 const saveQuick = () => store.set(localStorage, 'quick', JSON.stringify(quick));
 // 생활 도구(도끼·낚싯대)는 따로 생활 도구 칸에 있고, 퀵슬롯(1~4)에는 무기만 넣는다
-const LIFE_ITEMS = [TOOLS.indexOf('axe'), TOOLS.indexOf('rod')];
+const LIFE_ITEMS = [TOOLS.indexOf('axe'), TOOLS.indexOf('rod'), TOOLS.indexOf('net')];
 const isLifeItem = (t) => LIFE_ITEMS.includes(t);
 const slotItem = (i) => (quick[i] !== null && invItems.includes(quick[i]) && !isLifeItem(quick[i]) ? quick[i] : null); // 가방에 없는 장비·생활 도구는 빈칸으로 본다
 
@@ -553,6 +570,10 @@ function renderInv() {
     cells.push(info(cell('🐟', { count: bag.get(f.id), title: `${f.name} ×${bag.get(f.id)}`, color }),
       `${f.name} ×${bag.get(f.id)} (${RARITY[f.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
   }
+  for (const b of BUGS.filter((x) => bag.get(x.id) > 0)) {
+    cells.push(info(cell('🦋', { count: bag.get(b.id), title: `${b.name} ×${bag.get(b.id)}` }),
+      `${b.name} ×${bag.get(b.id)} (${RARITY[b.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
+  }
   const total = Math.max(INV_MIN_CELLS, Math.ceil(cells.length / INV_COLS) * INV_COLS);
   for (let i = cells.length; i < total; i++) cells.push(cell('', { cls: 'empty' }));
   for (const c of cells) grid.appendChild(c);
@@ -560,27 +581,49 @@ function renderInv() {
 
   const help = document.createElement('p');
   help.className = 'inv-help inv-info';
-  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해 모아요.';
+  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해, 곤충은 잠자리채(R)를 들고 G로 잡아 모아요.';
   ui.inv.appendChild(help);
 }
 
 // ── 도감 (B): 강·바다 물고기를 모두 보여 주고, 잡아 본 것만 이름·희귀도·값이 보인다 ──
 const dexPanel = $id('dex-panel');
 const stars = (r) => '★'.repeat(RARITY[r].stars);
+let dexTab = 'fish'; // 'fish' · 'bug'
+// 곤충 사는 곳 (도감에서 묶어 보여 줄 때)
+const BUG_PLACE = [['fly', '🌼 날아다니는 곤충'], ['flower', '🌸 꽃에 앉는 곤충'], ['tree', '🌳 나무에 붙는 곤충'], ['ground', '🌱 풀밭에서 뛰는 곤충']];
 function renderDex() {
-  const got = FISH.filter((f) => dex.get(f.id) > 0).length;
-  dexPanel.innerHTML = `<h3>📖 물고기 도감 <small>(B)</small></h3><p class="inv-help">${got} / ${FISH.length} 종류를 잡았어요</p>`;
-  for (const [where, title] of [['river', '🏞️ 강'], ['sea', '🌊 바다']]) {
+  const list = dexTab === 'fish' ? FISH : BUGS;
+  const got = list.filter((f) => dex.get(f.id) > 0).length;
+  dexPanel.innerHTML = `<h3>📖 도감 <small>(B)</small></h3>`;
+  const tabs = document.createElement('div');
+  tabs.className = 'look-row dex-tabs';
+  for (const [key, label] of [['fish', '🐟 물고기'], ['bug', '🦋 곤충']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = key === dexTab ? 'on' : '';
+    b.textContent = label;
+    b.onclick = () => { dexTab = key; renderDex(); };
+    tabs.appendChild(b);
+  }
+  dexPanel.appendChild(tabs);
+  const p = document.createElement('p');
+  p.className = 'inv-help';
+  p.textContent = `${got} / ${list.length} 종류를 잡았어요`;
+  dexPanel.appendChild(p);
+  const groups = dexTab === 'fish'
+    ? [['river', '🏞️ 강'], ['sea', '🌊 바다']].map(([w, t]) => [t, FISH.filter((x) => x.where === w)])
+    : BUG_PLACE.map(([mv, t]) => [t, BUGS.filter((x) => x.move === mv)]);
+  for (const [title, items] of groups) {
     const h = document.createElement('h4');
     h.textContent = title;
     dexPanel.appendChild(h);
-    for (const f of FISH.filter((x) => x.where === where)) {
+    for (const f of items) {
       const n = dex.get(f.id) ?? 0;
       const row = document.createElement('div');
       row.className = `dex-row${n ? '' : ' unknown'}`;
       const color = n ? `#${f.color.toString(16).padStart(6, '0')}` : '#e6dccb';
       row.innerHTML = n
-        ? `<span class="dot" style="background:${color}"></span><span class="nm">${f.name}</span><span class="stars">${stars(f.rarity)}</span><span class="meta">${RARITY[f.rarity].name} · ${f.price.toLocaleString()}원 · ${n}마리</span>`
+        ? `<span class="dot" style="background:${color}"></span><span class="nm">${f.name}</span><span class="stars">${stars(f.rarity)}</span><span class="meta">${RARITY[f.rarity].name} · ${f.price.toLocaleString()}원 · ${n}${dexTab === 'fish' ? '마리' : '번'}</span>`
         : `<span class="dot" style="background:${color}"></span><span class="nm">???</span><span class="stars">${stars(f.rarity)}</span><span class="meta">${RARITY[f.rarity].name}</span>`;
       dexPanel.appendChild(row);
     }
@@ -688,10 +731,31 @@ function updateFishing() {
 }
 // 잡은 물고기를 머리 위로 들어 보인다 (내 캐릭터·다른 학생 모두)
 const shows = [];
-function showCatch(char, fish) {
-  const mesh = fishModel(fish);
+// ── 곤충 채집: 잠자리채를 휘두르면 손이 닿는 순간 서버가 앞쪽 곤충을 잡았는지 정한다 ──
+// target: 곤충 쪽으로 돌아설 자리 (없으면 바라보는 쪽 그대로)
+function swingNet(target) {
+  holdTool(TOOLS.indexOf('net'));
+  // 앞쪽(좌우 50도) 2.6m 안에서 가장 가까운 곤충 쪽으로 돌아서고, 그 높이에 맞춰 높이·가슴·낮게 중 하나로 휘두른다
+  const r0 = me.targetRot;
+  let aim = null;
+  let best = 2.6;
+  for (const b of bugSpots.values()) {
+    const d = Math.hypot(b.x - me.x, b.z - me.z);
+    const off = Math.abs(Math.atan2(Math.sin(Math.atan2(b.x - me.x, b.z - me.z) - r0), Math.cos(Math.atan2(b.x - me.x, b.z - me.z) - r0)));
+    const near = target ? Math.hypot(b.x - target.x, b.z - target.z) < 0.3 : off < 0.87;
+    if (near && d < best) { best = d; aim = b; }
+  }
+  if (aim) me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z));
+  const y = aim?.y ?? 1;
+  startAct(y < NET_LOW_Y ? ANIM.NET_LOW : y > NET_HIGH_Y ? ANIM.NET_HIGH : ANIM.NET_SWING);
+}
+const NET_LOW_Y = 0.5; // 이보다 낮은 곤충은 발 앞을 낮게 쓸고
+const NET_HIGH_Y = 1.4; // 이보다 높으면 머리 위로 쓴다
+
+// mesh: 들어 보일 모양 (물고기·곤충), big: 원래 크기의 몇 배로 보일지
+function showCatch(char, mesh, big = 1) {
   scene.add(mesh);
-  shows.push({ char, mesh, t: 0 });
+  shows.push({ char, mesh, t: 0, base: mesh.scale.x * big });
 }
 function updateShows(dt) {
   for (let i = shows.length - 1; i >= 0; i--) {
@@ -700,7 +764,7 @@ function updateShows(dt) {
     const up = Math.min(1, s.t / 0.25);
     s.mesh.position.set(s.char.x, s.char.groundY + 2.2 + up * 0.5 + Math.sin(s.t * 6) * 0.04, s.char.z);
     s.mesh.rotation.set(0, s.char.root.rotation.y + Math.PI / 2, Math.sin(s.t * 9) * 0.25); // 파닥파닥
-    s.mesh.scale.setScalar(s.t > 2 ? Math.max(0, 1 - (s.t - 2) / 0.25) : up);
+    s.mesh.scale.setScalar(s.base * (s.t > 2 ? Math.max(0, 1 - (s.t - 2) / 0.25) : up));
     if (s.t > 2.25) { scene.remove(s.mesh); shows.splice(i, 1); }
   }
 }
@@ -830,8 +894,11 @@ const input = createInput({
         return;
       }
       if (local.actLeft > 0) return;
+      // 잠자리채를 들고 있으면 G = 바라보는 쪽으로 휘두르기 (곤충이 없어도)
+      if (TOOLS[local.equip] === 'net') { swingNet(null); return; }
       const t = findLife(me.x, me.z, lifeSpots);
-      if (!t) { toast('나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
+      if (!t) { toast('곤충·나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
+      if (t.tool === 'net') { swingNet(t); return; }
       if (t.tool === 'rod') { startFishing(); return; }
       holdTool(TOOLS.indexOf(t.tool));
       me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 대상 쪽으로 돌아섬
@@ -950,7 +1017,7 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
-    invItems = free ? [1, 2, 3, 4, BOW] : [1, 2, 4];
+    invItems = free ? [1, 2, 3, 4, BOW, NET] : [1, 2, 4, NET];
     // 활을 처음 받으면 빈 퀵슬롯에 넣어 준다 (한 번만). 테스트 서버에서는 들어올 때마다 화살통을 가득 채워 준다 (아직 화살을 얻는 곳이 없음)
     if (free && !store.get(localStorage, 'bowGiven')) {
       store.set(localStorage, 'bowGiven', '1');
@@ -990,6 +1057,45 @@ function attach(r) {
     }
   });
   $(r.state).drops.onRemove((_, id) => { drops.delete(id); village.removeDrop(id); });
+
+  // 곤충: 서버가 정한 자리로 그리고, 놀라 날아가거나(bugGone) 잡히면(bugCaught) 없앤다
+  for (const id of bugSpots.keys()) village.bugs.remove(id, 'caught');
+  bugSpots.clear();
+  const bugGone = new Map(); // 곧 없어질 곤충 번호 → 까닭 (상태에서 빠지기 전에 메시지가 먼저 옴)
+  $(r.state).bugs.onAdd((b, id) => {
+    const sp = BUG_BY_ID[b.s];
+    if (!sp) return;
+    const put = () => {
+      const x = fromCm(b.x);
+      const z = fromCm(b.z);
+      const y = b.y / 100;
+      bugSpots.set(id, { x, y, z });
+      return [x, y, z, byteToAngle(b.r), b.f];
+    };
+    village.bugs.add(id, sp, ...put());
+    $(b).onChange(() => village.bugs.set(id, ...put()));
+  });
+  $(r.state).bugs.onRemove((_, id) => {
+    bugSpots.delete(id);
+    village.bugs.remove(id, bugGone.get(id) ?? 'caught');
+    bugGone.delete(id);
+  });
+  r.onMessage('bugGone', ([id, why]) => bugGone.set(id, why));
+  r.onMessage('bugCaught', ([sid, , id]) => {
+    const sp = BUG_BY_ID[id];
+    const char = sid === r.sessionId ? me : others.get(sid)?.char;
+    if (!sp || !char) return;
+    showCatch(char, bugModel(sp), 2.6);
+    if (char !== me) return;
+    const first = !announced.has(id) && (dex.get(id) ?? 0) <= 1;
+    announced.add(id);
+    toast(`🦋 ${sp.name}를 잡았다! ${stars(sp.rarity)} ${RARITY[sp.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
+  });
+  r.onMessage('netResult', (m) => {
+    if (m.full) toast('가방에 이 곤충이 가득 찼어요');
+    else if (m.scared) toast('앗, 놓쳤어요! 곤충이 놀라 날아갔어요');
+    else if (m.near) toast('아깝다! 곤충을 바라보고 가까이에서 G');
+  });
   setTimeout(() => { dropsReady = true; }, 300);
 
   // 낚시: 서버가 정한 물고기의 흐름(나타남·톡톡·덥석)을 받아 그림자를 찌로 데려온다 (어떤 물고기인지는 잡을 때까지 비밀)
@@ -1005,7 +1111,7 @@ function attach(r) {
     const fish = FISH_BY_ID[id];
     const char = sid === r.sessionId ? me : others.get(sid)?.char;
     if (!fish || !char) return;
-    showCatch(char, fish);
+    showCatch(char, fishModel(fish));
     if (char !== me) return;
     const first = !announced.has(id) && (dex.get(id) ?? 0) <= 1; // 도감 갱신과 이 알림 중 무엇이 먼저 와도 처음 잡은 것만
     announced.add(id);
@@ -1273,7 +1379,7 @@ function updateMe(dt) {
   local.lifeTimer -= dt;
   if (local.lifeTimer <= 0) {
     local.lifeTimer = 0.2;
-    showLife(findLife(me.x, me.z, lifeSpots)?.tool ?? null);
+    showLife(TOOLS[local.equip] === 'net' ? 'net' : findLife(me.x, me.z, lifeSpots)?.tool ?? null); // 잠자리채를 들면 G = 휘두르기
     const grab = nearDrop(me.x, me.z);
     const shake = !grab && findFruit(me.x, me.z);
     ui.pickBtn.classList.toggle('hidden', !grab && !shake);

@@ -1412,6 +1412,152 @@ function buildLure(group) {
 const FISH_APPROACH_MS = FISH_APPROACH * 1000;
 const HESITATE_MS = LURE_HESITATE * 1000;
 
+// ── 곤충 ──
+// 모양: 몸·머리·다리는 하나로 합치고, 날개는 따로 두어 펄럭인다. 길이 약 0.1~0.2m (보이게 조금 크게)
+const bugModelCache = new Map();
+function bugParts(b) {
+  const C = new THREE.Color(b.color);
+  const C2 = new THREE.Color(b.color2);
+  const body = [];
+  const wings = []; // [geometry, color, opacity, 왼쪽(-1)·오른쪽(1)]
+  const add = (g, c) => body.push(tint(g, c.getHex ? c.getHex() : c));
+  const leg = (x, z, side, len = 0.045) => add(new THREE.CylinderGeometry(0.004, 0.004, len, 4).rotateZ(side * 1.1).translate(x, -0.012, z * side), 0x2b2b2b);
+  switch (b.model) {
+    case 'butterfly':
+      add(new THREE.CapsuleGeometry(0.009, 0.07, 4, 8).rotateZ(Math.PI / 2), 0x2b2b2b);
+      add(new THREE.SphereGeometry(0.012, 8, 6).translate(0.045, 0, 0), 0x2b2b2b);
+      for (const side of [-1, 1]) {
+        add(new THREE.CylinderGeometry(0.0012, 0.0012, 0.04, 3).rotateX(side * 0.5).rotateZ(-0.6).translate(0.06, 0.016, side * 0.01), 0x2b2b2b);
+        wings.push([new THREE.CircleGeometry(0.055, 14).scale(1, 0.85, 1).rotateX(-Math.PI / 2).translate(0.012, 0, 0.05), C, 1, side]);
+        wings.push([new THREE.CircleGeometry(0.04, 12).scale(1.1, 0.8, 1).rotateX(-Math.PI / 2).translate(-0.03, 0, 0.038), C2, 1, side]);
+      }
+      break;
+    case 'dragonfly':
+      add(new THREE.CylinderGeometry(0.006, 0.004, 0.14, 6).rotateZ(Math.PI / 2).translate(-0.05, 0, 0), b.color);
+      add(new THREE.SphereGeometry(0.012, 8, 6).scale(1.3, 1, 1).translate(0.03, 0, 0), b.color);
+      add(new THREE.SphereGeometry(0.013, 8, 6).translate(0.05, 0.004, 0), 0x2b2b2b);
+      for (const side of [-1, 1]) {
+        wings.push([new THREE.CircleGeometry(0.05, 10).scale(0.32, 1, 1).rotateX(-Math.PI / 2).rotateY(-0.25).translate(0.02, 0.006, 0.05), C2, 0.55, side]);
+        wings.push([new THREE.CircleGeometry(0.045, 10).scale(0.32, 1, 1).rotateX(-Math.PI / 2).rotateY(0.25).translate(-0.005, 0.006, 0.045), C2, 0.55, side]);
+      }
+      break;
+    case 'bee':
+      for (let k = 0; k < 4; k++) add(new THREE.SphereGeometry(0.02 - k * 0.002, 10, 8).scale(0.7, 1, 1).translate(-k * 0.014, 0, 0), k % 2 ? b.color2 : b.color);
+      add(new THREE.SphereGeometry(0.013, 8, 6).translate(0.022, 0.002, 0), 0x2b2b2b);
+      for (const side of [-1, 1]) wings.push([new THREE.CircleGeometry(0.022, 10).scale(1.3, 0.7, 1).rotateX(-Math.PI / 2).translate(-0.005, 0.02, 0.022), new THREE.Color(0xf4fbff), 0.6, side]);
+      break;
+    case 'hopper':
+      add(new THREE.CapsuleGeometry(0.011, 0.06, 4, 8).rotateZ(Math.PI / 2).translate(-0.005, 0.012, 0), b.color);
+      add(new THREE.SphereGeometry(0.013, 8, 6).scale(1.1, 1.2, 1).translate(0.042, 0.016, 0), b.color);
+      for (const side of [-1, 1]) {
+        add(new THREE.CylinderGeometry(0.004, 0.003, 0.06, 4).rotateZ(-0.9).rotateX(side * 0.25).translate(-0.02, 0.022, side * 0.016), b.color2);
+        add(new THREE.CylinderGeometry(0.0025, 0.002, 0.055, 4).rotateZ(0.9).rotateX(side * 0.25).translate(-0.035, 0.0, side * 0.02), b.color2);
+        leg(0.025, 0.014, side, 0.03);
+      }
+      break;
+    case 'cicada':
+      add(new THREE.SphereGeometry(0.022, 10, 8).scale(1.6, 0.8, 1).translate(-0.01, 0, 0), b.color);
+      add(new THREE.SphereGeometry(0.016, 8, 6).scale(0.7, 0.8, 1.4).translate(0.03, 0.002, 0), b.color);
+      for (const side of [-1, 1]) {
+        add(new THREE.SphereGeometry(0.006, 6, 4).translate(0.034, 0.008, side * 0.018), 0xcfe8d8);
+        wings.push([new THREE.CircleGeometry(0.048, 10).scale(1, 0.42, 1).rotateX(-Math.PI / 2).rotateY(side * 0.25).translate(-0.03, 0.016, side * 0.015), C2, 0.55, side]);
+      }
+      break;
+    case 'rhino':
+    case 'stag':
+    case 'ladybug':
+    case 'goldbeetle': {
+      const long = b.model === 'rhino' ? 1.35 : b.model === 'stag' ? 1.25 : 1;
+      add(new THREE.SphereGeometry(0.03, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(long, 0.75, 0.9), b.color);
+      add(new THREE.SphereGeometry(0.014, 8, 6).scale(1, 0.8, 1).translate(0.035 * long, 0.004, 0), b.model === 'ladybug' ? 0x1d1d1d : b.color2);
+      add(new THREE.CylinderGeometry(0.0012, 0.0012, 0.06 * long, 4).rotateZ(Math.PI / 2).translate(0, 0.018, 0), 0x1d1d1d); // 딱지날개 가운데 줄
+      if (b.model === 'ladybug') {
+        for (const [x, z] of [[0.008, 0.012], [-0.012, 0.014], [0.008, -0.012], [-0.012, -0.014], [-0.002, 0]]) add(new THREE.CircleGeometry(0.0055, 8).rotateX(-Math.PI / 2).translate(x, 0.0225, z), 0x1d1d1d);
+      }
+      if (b.model === 'rhino') add(new THREE.CylinderGeometry(0.002, 0.006, 0.05, 6).rotateZ(-0.9).translate(0.065, 0.025, 0), b.color2); // 뿔
+      if (b.model === 'stag') for (const side of [-1, 1]) add(new THREE.TorusGeometry(0.02, 0.0035, 5, 10, Math.PI * 0.8).rotateX(-Math.PI / 2).rotateY(side * 0.6).translate(0.055, 0.004, side * 0.012), b.color2); // 큰턱
+      for (const side of [-1, 1]) for (const x of [0.018, 0, -0.018]) leg(x * long, 0.022, side);
+      break;
+    }
+  }
+  return { body, wings };
+}
+// 곤충 하나 (THREE.Group): 몸 + 펄럭이는 날개 (userData.wings: [mesh, 쪽]). 머리가 +x
+export function bugModel(b) {
+  if (!bugModelCache.has(b.id)) {
+    const { body, wings } = bugParts(b);
+    bugModelCache.set(b.id, { body: mergeGeometries(body.map((g) => (g.index ? g.toNonIndexed() : g))), wings });
+  }
+  const { body, wings } = bugModelCache.get(b.id);
+  const g = new THREE.Group();
+  const scale = 1.25 * b.size;
+  const bm = new THREE.Mesh(body, b.model === 'goldbeetle' ? toon(0xffffff, { vertexColors: true, emissive: 0x3a2a00 }) : vertexColorToon);
+  addOutline(bm, 0.004);
+  g.add(bm);
+  g.userData.wings = wings.map(([geo, color, opacity, side]) => {
+    const pivot = new THREE.Group(); // 몸 가운데 축을 따라 펄럭임
+    const m = new THREE.Mesh(geo.clone().scale(1, 1, side), basic(color.getHex(), { transparent: opacity < 1, opacity, side: THREE.DoubleSide, depthWrite: opacity >= 1 }));
+    pivot.add(m);
+    g.add(pivot);
+    return [pivot, side];
+  });
+  g.scale.setScalar(scale);
+  return g;
+}
+
+// 마을의 곤충들: 서버가 보내는 자리로 부드럽게 따라가고, 날 때는 날개를 펄럭인다.
+// 나무에 붙은 곤충은 줄기에 배를 대고 머리를 위로. 놀라 날아갈 때(flee)는 위로 휙 날아가며 사라진다
+function buildBugs(group) {
+  const list = new Map(); // 번호 → { m, b, x, y, z, tx, ty, tz, r, fly, tree, gone }
+  return {
+    add(id, b, x, y, z, r, fly) {
+      const m = bugModel(b);
+      m.position.set(x, y, z);
+      group.add(m);
+      list.set(id, { m, b, x, y, z, tx: x, ty: y, tz: z, r, fly, gone: 0, ph: Math.random() * 6 });
+    },
+    set(id, x, y, z, r, fly) {
+      const e = list.get(id);
+      if (!e) return;
+      Object.assign(e, { tx: x, ty: y, tz: z, r, fly });
+    },
+    // reason: 'fled'·'left' 이면 위로 날아가며 사라지고, 그 밖(잡힘)은 바로 없앤다
+    remove(id, reason) {
+      const e = list.get(id);
+      if (!e) return;
+      if (reason === 'fled' || reason === 'left') e.gone = 0.001;
+      else { group.remove(e.m); list.delete(id); }
+    },
+    update(dt, t) {
+      const k = 1 - Math.exp(-10 * dt);
+      for (const [id, e] of list) {
+        if (e.gone) {
+          e.gone += dt;
+          e.ty += dt * 2.5;
+          e.tx += Math.sin(e.r) * dt * 2;
+          e.tz += Math.cos(e.r) * dt * 2;
+          e.m.scale.setScalar(1.25 * e.b.size * Math.max(0, 1 - e.gone / 1.2));
+          if (e.gone > 1.2) { group.remove(e.m); list.delete(id); continue; }
+        }
+        e.x += (e.tx - e.x) * k;
+        e.y += (e.ty - e.y) * k;
+        e.z += (e.tz - e.z) * k;
+        const flying = e.fly || e.gone;
+        const bob = flying && e.b.move === 'fly' ? Math.sin(t * 9 + e.ph) * 0.02 : 0;
+        e.m.position.set(e.x, e.y + bob, e.z);
+        const tree = e.b.move === 'tree' && !e.gone;
+        // 머리(+x)가 바라보는 쪽(r: z 기준 각)을 보게. 나무에 붙으면 배를 줄기에 대고(바깥을 보며) 머리를 위로
+        e.m.rotation.set(0, e.r - Math.PI / 2, tree ? Math.PI / 2 : 0, 'YXZ');
+        if (tree) e.m.rotation.y = e.r + Math.PI / 2;
+        // 날개: 날 때는 빠르게 펄럭, 앉아 있을 때는 천천히 접었다 폈다 (잠자리·매미는 늘 펼침)
+        const speed = e.b.model === 'bee' ? 60 : e.b.model === 'dragonfly' ? 40 : flying ? 16 : 1.5;
+        const amp = e.b.model === 'dragonfly' || e.b.model === 'cicada' ? (flying ? 0.35 : 0) : flying ? 0.9 : 0.25;
+        for (const [pivot, side] of e.m.userData.wings) pivot.rotation.x = side * (Math.sin(t * speed + e.ph) * amp + (e.b.model === 'butterfly' && !flying ? 0.6 : 0));
+      }
+    },
+  };
+}
+
 export function buildVillage(scene, { low = false } = {}) {
   const group = new THREE.Group();
   const labels = []; // 둥근 지평선에 맞춰 매 장면 위치를 고칠 이름표
@@ -1428,6 +1574,7 @@ export function buildVillage(scene, { low = false } = {}) {
   const sea = buildSea(group);
   const fishShadows = buildFishShadows(group);
   const lure = buildLure(group);
+  const bugs = buildBugs(group);
   const drops = buildDrops(group);
   const portal = buildPortal(PORTALS[0]); // 광장 → 들판
   group.add(portal.group, portal.label);
@@ -1454,6 +1601,7 @@ export function buildVillage(scene, { low = false } = {}) {
     shakeTree: trees.shake,
     setFruitLeft: trees.setFruitLeft,
     lure, // 낚시 찌로 다가오는 물고기
+    bugs, // 마을의 곤충 (서버 상태를 따라 그림)
     fishShadows, // 돌아다니는 물고기 (찌를 알아채는지 보기)
     // 땅에 떨어진 과일 (k: 떨어진 과일나무 번호, fall: 지금 막 떨어지는 중이면 true)
     addDrop(id, fruit, x, z, k, fall) {
@@ -1472,6 +1620,7 @@ export function buildVillage(scene, { low = false } = {}) {
       sea(t);
       fishShadows.update(dt, t);
       lure.update(dt);
+      bugs.update(dt, t);
       drops.update(dt);
       trees.update(dt);
       rocks.update(dt);

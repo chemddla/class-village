@@ -62,7 +62,7 @@ const ACTS = {
   [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3', [ANIM.SMASH4]: 'clubSmash4',
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
   [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket',
-  [ANIM.FISH_CAST]: 'fishCast', [ANIM.FISH_WAIT]: 'fishWait', [ANIM.FISH_CATCH]: 'fishCatch', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
+  [ANIM.NET_SWING]: 'netSwing', [ANIM.NET_HIGH]: 'netHigh', [ANIM.NET_LOW]: 'netLow', [ANIM.FISH_CAST]: 'fishCast', [ANIM.FISH_WAIT]: 'fishWait', [ANIM.FISH_CATCH]: 'fishCatch', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
   [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash', [ANIM.ROLL]: 'roll',
   [ANIM.BOW_AIM]: 'bowAim', [ANIM.BOW_SHOT]: 'bowRelease',
 };
@@ -115,6 +115,7 @@ export class Character {
     this.stepSide = 0;
     this.shakeT = 0;
     this.trails = {};
+    this.netPath = [];
 
     const shadow = new THREE.Mesh(blobGeometry, shadowMat);
     shadow.position.y = 0.004;
@@ -280,7 +281,9 @@ export class Character {
     const u = this.villager.progress;
     if (((def?.trail && u >= def.trail[0] && u <= def.trail[1]) || this.villager.trailOn) && toolEnds(rig, vA, vB)) {
       this.trail('swing', { life: 0.15, color: 0xfffbe8, alpha: 0.95 }).push(this.time, vA, vB);
+      if (cur?.startsWith('net')) this.netPath.push(vB.toArray()); // 잠자리채: 그물 테(채 끝)가 지나간 길
     }
+    if (cur?.startsWith('net') && def?.trail && u < def.trail[0]) this.netPath = [];
     for (const k in this.trails) this.trails[k].update(this.time);
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)

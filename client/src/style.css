@@ -224,3 +224,8 @@ button, input, textarea, select { font-family: inherit; }
 .dex-row .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .dex-row.unknown { color: #b9ad97; }
 .stars { color: #f0b43c; letter-spacing: -1px; }
+
+#dex-panel .dex-tabs { margin: 4px 0 2px; }
+
+/* 직접 그린 도구 아이콘 (잠자리채·채집통): 그림 문자와 같은 크기로 */
+svg.ico { width: 1.15em; height: 1.15em; vertical-align: -0.2em; }
