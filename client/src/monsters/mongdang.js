@@ -28,6 +28,7 @@ export const MONGDANG_MOTIONS = {
 const R = 0.04; // 육각 몸 꼭짓점까지 반지름
 const APO = R * Math.cos(PI / 6); // 평평한 면까지 거리 (얼굴이 붙는 면)
 const Y_ERASER = 0.02, Y_FERRULE = 0.034, Y_BODY = 0.094, Y_WOOD = 0.129, TIP = 0.136;
+const LIFT = 0.0025; // 지우개 밑면 외곽선까지 땅 위로 (땅에 파묻히면 외곽선이 끊겨 보임)
 
 export function createMongdang({ fxParent = null, onDone = null, outlineScale = 1 } = {}) {
   const mat = (color, roughness = 0.6) => new THREE.MeshStandardMaterial({ color, roughness });
@@ -154,6 +155,7 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
   const tmp = new THREE.Vector3();
   const toFx = (v) => (fxParent ? v : root.worldToLocal(v));
   const k = () => (fxParent ? root.scale.x : 1);
+  const floorY = () => (fxParent ? root.position.y : 0); // 몬스터가 선 바닥 높이 (광장 돌바닥 위 등)
   const tipWorld = () => toFx(lead.localToWorld(tmp.set(0, TIP - Y_WOOD, 0)).clone());
 
   function chips(n) {
@@ -183,7 +185,7 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
     m.castShadow = false;
     m.userData.noOutline = true;
     m.position.copy(tipWorld());
-    m.position.y = 0.0004 * k();
+    m.position.y = floorY() + 0.0004 * k();
     m.scale.setScalar(k());
     parts.push({ m, v: new THREE.Vector3(), kind: 'mark', age: 0, life: 6 });
   }
@@ -207,7 +209,7 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
         // 튀어 올랐다가 떨어져 바닥에서 한 번 통 튀고 멈춤
         p.v.y -= 1.6 * k() * dt;
         p.m.position.addScaledVector(p.v, dt);
-        const floor = 0.002 * k();
+        const floor = floorY() + 0.002 * k();
         if (p.m.position.y < floor) {
           p.m.position.y = floor;
           p.v.set(p.v.x * 0.3, Math.abs(p.v.y) > 0.15 * k() ? -p.v.y * 0.35 : 0, p.v.z * 0.3);
@@ -369,7 +371,7 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
 
     // ── 자세 적용 ──
     body.scale.set(P.sxz * P.show, P.sy * P.show, P.sxz * P.show);
-    body.position.set(P.x, P.y, P.z);
+    body.position.set(P.x, P.y + LIFT, P.z);
     body.rotation.y = P.ry;
     core.rotation.set(P.rx, 0, P.rz);
     roller.rotation.y = P.roll;

@@ -23,6 +23,8 @@ const HP = 3; // 이만큼 맞으면 쓰러짐
 const HP_RESET = 10; // 이 시간 동안 안 맞으면 다시 멀쩡해짐 (초)
 const RESPAWN = 4; // 쓰러져 사라진 뒤 다시 나타나기까지 (초)
 const KNOCK = 1.1; // 맞았을 때 밀려나는 첫 빠르기 (m/s)
+const PAVE = 0.05; // 광장 돌바닥 두께 (village.js buildPlaza): 광장 안에서는 이 위에 서야 발이 묻히지 않는다
+const groundY = (x, z) => (Math.hypot(x - PLAZA.fountain.x, z - PLAZA.fountain.z) < PLAZA.r ? PAVE : 0);
 
 // 한 바퀴 일정 (동작 이름, 초)
 const PLAN = [['walk', 6], ['idle', 3], ['special', 2.7], ['walk', 5], ['idle', 2.5], ['notice', 1.3], ['idle', 1.5]];
@@ -160,7 +162,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         }
       }
 
-      mon.root.position.set(px, -curveDrop(px, pz), pz);
+      mon.root.position.set(px, groundY(px, pz) - curveDrop(px, pz), pz);
       mon.root.rotation.y = heading;
       mon.update(dt);
     },

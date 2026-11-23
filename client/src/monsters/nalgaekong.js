@@ -283,7 +283,8 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
         p.v.multiplyScalar(1 - 3 * dt);
         p.m.position.addScaledVector(p.v, dt);
         p.m.position.x += Math.sin(p.age * 7 + p.seed) * 0.02 * k() * dt;
-        if (p.m.position.y < 0.002) { p.m.position.y = 0.002; p.v.set(0, 0, 0); }
+        const floor = (fxParent ? root.position.y : 0) + 0.002; // 날개콩이 선 바닥 높이 (광장 돌바닥 위 등)
+        if (p.m.position.y < floor) { p.m.position.y = floor; p.v.set(0, 0, 0); }
         else p.m.rotation.z = Math.sin(p.age * 6 + p.seed) * 0.8;
         p.m.scale.setScalar(k() * (r > 0.75 ? (1 - r) / 0.25 : 1));
       } else if (p.kind === 'puff') {
