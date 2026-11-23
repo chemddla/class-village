@@ -6,7 +6,7 @@ import { Server, Room } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
-  ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
+  ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE,
   PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
 } from '../shared/world.js';
@@ -26,6 +26,7 @@ const Player = schema({
   r: 'uint8', // 바라보는 방향 0~255
   a: 'uint8', // 동작 번호
   t: 'uint8', // 든 도구 번호 (TOOLS)
+  q: 'uint8', // 화살통에 든 화살 개수 (다른 학생 화면의 화살통에 보이게)
   name: 'string',
   color: 'uint8',
   look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
@@ -231,11 +232,11 @@ class VillageRoom extends Room {
       client.send('fix', [p.x, p.z]);
     });
 
-    // 이동: [x(cm), z(cm), 방향(0~255), 동작, 도구]
+    // 이동: [x(cm), z(cm), 방향(0~255), 동작, 도구, 화살 개수]
     this.onMessage('m', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || !Array.isArray(msg) || msg.length < 4) return;
-      const [cx, cz, r, a, tool = 0] = msg.map((v) => Number(v) | 0);
+      const [cx, cz, r, a, tool = 0, arrows = 0] = msg.map((v) => Number(v) | 0);
       const now = Date.now();
       const prev = this.last.get(client.sessionId);
       const dt = Math.min((now - prev.t) / 1000, 1.5);
@@ -255,6 +256,7 @@ class VillageRoom extends Room {
       p.r = r & 255;
       p.a = a >= 0 && a <= ANIM_MAX ? a : 0;
       p.t = tool >= 0 && tool < TOOLS.length ? tool : 0;
+      p.q = Math.max(0, Math.min(ARROW.max, arrows));
     });
 
     // 외형 바꾸기 (테스트 서버에서만)
