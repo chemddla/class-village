@@ -148,7 +148,7 @@ function outlineMaterial(t, sway = false) {
   const key = `${t}:${sway}`;
   if (!outlineMats.has(key)) {
     const m = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
-    const pre = `${sway ? SWAY_GLSL : ''}\ntransformed += normalize(normal) * ${t.toFixed(4)};`;
+    const pre = `${sway ? SWAY_GLSL : ''}\nif (dot(normal, normal) > 1e-12) transformed += normalize(normal) * ${t.toFixed(4)};`; // 법선 0인 꼭짓점은 NaN 대신 제자리
     outlineMats.set(key, addCurve(m, pre, `curved-outline:${key}`));
   }
   return outlineMats.get(key);

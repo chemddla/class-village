@@ -1,5 +1,6 @@
 // 카툰 모드 (쇼룸·마을 공용): 역법선(Inverted Hull) 외곽선 + 반-툰 명암
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const OUTLINE_COLOR = 0x4a3525; // 검정 대신 따뜻한 짙은 갈색
 // 눈·렌즈 같은 평면 데칼과 그물·발목 입구처럼 얇은 면에는 외곽선을 두르지 않음
@@ -21,7 +22,7 @@ function outlineMaterial(thickness, color) {
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float noLine;')
         .replace('#include <begin_vertex>',
           `#include <begin_vertex>
-  transformed += normalize(normal) * ${thickness.toFixed(4)} * (1.0 - noLine);`);
+  if (dot(normal, normal) > 1e-12) transformed += normalize(normal) * ${thickness.toFixed(4)} * (1.0 - noLine);`); // 앞뒤 면이 맞붙어 법선이 0이 된 꼭짓점은 그대로
     };
     m.customProgramCacheKey = () => `outline:${key}`;
     outlineMats.set(key, m);
@@ -29,10 +30,26 @@ function outlineMaterial(thickness, color) {
   return outlineMats.get(key);
 }
 
+// 각진 모서리·UV 이음새는 같은 자리 꼭짓점의 법선이 갈라져 있어 껍질을 밀면 틈이 벌어진다(시점 따라 뚫리거나 떠 보임):
+// 같은 자리 꼭짓점을 합쳐 매끈한 법선으로 다시 계산한 껍질을 쓴다 (뼈 가중치·noLine 은 그대로 남김)
+const hullCache = new WeakMap();
+function hullGeometry(geo) {
+  let h = hullCache.get(geo);
+  if (!h) {
+    const g = new THREE.BufferGeometry();
+    for (const k of ['position', 'skinIndex', 'skinWeight', 'noLine']) if (geo.attributes[k]) g.setAttribute(k, geo.attributes[k]);
+    if (geo.index) g.setIndex(geo.index);
+    h = mergeVertices(g, 1e-4);
+    h.computeVertexNormals();
+    hullCache.set(geo, h);
+  }
+  return h;
+}
+
 // 메시에 같은 지오메트리를 쓰는 외곽선 껍질을 자식으로 붙임 (메시와 함께 움직이고 함께 사라짐)
-// userData.outlineGeometry 가 있으면 그 모양으로 껍질을 만든다 (각진 부품의 외곽선이 면마다 벌어지지 않게 면 방향을 고르게 이은 것)
+// userData.outlineGeometry 가 있으면 그 모양으로 껍질을 만든다
 export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
-  const geo = mesh.userData.outlineGeometry ?? mesh.geometry;
+  const geo = mesh.userData.outlineGeometry ?? hullGeometry(mesh.geometry);
   // 휘는 메시(스키닝)는 외곽선 껍질도 같은 뼈를 따라 휘어야 한다
   const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(geo, outlineMaterial(thickness, color)) : new THREE.Mesh(geo, outlineMaterial(thickness, color));
   if (mesh.isSkinnedMesh) o.bind(mesh.skeleton, mesh.bindMatrix);
