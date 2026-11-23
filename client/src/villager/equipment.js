@@ -735,6 +735,7 @@ export function straightenWrists(rig) {
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
 const v1 = V();
 const v2 = V();
+const CARRY_OUT = 0.75; // 손목을 세운 각도에 곱해 바깥으로 돌리는 비율
 export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   // 들고 다니는 자세: 소켓 자체를 부드럽게 기울임 (액션 관절값과 따로 움직임)
   // 두 손으로 쥔 손이 다 풀린 뒤에 손목을 세운다 (풀리는 도중에 세우면 도구가 휙 돌아 손이 튄다)
@@ -744,8 +745,9 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action }) {
   const cx = (rig.carryX ??= [0, 0]);
   cx[0] += (carry[0] - cx[0]) * k;
   cx[1] += (carry[1] - cx[1]) * k;
-  rig.rightSocket.rotation.set(cx[0], 0, 0);
-  rig.leftSocket.rotation.set(cx[1], 0, 0);
+  // 세운 만큼 도구 머리를 몸 바깥쪽으로도 눕힌다 (얼굴 쪽으로 기울지 않게)
+  rig.rightSocket.rotation.set(cx[0], cx[0] * CARRY_OUT, 0);
+  rig.leftSocket.rotation.set(cx[1], -cx[1] * CARRY_OUT, 0);
   root.updateMatrixWorld(true);
   const grip = EQUIPMENT[equipment]?.twoHand;
   // 쥘 때는 빠르게(0.15초쯤), 놓을 때는 느긋하게

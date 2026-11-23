@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
-  ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
+  ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
   PORTALS, PORTAL, inField, FIELD_MONSTERS, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
 import { buildVillage, fishModel } from './village.js';
@@ -161,6 +161,7 @@ const THRUST_SPEED = 9.8; // 0.1초에 1m 안쪽이라 서버 이동 검사(0.1�
 const SLAM_STEP = [0.42, 0.72];
 // 점프·더블 점프 공격 중 방향키를 누르고 있을 때 앞으로 나아가는 빠르기 (걷기·달리기 빠르기의 배수)
 const AIR_ATTACK_BOOST = 1.3;
+const JUMP_ATTACK_BOOST = 0.8; // 점프 공격만 따로: 너무 멀리 날아가지 않게 걷기·달리기보다 조금 느리게
 const SLAM_SPEED = 2.9;
 // 땅에서 휘두르는 타(몽둥이 1~4타, 목검 1·2·4타): 타격 직전부터 직후까지(0.25초) 보는 쪽으로 SWING_STEP(m)만큼 살짝 나아간다
 const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH4]);
@@ -199,7 +200,7 @@ function hitFx(char, action) {
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
     // 광장 날개콩 (테스트 서버): 휘두른 범위 안이면 맞는다
-    const monHit = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz))).find(Boolean) : null;
+    const monHit = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me)).find(Boolean) : null;
     if (victims.length) {
       for (const v of victims) {
         v.shake();
@@ -282,7 +283,14 @@ let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나�
 let lifeSpotsMesh = null;
 let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필)
 // 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필을 번갈아)
-const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...spot, phase: i * 7.3, kind: i % 2 ? 'mongdang' : 'nalgae' }));
+// 몬스터 공통 설정: 공격이 닿으면 내가 맞음 (구르는 중·이미 맞는 중이면 피함) · 도망·쫓을 때 벽·분수·광장 나무에 막힘
+const monsterOpts = {
+  onAttack(x, z) {
+    if (me && local.dodge <= 0 && local.hurt <= 0) getHit(x, z);
+  },
+  blocked: (x, z, r) => isBlocked(x, z, r) || (lifeSpots.length > 0 && LIFE_COLLIDERS.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r)),
+};
+const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: i % 2 ? 'mongdang' : 'nalgae' }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -810,7 +818,7 @@ function attach(r) {
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
     if (free && !plazaMonsters.length) {
       // 몽당연필은 날개콩과 같은 분수 둘레 길을 일정 반 바퀴 어긋나게 돈다
-      plazaMonsters = [createPlazaMonsters(scene), createPlazaMonsters(scene, { kind: 'mongdang', phase: 11 })];
+      plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 })];
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });
@@ -1023,9 +1031,9 @@ function updateMe(dt) {
       speed = glide(SLAM_STEP, SLAM_SPEED);
       if (inp.mag > 0 && sec < LAND.flip) speed = Math.max(speed, (inp.run ? RUN_SPEED : WALK_SPEED) * AIR_ATTACK_BOOST);
     }
-    // 점프 공격: 방향키를 누르고 있으면 착지할 때까지 보는 쪽으로 힘차게 나아가며 휘두른다 (걷기·달리기보다 빠르게)
+    // 점프 공격: 방향키를 누르고 있으면 착지할 때까지 보는 쪽으로 나아가며 휘두른다 (걷기·달리기보다 조금 느리게)
     else if ((local.act === ANIM.SMASH_AIR || local.act === ANIM.SLASH_AIR) && inp.mag > 0 && sec < LAND.jump) {
-      speed = (inp.run ? RUN_SPEED : WALK_SPEED) * AIR_ATTACK_BOOST;
+      speed = (inp.run ? RUN_SPEED : WALK_SPEED) * JUMP_ATTACK_BOOST;
     }
     if (speed > 0 && local.hurt <= 0) {
       const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];

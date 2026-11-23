@@ -32,18 +32,15 @@ export function createInput({ onAction, onOrbit, onZoom }) {
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   };
   // 같은 방향키를 빠르게 두 번 누르면 달리기 시작, 방향키를 하나라도 누르고 있는 동안 계속 달린다
+  // 한 번이라도 멈추면(방향키를 다 떼거나, 맞선 키가 서로 지워 제자리) 바로 달리기가 풀린다
   const TAP_MS = 300;
   let lastTap = { dir: null, t: 0 };
   let runDir = null;
-  // 다른 방향키로 바꿔 누를 때 앞 키를 먼저 떼도 이만큼은 계속 달리는 중으로 본다
-  const SWITCH_MS = 150;
-  let releasedAt = 0;
   addEventListener('keydown', (e) => {
     if (!enabled) return;
     const dir = KEYMAP[e.code];
     if (dir) {
       const now = performance.now();
-      if (!keys.size && now - releasedAt > SWITCH_MS) runDir = null; // 방향키를 다 떼고 잠깐 멈췄다 → 달리기 풀림
       keys.add(dir);
       e.preventDefault();
       if (!e.repeat) {
@@ -56,7 +53,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   });
   addEventListener('keyup', (e) => {
     const dir = KEYMAP[e.code];
-    if (dir) { keys.delete(dir); if (!keys.size) releasedAt = performance.now(); }
+    if (dir) { keys.delete(dir); if (!keys.size) runDir = null; } // 방향키를 다 뗐다 → 멈췄으니 달리기 풀림
     if (ACTION_KEYS[e.code]) held.delete(ACTION_KEYS[e.code]);
   });
   addEventListener('blur', () => { keys.clear(); held.clear(); runDir = null; });
@@ -164,6 +161,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
       if (keys.has('down')) z += 1;
       let mag = Math.hypot(x, z);
       if (mag > 0) { x /= mag; z /= mag; mag = 1; }
+      else if (keys.size) { runDir = null; run = false; } // 맞선 키를 함께 눌러 제자리에 섰다 → 달리기 풀림
       if (joy.id !== null) {
         const jm = Math.hypot(joy.x, joy.y);
         if (jm > 0.15) {
