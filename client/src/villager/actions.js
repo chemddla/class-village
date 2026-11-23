@@ -626,7 +626,7 @@ function swordSwing(name) {
 // 그물 테가 실제로 지나간 자리에 곤충이 있어야 잡힌다 (character.js 가 그 길을 모아 main.js 가 서버로 보낸다)
 const NET_LEAD = 50 * PI / 180;
 function netSweep(level) {
-  const y = [-0.55, 0.02, 1.1][level + 1];
+  const y = [-0.38, 0.02, 1.1][level + 1];
   const plane = slashPlane([0.05, y, 1 - Math.abs(y) * 0.3], [-1, 0.25 + Math.max(0, -y) * 0.6, -0.1], [-0.4, -1, 0.1], NET_LEAD);
   const keys = [{ ...SWORD_READY, u: 0 }, plane(0.3, 115, 0.17), plane(0.45, 0, REACH, 'in'), { ...plane(0.6, -45, REACH, 'out'), pole: [-0.5, -1, -0.4] }];
   const low = level < 0 ? 1 : 0;
