@@ -748,12 +748,19 @@ function swingNet(target) {
     const near = target ? Math.hypot(b.x - target.x, b.z - target.z) < 0.3 : off < 0.87;
     if (near && d < best) { best = d; aim = b; }
   }
-  if (aim) me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z));
+  if (aim) {
+    me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z));
+    // 채를 젖히는 동안 곤충 쪽으로 한 발 다가서거나 물러서서, 그물 테가 지나가는 자리(몸에서 NET_RING)에 곤충이 오게 한다
+    const want = THREE.MathUtils.clamp(best - NET_RING, -0.7, 1.0);
+    local.netStep = { left: Math.abs(want), speed: Math.abs(want) / NET_STEP_TIME, rot: me.targetRot + (want < 0 ? Math.PI : 0) };
+  }
   const y = aim?.y ?? 1;
   startAct(y < NET_LOW_Y ? ANIM.NET_LOW : y > NET_HIGH_Y ? ANIM.NET_HIGH : ANIM.NET_SWING);
 }
 const NET_LOW_Y = 0.5; // 이보다 낮은 곤충은 발 앞을 낮게 쓸고
 const NET_HIGH_Y = 1.4; // 이보다 높으면 머리 위로 쓴다
+const NET_RING = 1.45; // 휘두를 때 그물 테가 몸에서 이만큼 떨어져 지나간다 (m)
+const NET_STEP_TIME = 0.28; // 채를 젖히는 동안 (초): 이 사이에 다가서거나 물러선다
 
 // mesh: 들어 보일 모양 (물고기·곤충), big: 원래 크기의 몇 배로 보일지
 function showCatch(char, mesh, big = 1) {
@@ -1293,6 +1300,14 @@ function updateMe(dt) {
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
   local.dodge -= dt; // 0 아래로 내려간 만큼이 쿨타임이 지난 시간
+  // 잠자리채: 휘두르기 전에 곤충과의 거리를 맞추는 한 발
+  if (local.netStep?.left > 0) {
+    const step = Math.min(local.netStep.left, local.netStep.speed * dt);
+    local.netStep.left -= step;
+    const r = local.netStep.rot;
+    const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(r) * step, me.z + Math.cos(r) * step, lifeSpots.length ? [...LIFE_COLLIDERS] : []);
+    me.setPose(nx, nz, me.targetRot);
+  }
   if (local.dodge > 0) {
     const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
     for (const m of hereMonsters()) extra.push(...m.colliders());
