@@ -73,6 +73,15 @@ button, input, textarea, select { font-family: inherit; }
 }
 :root { --map: 140px; }
 @media (max-width: 600px), (max-height: 500px) { :root { --map: 104px; } }
+/* 미니맵 크기 손잡이: 지도 왼쪽 위 모서리. 끌어서 키우고 줄인다 */
+#map-size {
+  position: fixed; width: 26px; height: 26px; border-radius: 50%; cursor: nwse-resize; touch-action: none;
+  right: calc(max(16px, env(safe-area-inset-right)) + var(--map) * 0.854 - 13px);
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + var(--map) * 0.854 - 13px);
+  border: 2px solid var(--card); background: rgba(255, 250, 240, 0.92) center / 14px no-repeat; box-shadow: var(--shadow);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2 6V2h4M2 2l10 10M12 8v4H8' fill='none' stroke='%238a7a66' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+#map-size:hover, #map-size.drag { border-color: var(--accent-dark); }
 
 #actions {
   position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + var(--map) + 12px);
