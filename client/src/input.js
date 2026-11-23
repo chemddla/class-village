@@ -1,5 +1,5 @@
 // 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터, 같은 방향 두 번 연타 후 누르고 있으면 달리기)
-// Shift 회피 대시(마우스 쪽으로) · Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// Shift 회피 구르기(마우스 쪽으로) · Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
@@ -31,18 +31,22 @@ export function createInput({ onAction, onOrbit, onZoom }) {
     ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   };
-  // 같은 방향키를 빠르게 두 번 누르면, 두 번째로 누른 키를 누르고 있는 동안 달린다
+  // 같은 방향키를 빠르게 두 번 누르면 달리기 시작, 방향키를 하나라도 누르고 있는 동안 계속 달린다
   const TAP_MS = 300;
   let lastTap = { dir: null, t: 0 };
   let runDir = null;
+  // 다른 방향키로 바꿔 누를 때 앞 키를 먼저 떼도 이만큼은 계속 달리는 중으로 본다
+  const SWITCH_MS = 150;
+  let releasedAt = 0;
   addEventListener('keydown', (e) => {
     if (!enabled) return;
     const dir = KEYMAP[e.code];
     if (dir) {
+      const now = performance.now();
+      if (!keys.size && now - releasedAt > SWITCH_MS) runDir = null; // 방향키를 다 떼고 잠깐 멈췄다 → 달리기 풀림
       keys.add(dir);
       e.preventDefault();
       if (!e.repeat) {
-        const now = performance.now();
         if (lastTap.dir === dir && now - lastTap.t < TAP_MS) { runDir = dir; lastTap.dir = null; }
         else lastTap = { dir, t: now };
       }
@@ -52,7 +56,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   });
   addEventListener('keyup', (e) => {
     const dir = KEYMAP[e.code];
-    if (dir) { keys.delete(dir); if (dir === runDir) runDir = null; }
+    if (dir) { keys.delete(dir); if (!keys.size) releasedAt = performance.now(); }
     if (ACTION_KEYS[e.code]) held.delete(ACTION_KEYS[e.code]);
   });
   addEventListener('blur', () => { keys.clear(); held.clear(); runDir = null; });
@@ -153,7 +157,7 @@ export function createInput({ onAction, onOrbit, onZoom }) {
     read() {
       let x = 0;
       let z = 0;
-      let run = runDir !== null;
+      let run = runDir !== null && keys.size > 0;
       if (keys.has('left')) x -= 1;
       if (keys.has('right')) x += 1;
       if (keys.has('up')) z -= 1;

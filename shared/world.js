@@ -37,6 +37,7 @@ export const ANIM = {
   FISH_CAST: 26, FISH_WAIT: 27, FISH_CATCH: 28, // 낚시: 던지기 · 입질 기다리기 · 낚아 올리기
   SLASH_AIR: 30, SLASH_SLAM: 31, SLASH_DASH: 32, // 목검 점프 공격 · 더블 점프 뒤 내려베기 · 대시 공격
   SMASH4: 29, // 몽둥이 3타(야구 스윙, SMASH3)에 이어 치는 1타
+  ROLL: 33, // Shift 회피 구르기
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집

@@ -152,7 +152,7 @@ const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM,
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH]);
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
-const DODGE = { speed: RUN_SPEED * 2.6, time: 0.16, cool: 0.5 }; // Shift 회피 대시: 마우스 쪽으로 짧고 빠르게 (speed를 올리면 server/index.js의 허용 거리 2.8배도 같이)
+const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 마우스 쪽으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
 const THRUST_STEP = [0.17, 0.33];
 const THRUST_SPEED = 9.8; // 0.1초에 1m 안쪽이라 서버 이동 검사(0.1초에 1.3m)도 통과한다
@@ -618,9 +618,10 @@ const input = createInput({
     }
     else if (name === 'dodge') {
       // 공격 중·맞는 중·쿨타임에는 못 한다. 마우스가 없으면(터치) 보던 쪽으로
-      if (local.hurt > 0 || local.dodge > -DODGE.cool || (ATTACKS.has(local.act) && local.actLeft > 0)) return;
+      if (local.hurt > 0 || local.dodge > -DODGE.cool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
       if (local.fishing) stopFishing();
-      local.actLeft = 0;
+      local.act = ANIM.ROLL;
+      local.actLeft = actTime(ANIM.ROLL);
       local.dodge = DODGE.time;
       local.dodgeRot = aimRot() ?? me.targetRot;
       me.setPose(me.x, me.z, local.dodgeRot);
@@ -1004,7 +1005,6 @@ function updateMe(dt) {
     const step = DODGE.speed * dt;
     const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(local.dodgeRot) * step, me.z + Math.cos(local.dodgeRot) * step, extra);
     me.setPose(nx, nz, local.dodgeRot);
-    anim = ANIM.RUN;
   } else
   // 공격하는 동안은 방향키로 움직이지 못한다. 동작이 스스로 나아가는 만큼만 보는 쪽으로 움직인다:
   // 대시 공격은 뛰어들었다가 내리친 뒤 멈추고, 목검 찌르기와 더블 점프 내리찍기는 정해진 구간에만 살짝 나아간다

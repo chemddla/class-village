@@ -63,7 +63,7 @@ const ACTS = {
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
   [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket',
   [ANIM.FISH_CAST]: 'fishCast', [ANIM.FISH_WAIT]: 'fishWait', [ANIM.FISH_CATCH]: 'fishCatch', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
-  [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash',
+  [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash', [ANIM.ROLL]: 'roll',
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
 const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP };
@@ -223,7 +223,7 @@ export class Character {
     let turn = 0;
     if (this.prev && dt > 0) {
       const d = Math.hypot(this.x - this.prev[0], this.z - this.prev[1]) / dt;
-      this.speed += (Math.min(d, 15) - this.speed) * Math.min(1, dt * 10);
+      this.speed += (Math.min(d, 9) - this.speed) * Math.min(1, dt * 10);
       turn = wrapAngle(this.root.rotation.y - this.prev[2]) / dt;
     }
     this.prev = [this.x, this.z, this.root.rotation.y];
@@ -259,12 +259,15 @@ export class Character {
       }
     } else this.stepT = 0;
 
-    // 회피 대시: 달리기보다 훨씬 빠르게 움직이면 더 숙이고 몸이 지나간 자리에 잔상 (빠르기로 재니 다른 학생 화면도 똑같다)
-    const dash = cur === 'run' ? THREE.MathUtils.smoothstep(this.speed, 6, 7.5) : 0;
-    if (dash > 0.3) {
-      rig.head.getWorldPosition(vB);
-      rig.pelvis.getWorldPosition(vA);
-      this.trail('dash', { life: 0.18, color: 0xffffff, alpha: 0.45 }).push(this.time, vA, vB);
+    // 회피 구르기: 박차는 순간·일어서는 순간 먼지, 구르는 동안 몸이 돈 자리에 잔상
+    if (cur === 'roll') {
+      if (!M.up) { M.up = 1; this.footPuff(6, 0.8); }
+      if (!M.down && this.actSec >= 0.4) { M.down = 1; this.footPuff(8, 0.9, true); }
+      if (this.actSec < 0.42) {
+        rig.head.getWorldPosition(vB);
+        rig.pelvis.getWorldPosition(vA);
+        this.trail('roll', { life: 0.16, color: 0xffffff, alpha: 0.45 }).push(this.time, vA, vB);
+      }
     }
 
     // 휘두르기 궤적: 액션에 trail: [시작, 끝] 이 있으면 그 구간 동안 도구 끝을 따라 부채꼴
@@ -276,7 +279,7 @@ export class Character {
     for (const k in this.trails) this.trails[k].update(this.time);
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)
-    let leanX = run * 0.16 + dash * 0.4 + (cur === 'flip' ? 0.2 * (1 - Math.min(1, this.actSec / 0.5)) : 0);
+    let leanX = run * 0.16 + (cur === 'flip' ? 0.2 * (1 - Math.min(1, this.actSec / 0.5)) : 0);
     if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip' && cur !== 'clubDash' && cur !== 'swordDash') leanX = 0; // 생활·공격 동작 중에는 똑바로
     const leanZ = THREE.MathUtils.clamp(-turn * 0.035, -0.22, 0.22) * run;
     const a = 1 - Math.exp(-dt * 10);

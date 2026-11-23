@@ -281,7 +281,7 @@ export const EQUIPMENT = {
   bow: { label: '활 + 화살', left: bow, carry: [0, -1.2] },
   staff: { label: '마법 지팡이', right: staff, carry: [-1.35, 0] },
 };
-const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'wave', 'cheer']);
+const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'roll', 'wave', 'cheer']);
 
 // 소켓을 비우고 새 장비를 쥐어 준다
 export function attachEquipment(rig, id) {

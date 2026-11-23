@@ -7,6 +7,12 @@ import * as THREE from 'three';
 const PI = Math.PI;
 const sm = THREE.MathUtils.smoothstep;
 const SIDES = ['R', 'L'];
+// 구르기 조절값 (손이 땅에 닿고 몸이 땅속으로 들어가지 않게 맞춘 값)
+export const RL = {
+  a0: 0.1, a1: 0.8, h: 0.3, plant: 0.3, arm: -1.6, spread: 0.45, shrink: 0.35,
+  // 자세마다 몸의 가장 낮은 곳이 땅에 닿는 몸 높이 (client/src/villager/roll.probe.mjs 로 잰 값: 자세를 바꾸면 다시 잰다)
+  py: [[0, 0], [0.213, 0.04], [0.275, 0.08], [0.288, 0.14], [0.3, 0.23], [0.313, 0.31], [0.325, 0.44], [0.338, 0.55], [0.35, 0.63], [0.375, 0.75], [0.388, 0.83], [0.4, 0.86], [0.413, 0.86], [0.425, 0.84], [0.438, 0.78], [0.45, 0.74], [0.475, 0.59], [0.488, 0.51], [0.5, 0.4], [0.525, 0.29], [0.563, 0.18], [0.575, 0.15], [0.625, -0.05], [0.687, -0.12], [0.737, -0.14], [0.862, -0.04], [1, 0]],
+};
 // 팔을 편히 내렸을 때 옆으로 벌어지는 각도: 물방울 몸통에서 소매가 비스듬히 뻗어 나오는 A자 실루엣
 export const ARM_REST = 0.6;
 // 과일나무 흔들기에서 앞으로 내딛을 거리 (주민 몸 크기 단위). 나무마다 줄기까지 거리가 달라서,
@@ -191,6 +197,33 @@ export const ACTIONS = {
       P['spine.rx'] += 0.35 * tuck + 0.2 * bow;
       // 고개는 상체가 숙여진 만큼의 절반만 되돌린다: 몸과 함께 조금 숙여지되 끄덕이며 출렁이지는 않게
       P['head.rx'] = 0.3 * tuck - 0.5 * P['spine.rx'] * sm(u, 0.66, 0.74);
+    },
+  },
+
+  // 회피 구르기: 두 팔을 앞으로 쭉 뻗어 땅을 짚고, 팔을 굽히며 몸을 공처럼 말아 앞으로 한 바퀴 구른 뒤 일어난다
+  roll: {
+    duration: 0.6, rootRate: 2000, // 몸 높이 표를 바로 따라가야 땅에 딱 붙는다
+    fn(u, P) {
+      const ang = sm(u, RL.a0, RL.a1) * PI * 2;
+      // 회전축 높이: 땅을 짚을 때까지는 발끝을 축으로 앞으로 쓰러지고, 짚은 뒤에는 말아 쥔 몸 가운데를 축으로 구른다
+      const h = kf(u, [RL.plant - 0.04, 0], [RL.plant + 0.16, RL.h]);
+      const reach = kf(u, [0, 0], [0.14, 1], [RL.plant, 1], [RL.plant + 0.14, 0]); // 팔을 앞으로 뻗어 짚기
+      const tuck = kf(u, [RL.plant - 0.06, 0], [RL.plant + 0.1, 1], [0.68, 1], [0.86, 0]); // 짚자마자 공처럼 동글게 만다
+      crouch(P, kf(u, [0, 0], [0.12, 0.55], [0.3, 0.3], [0.72, 0.2], [0.86, 0.5], [1, 0]));
+      P['root.rx'] = ang;
+      P['root.py'] = kf(u, ...RL.py); // 자세마다 몸의 가장 낮은 곳이 땅에 닿는 높이 (roll.probe 로 잰 값)
+      P['root.pz'] = -h * Math.sin(ang);
+      const bend = sm(u, RL.plant - 0.08, RL.plant + 0.04); // 짚은 팔이 몸무게를 받으며 굽는다
+      for (const [s, side] of [['R', -1], ['L', 1]]) {
+        P[`hip${s}.rx`] -= 2.0 * tuck;
+        P[`knee${s}.rx`] += 2.2 * tuck;
+        P[`shoulder${s}.rx`] = RL.arm * reach - 0.9 * tuck * (1 - reach);
+        P[`shoulder${s}.rz`] = side * (ARM_REST * (1 - Math.max(reach, tuck)) + RL.spread * reach + 0.14 * tuck);
+        P[`elbow${s}.rx`] = -(0.05 + 0.9 * bend) * reach - 1.2 * tuck * (1 - reach);
+      }
+      P['spine.rx'] += 0.35 * reach + 0.9 * tuck;
+      P['head.rx'] = 0.15 * reach + 0.8 * tuck; // 턱을 가슴에 붙여 머리부터 박지 않게
+      P['head.s'] = -RL.shrink * Math.max(tuck, 0.6 * reach); // 큰 머리가 손보다 먼저 땅에 닿지 않게, 말아 구르는 동안 작게
     },
   },
 
@@ -1360,6 +1393,9 @@ export function createAnimator(rate = 18) {
         } else if (ch === 'sy') {
           cur[k] = THREE.MathUtils.lerp(c, goal, a);
           o.scale.y = o.scale.x * (1 + cur[k]); // 가로 크기(캐릭터 전체 배율)를 기준으로
+        } else if (ch === 's') {
+          cur[k] = THREE.MathUtils.lerp(c, goal, a);
+          o.scale.setScalar(1 + cur[k]); // 관절 아래 통째로 (구를 때 큰 머리를 잠깐 줄인다)
         } else {
           cur[k] = THREE.MathUtils.lerp(c, goal, joint === 'root' ? aRoot : a);
           // root는 통째로 키운 캐릭터(마을 1.7배)에서도 몸 크기에 비례해 뛰도록 배율을 곱한다

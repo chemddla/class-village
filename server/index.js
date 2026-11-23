@@ -242,8 +242,8 @@ class VillageRoom extends Room {
       const x = fromCm(cx);
       const z = fromCm(cz);
       const dist = Math.hypot(x - prev.x, z - prev.z);
-      // 허용 거리: 달리기 속도 × 시간 × 여유 + 작은 오차 (Shift 회피 대시가 달리기의 2.6배라 그보다 넉넉히)
-      const allowed = RUN_SPEED * dt * 2.8 + 0.4;
+      // 허용 거리: 달리기 속도 × 시간 × 여유 + 작은 오차
+      const allowed = RUN_SPEED * dt * 1.6 + 0.4;
       if (dist > allowed || isBlocked(x, z, 0.2)) {
         // 이상한 이동 → 마지막 정상 위치로 되돌림
         client.send('fix', [toCm(prev.x), toCm(prev.z)]);
