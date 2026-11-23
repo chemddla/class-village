@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { canvasTexture } from '../villager/textures.js';
 import { syncToon } from '../villager/toon.js';
+import { angerMark, angerPulse } from './anger.js';
 
 const PI = Math.PI;
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
@@ -18,6 +19,7 @@ export const MONGDANG_MOTIONS = {
   walk: { label: '걷기 (콩콩)', loop: true },
   scribble: { label: '물구나무 낙서', dur: 2.6 },
   notice: { label: '발견!', dur: 1.3 },
+  angry: { label: '화남!', dur: 1.1 },
   attack: { label: '공격 (콕! 심 부러짐)', dur: 1.7 },
   hit: { label: '맞음', dur: 0.9 },
   die: { label: '쓰러짐', dur: 2.3 },
@@ -97,12 +99,26 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
     squint: (g) => { g.beginPath(); g.moveTo(-9, -9); g.lineTo(8, 0); g.lineTo(-9, 9); stroke(g, 3.6); },
     dead: (g) => { g.beginPath(); g.moveTo(-8, -8); g.lineTo(8, 8); g.moveTo(8, -8); g.lineTo(-8, 8); stroke(g, 3.4); },
     dizzy: (g) => { g.beginPath(); for (let a = 0; a < PI * 5; a += 0.2) g.lineTo(Math.cos(a) * a * 0.7, Math.sin(a) * a * 0.7); stroke(g, 2.6); },
+    // 화난 눈: 점눈 윗부분을 비스듬히(안쪽이 낮게) 잘라 내고 그 위에 굵은 눈썹
+    angry: (g) => {
+      oval(g, 0, 1, 5.5, 6); g.fillStyle = INK; g.fill();
+      g.save();
+      g.globalCompositeOperation = 'destination-out';
+      g.beginPath(); g.moveTo(-22, -22); g.lineTo(22, -22); g.lineTo(22, 1.5); g.lineTo(-22, -6); g.closePath(); g.fill();
+      g.restore();
+      g.beginPath(); g.moveTo(-10, -10.5); g.lineTo(9, -3); stroke(g, 3.8);
+    },
   };
   const MOUTH_DRAW = {
     smile: (g) => { g.beginPath(); g.moveTo(-4.5, -1); g.quadraticCurveTo(0, 3.5, 4.5, -1); stroke(g, 2.6); }, // 점눈에 맞춘 조그만 입
     o: (g) => { oval(g, 0, 1, 4.5, 6); g.fillStyle = '#8a3a2e'; g.fill(); stroke(g, 2.4); },
     frown: (g) => { g.beginPath(); g.moveTo(-6, 4); g.quadraticCurveTo(0, -4, 6, 4); stroke(g, 3); },
     wavy: (g) => { g.beginPath(); g.moveTo(-9, 1); for (let i = 1; i <= 6; i++) g.lineTo(-9 + i * 3, i % 2 ? -2 : 2); stroke(g, 2.6); },
+    // 이를 악문 입: 하얀 이 위에 가운데 줄과 세로 줄
+    grit: (g) => {
+      g.beginPath(); g.roundRect(-8, -3.5, 16, 7, 2.5); g.fillStyle = '#ffffff'; g.fill(); stroke(g, 2.2);
+      g.beginPath(); g.moveTo(-7, 0); g.lineTo(7, 0); g.moveTo(-2.7, -3.5); g.lineTo(-2.7, 3.5); g.moveTo(2.7, -3.5); g.lineTo(2.7, 3.5); stroke(g, 1.3);
+    },
   };
   const tex = (kind, s, draw) => canvasTexture(`mongdang:${kind}:${s}`, 96, 96, (g, w, h) => {
     g.translate(w / 2, h / 2);
@@ -143,6 +159,9 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
     transparent: true,
   }));
   root.add(bang);
+  // 화났을 때 머리 옆에 뜨는 빨간 화남 표시
+  const anger = angerMark();
+  root.add(anger);
 
   // ── 효과(연필밥·연기·낙서·부러진 심): 몸이 움직여도 제자리에 남도록 바깥에 둠 ──
   const fx = new THREE.Group();
@@ -178,6 +197,16 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
       m.position.copy(c).add(tmp.set(Math.cos(a) * 0.03, (Math.random() - 0.3) * 0.03, Math.sin(a) * 0.03).multiplyScalar(k()));
       const v = new THREE.Vector3(Math.cos(a) * 0.12, 0.06 + Math.random() * 0.05, Math.sin(a) * 0.12).multiplyScalar(k());
       parts.push({ m, v, kind: 'puff', age: 0, life: 0.6, size: 1.2 * k() * (0.8 + Math.random() * 0.5) });
+    }
+  }
+  // 화가 나서 심 끝으로 칙칙 뿜는 김
+  function steam(n) {
+    for (let i = 0; i < n; i++) {
+      const m = add(puffGeo, PUFF, fx, '김');
+      m.castShadow = false;
+      m.position.copy(tipWorld());
+      const v = new THREE.Vector3((i % 2 ? 1 : -1) * 0.04, 0.22, 0).multiplyScalar(k());
+      parts.push({ m, v, kind: 'puff', age: 0, life: 0.5, size: 0.45 * k() * (0.8 + Math.random() * 0.4) });
     }
   }
   function scribbleDot() {
@@ -232,6 +261,8 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
   let u = 0;
   let t = 0;
   let dotClock = 0;
+  let mood = null; // 'angry': 화가 난 채로 있음 (평소 눈이 화난 눈, 머리 옆에 화남 표시)
+  let moodT = 0;
   const fired = new Set();
   const once = (key, at) => (u >= at && !fired.has(key) ? (fired.add(key), true) : false);
 
@@ -245,8 +276,9 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
   function update(dt) {
     t += dt;
     u += dt;
+    moodT += dt;
     const P = { sy: 1, sxz: 1, x: 0, y: 0, z: 0, ry: 0, rx: 0, rz: 0, roll: 0, eyes: 'open', eyeS: 1, blink: 1,
-      mouth: 'smile', bang: 0, sweat: false, flash: 0, show: 1, lead: 1 };
+      mouth: 'smile', bang: 0, sweat: false, flash: 0, show: 1, lead: 1, anger: 0, red: 0 };
 
     const br = Math.sin(t * 2.4);
     P.sy = 1 + 0.025 * br;
@@ -312,6 +344,24 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
       P.blink = 1;
       P.mouth = surprise > 0.5 ? 'o' : 'smile';
       P.bang = u < 0.12 ? 0 : u < 1.0 ? outBack(seg(u, 0.12, 0.3)) : 1 - seg(u, 1.0, 1.3);
+    } else if (state === 'angry') {
+      // 화남! 움츠렸다가 쭉 늘어나며 부르르 → 지우개로 쿵쿵 제자리 뛰기, 이를 악물고 심 끝에서 김이 칙칙, 몸이 붉어짐
+      const crouch = smooth(seg(u, 0, 0.14)) * (1 - seg(u, 0.14, 0.22));
+      const puff = smooth(seg(u, 0.14, 0.3)) * (1 - smooth(seg(u, 0.85, 1.1)));
+      const shake = u > 0.14 && u < 0.85 ? 1 : 0;
+      P.sy = 1 - 0.14 * crouch + 0.07 * puff;
+      P.sxz = 1 + 0.07 * crouch + 0.03 * puff;
+      P.rz = Math.sin(u * 55) * 0.05 * shake;
+      P.x = Math.sin(u * 70) * 0.0025 * shake;
+      P.rx = 0.1 * puff;
+      if (shake) P.y = Math.abs(Math.sin(u * PI * 4.5)) * 0.008; // 쿵쿵 구르기
+      P.eyes = 'angry';
+      P.blink = 1;
+      P.mouth = 'grit';
+      P.anger = angerPulse(u - 0.14, t);
+      P.red = puff;
+      if (once('steam1', 0.25)) steam(2);
+      if (once('steam2', 0.55)) steam(2);
     } else if (state === 'attack') {
       // 뒤로 젖혀 힘 모으기 → 앞으로 콕! → 심이 톡 부러져 날아감 → 눈물 찔끔 → 다시 깎아서 심이 쏙
       const a = smooth(seg(u, 0, 0.35));
@@ -363,6 +413,13 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
       P.show = 0;
     }
 
+    // 화가 난 채로 있을 때: 평소 눈은 화난 눈·입은 뾰로통, 화남 표시가 콩닥콩닥
+    if (mood === 'angry' && P.show > 0.5 && state !== 'die') {
+      if (P.eyes === 'open' && P.blink >= 0.5) P.eyes = 'angry';
+      if (P.mouth === 'smile') P.mouth = 'frown';
+      if (state !== 'angry') P.anger = Math.max(P.anger, 0.75 * angerPulse(moodT, t));
+    }
+
     if (M && !M.loop && u >= M.dur) {
       const ended = state;
       play(ended === 'die' ? 'gone' : 'idle');
@@ -393,12 +450,15 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
     bang.visible = P.bang > 0.001;
     bang.scale.set(0.035 * P.bang, 0.07 * P.bang, 1);
     bang.position.set(0.04, 0.19 + P.y, 0);
+    anger.visible = P.anger > 0.001;
+    anger.scale.setScalar(0.05 * P.anger);
+    anger.position.set(-0.045, 0.17 + P.y, 0);
 
     updateParts(dt);
     syncToon(root, true, outlineScale);
     if (fxParent) syncToon(fx, true, outlineScale);
     core.traverse((o) => {
-      if (o.isMesh && !o.userData.isOutline && !o.material.transparent && o.material.emissive) o.material.emissive.setRGB(P.flash, P.flash, P.flash * 0.9);
+      if (o.isMesh && !o.userData.isOutline && !o.material.transparent && o.material.emissive) o.material.emissive.setRGB(P.flash + P.red * 0.32, P.flash + P.red * 0.02, P.flash * 0.9);
     });
   }
 
@@ -406,6 +466,8 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
     root,
     play,
     update,
+    // 기분: 'angry'(화난 채로) | null(보통)
+    setMood(m) { if (m !== mood) { mood = m; moodT = 0; } },
     get state() { return state; },
   };
 }

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { canvasTexture } from '../villager/textures.js';
 import { syncToon, addOutline, OUTLINE_COLOR } from '../villager/toon.js';
+import { angerMark, angerPulse } from './anger.js';
 
 const PI = Math.PI;
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
@@ -21,6 +22,7 @@ export const NALGAE_MOTIONS = {
   walk: { label: '걷기', loop: true },
   flutter: { label: '날기 시도', dur: 2.2 },
   notice: { label: '발견!', dur: 1.3 },
+  angry: { label: '화남!', dur: 1.1 },
   attack: { label: '공격 (쪼기)', dur: 1.1 },
   hit: { label: '맞음', dur: 0.9 },
   die: { label: '쓰러짐', dur: 2.2 },
@@ -84,6 +86,15 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
     closed: (g) => { g.beginPath(); g.moveTo(-11, 1); g.quadraticCurveTo(0, 9, 11, 1); stroke(g, 3.4); }, // 감은 눈 ︶
     squint: (g) => { g.beginPath(); g.moveTo(-9, -9); g.lineTo(8, 0); g.lineTo(-9, 9); stroke(g, 3.6); }, // 질끈 >
     dead: (g) => { g.beginPath(); g.moveTo(-8, -8); g.lineTo(8, 8); g.moveTo(8, -8); g.lineTo(-8, 8); stroke(g, 3.4); }, // X
+    // 화난 눈: 눈동자 윗부분을 눈썹 쪽(안쪽이 낮게) 비스듬히 잘라 내고 그 자리에 굵은 눈썹
+    angry: (g) => {
+      iris(g, 10, 12.5);
+      g.save();
+      g.globalCompositeOperation = 'destination-out';
+      g.beginPath(); g.moveTo(-22, -22); g.lineTo(22, -22); g.lineTo(22, 0); g.lineTo(-22, -11); g.closePath(); g.fill();
+      g.restore();
+      g.beginPath(); g.moveTo(-13, -14.5); g.lineTo(12, -3); stroke(g, 4.2);
+    },
   };
   const eyeTex = (kind, s) => canvasTexture(`nalgaeEye:${kind}:${s}`, 128, 128, (g, w, h) => {
     g.translate(w / 2, h / 2);
@@ -220,6 +231,9 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
   }));
   bang.position.set(0.045, 0.175, 0);
   root.add(bang);
+  // 화났을 때 머리 옆에 뜨는 빨간 화남 표시
+  const anger = angerMark();
+  root.add(anger);
 
   // ── 효과(깃털·연기·반짝이): 몬스터가 움직여도 제자리에 남도록 바깥에 둠 ──
   const fx = new THREE.Group();
@@ -255,6 +269,17 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
       m.position.copy(c).add(tmpV.set(Math.cos(a) * 0.03, (Math.random() - 0.3) * 0.03, Math.sin(a) * 0.03).multiplyScalar(k()));
       const v = new THREE.Vector3(Math.cos(a) * 0.12, 0.06 + Math.random() * 0.05, Math.sin(a) * 0.12).multiplyScalar(k());
       parts.push({ m, v, kind: 'puff', age: 0, life: 0.55 + Math.random() * 0.15, size: size * k() * (0.8 + Math.random() * 0.5) });
+    }
+  }
+  // 화가 나서 머리 위로 칙칙 뿜는 김
+  function steam(n) {
+    for (let i = 0; i < n; i++) {
+      const s = i % 2 ? 1 : -1;
+      const m = add(puffGeo, PUFF, fx, '김');
+      m.castShadow = false;
+      m.position.copy(toFx(core.localToWorld(new THREE.Vector3(s * 0.02, 0.06, 0))));
+      const v = new THREE.Vector3(s * 0.04, 0.22, 0).multiplyScalar(k());
+      parts.push({ m, v, kind: 'puff', age: 0, life: 0.5, size: 0.45 * k() * (0.8 + Math.random() * 0.4) });
     }
   }
   function sparks(n) {
@@ -303,6 +328,8 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
   let state = 'idle';
   let u = 0; // 지금 동작을 시작한 뒤 흐른 시간
   let t = 0; // 전체 흐른 시간 (숨쉬기처럼 늘 이어지는 움직임용)
+  let mood = null; // 'angry': 화가 난 채로 있음 (평소 눈이 화난 눈, 머리 옆에 화남 표시)
+  let moodT = 0; // 지금 기분이 된 뒤 흐른 시간
   const fired = new Set();
   const once = (key, at) => (u >= at && !fired.has(key) ? (fired.add(key), true) : false);
 
@@ -313,17 +340,22 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
     fired.clear();
   }
 
-  function setFlash(f) {
+  // f: 하얗게 번쩍 · red: 화가 나서 몸이 붉어짐 (눈·홍조 같은 그림 조각은 붉히지 않음)
+  function setFlash(f, red = 0) {
     core.traverse((o) => {
-      if (o.isMesh && !o.userData.isOutline && o.material.emissive) o.material.emissive.setRGB(f, f, f * 0.9);
+      if (o.isMesh && !o.userData.isOutline && o.material.emissive) {
+        const r = o.material.transparent ? 0 : red;
+        o.material.emissive.setRGB(f + r * 0.32, f + r * 0.02, f * 0.9);
+      }
     });
   }
 
   function update(dt) {
     t += dt;
     u += dt;
-    const P = { sy: 1, sxz: 1, y: 0, z: 0, rx: 0, rz: 0, wingL: 0.3, wingR: 0.3, eyes: 'open', eyeS: 1, blink: 1, beak: 0,
-      tuft: 0, liftL: 0, liftR: 0, swingL: 0, swingR: 0, bang: 0, sweat: false, flash: 0, show: 1 };
+    moodT += dt;
+    const P = { sy: 1, sxz: 1, x: 0, y: 0, z: 0, rx: 0, rz: 0, wingL: 0.3, wingR: 0.3, eyes: 'open', eyeS: 1, blink: 1, beak: 0,
+      tuft: 0, liftL: 0, liftR: 0, swingL: 0, swingR: 0, bang: 0, sweat: false, flash: 0, show: 1, anger: 0, red: 0 };
 
     // 늘 깔려 있는 숨쉬기·깜빡임·머리털 흔들림
     const br = Math.sin(t * 2.4);
@@ -400,6 +432,27 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
       P.beak = u > 0.12 && u < 0.45 ? 0.45 : 0;
       P.bang = u < 0.12 ? 0 : u < 1.0 ? outBack(seg(u, 0.12, 0.3)) : 1 - seg(u, 1.0, 1.3);
       P.tuft = surprise * -0.1 + Math.sin(u * 30) * 0.3 * surprise;
+    } else if (state === 'angry') {
+      // 화남! 움츠렸다가 몸을 빵빵하게 부풀리며 부르르 → 발을 동동 구르고 날개를 퍼덕퍼덕, 머리 위로 김이 칙칙, 몸이 붉어짐
+      const crouch = smooth(seg(u, 0, 0.14));
+      const puff = smooth(seg(u, 0.14, 0.3)) * (1 - smooth(seg(u, 0.85, 1.1)));
+      const shake = u > 0.14 && u < 0.85 ? 1 : 0;
+      P.sy = 1 - 0.14 * crouch * (1 - seg(u, 0.14, 0.22)) + 0.06 * puff;
+      P.sxz = 1 + 0.07 * crouch * (1 - seg(u, 0.14, 0.22)) + 0.08 * puff;
+      P.rz = Math.sin(u * 55) * 0.05 * shake;
+      P.x = Math.sin(u * 70) * 0.0025 * shake;
+      P.rx = 0.12 * puff; // 고개를 숙여 째려봄
+      const stomp = u * PI * 2 * 4.5;
+      if (shake) { P.liftL = Math.max(0, Math.sin(stomp)) * 0.01; P.liftR = Math.max(0, -Math.sin(stomp)) * 0.01; P.y = Math.abs(Math.sin(stomp)) * 0.003; }
+      P.wingL = P.wingR = 0.3 + (0.7 + 0.35 * Math.sin(u * 38)) * puff;
+      P.eyes = 'angry';
+      P.blink = 1;
+      P.beak = shake ? 0.18 + 0.1 * Math.sin(u * 30) : 0;
+      P.tuft = Math.sin(u * 45) * 0.35 * shake;
+      P.anger = angerPulse(u - 0.14, t);
+      P.red = puff;
+      if (once('steam1', 0.25)) steam(2);
+      if (once('steam2', 0.55)) steam(2);
     } else if (state === 'attack') {
       // 뒤로 젖혀 힘 모으기 → 부리로 콕! → 부리가 얼얼해서 눈 질끈
       const a = smooth(seg(u, 0, 0.35));
@@ -450,6 +503,12 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
       P.show = 0;
     }
 
+    // 화가 난 채로 있을 때: 평소 눈은 화난 눈, 화남 표시가 콩닥콩닥
+    if (mood === 'angry' && P.show > 0.5 && state !== 'die') {
+      if (P.eyes === 'open' && P.blink >= 0.5) P.eyes = 'angry';
+      if (state !== 'angry') P.anger = Math.max(P.anger, 0.75 * angerPulse(moodT, t));
+    }
+
     if (M && !M.loop && u >= M.dur) {
       const ended = state;
       play(ended === 'die' ? 'gone' : 'idle');
@@ -458,7 +517,7 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
 
     // ── 자세 적용 ──
     body.scale.set(P.sxz * P.show, P.sy * P.show, P.sxz * P.show);
-    body.position.set(0, P.y, P.z);
+    body.position.set(P.x, P.y, P.z);
     core.rotation.set(P.rx, 0, P.rz);
     wings[0][0].rotation.z = -P.wingL;
     wings[1][0].rotation.z = P.wingR;
@@ -478,17 +537,22 @@ export function createNalgaekong({ fxParent = null, onDone = null, outlineScale 
     bang.visible = P.bang > 0.001;
     bang.scale.set(0.035 * P.bang, 0.07 * P.bang, 1);
     bang.position.y = 0.175 + P.y;
+    anger.visible = P.anger > 0.001;
+    anger.scale.setScalar(0.05 * P.anger);
+    anger.position.set(-0.05, 0.15 + P.y, 0);
 
     updateParts(dt);
     syncToon(root, true, outlineScale);
     if (fxParent) syncToon(fx, true, outlineScale);
-    setFlash(P.flash);
+    setFlash(P.flash, P.red);
   }
 
   return {
     root,
     play,
     update,
+    // 기분: 'angry'(화난 채로) | null(보통)
+    setMood(m) { if (m !== mood) { mood = m; moodT = 0; } },
     get state() { return state; },
   };
 }

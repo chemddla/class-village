@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { canvasTexture } from '../villager/textures.js';
 import { syncToon } from '../villager/toon.js';
+import { angerMark, angerPulse } from './anger.js';
 
 const PI = Math.PI;
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
@@ -17,6 +18,7 @@ export const BANJJOK_MOTIONS = {
   walk: { label: '걷기 (뒤뚱)', loop: true },
   rub: { label: '박박 문지르기', dur: 2.7 },
   notice: { label: '발견!', dur: 1.3 },
+  angry: { label: '화남!', dur: 1.1 },
   attack: { label: '공격 (몸통박치기)', dur: 1.6 },
   hit: { label: '맞음', dur: 0.9 },
   die: { label: '쓰러짐', dur: 2.3 },
@@ -133,6 +135,14 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
     part(new THREE.SphereGeometry(0.0015, 8, 6), SHINE, e, '눈').position.set(0.0014, 0.0019, 0.0025);
     return e;
   });
+  // 화난 눈썹: 눈 위에 안쪽이 낮게 비스듬히 (화났을 때만 보임)
+  const brows = [-1, 1].map((s) => {
+    const b = part(new THREE.CapsuleGeometry(0.0011, 0.0075, 4, 8).rotateZ(PI / 2), INK, core, '눈');
+    b.position.set(FACE_X + s * 0.0081, H * 0.55 + 0.0072, D / 2 + 0.0012);
+    b.rotation.z = s * 0.5;
+    b.visible = false;
+    return b;
+  });
   const mouth = part(new THREE.TorusGeometry(0.0035, 0.001, 8, 16, PI), INK, core, '눈');
   mouth.position.set(FACE_X, H * 0.3, D / 2 + 0.001);
   const mouthO = part(new THREE.SphereGeometry(0.003, 12, 8).scale(1, 1.3, 0.4), mat('#8a3a2e', 0.6), core, '눈');
@@ -154,6 +164,9 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
     transparent: true,
   }));
   root.add(bang);
+  // 화났을 때 머리 옆에 뜨는 빨간 화남 표시
+  const anger = angerMark();
+  root.add(anger);
 
   // ── 효과(지우개 가루·별·연기·떨어진 조각): 몸이 움직여도 제자리에 남도록 바깥에 둠 ──
   const fx = new THREE.Group();
@@ -221,6 +234,17 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
       parts.push({ m, v, kind: 'puff', age: 0, life: 0.6, size: 1.1 * k() * (0.8 + Math.random() * 0.5) });
     }
   }
+  // 화가 나서 머리 위로 칙칙 뿜는 김
+  function steam(n) {
+    for (let i = 0; i < n; i++) {
+      const s = i % 2 ? 1 : -1;
+      const m = part(puffGeo, PUFF, fx, '김');
+      m.castShadow = false;
+      m.position.copy(at(FACE_X + s * 0.012, H + 0.004, 0));
+      const v = new THREE.Vector3(0, 0.22, 0).add(dirOf(s, 0).multiplyScalar(0.04)).multiplyScalar(k());
+      parts.push({ m, v, kind: 'puff', age: 0, life: 0.5, size: 0.4 * k() * (0.8 + Math.random() * 0.4) });
+    }
+  }
   function updateParts(dt) {
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
@@ -259,6 +283,8 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
   let t = 0;
   let crumbClock = 0;
   let crumbSide = 1;
+  let mood = null; // 'angry': 화가 난 채로 있음 (평소 눈이 화난 눈, 머리 옆에 화남 표시)
+  let moodT = 0;
   const fired = new Set();
   const once = (key, when) => (u >= when && !fired.has(key) ? (fired.add(key), true) : false);
 
@@ -272,9 +298,11 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
   function update(dt) {
     t += dt;
     u += dt;
-    // eyes: 'open' | 'wide' | 'squint'(질끈) | 'half'(시무룩) | 'closed'
+    moodT += dt;
+    // eyes: 'open' | 'wide' | 'squint'(질끈) | 'half'(시무룩) | 'closed' | 'angry'(눈썹을 내리고 째려봄)
+    // mouth: 'frown' | 'smile' | 'o' | 'grit'(이 악물기: 입을 옆으로 납작하게)
     const P = { sx: 1, sy: 1, sz: 1, x: 0, y: 0, z: 0, ry: 0, rx: 0, rz: 0, eyes: 'open', blink: 1,
-      mouth: 'frown', bang: 0, sweat: false, flash: 0, show: 1 };
+      mouth: 'frown', bang: 0, sweat: false, flash: 0, show: 1, anger: 0, red: 0 };
 
     const br = Math.sin(t * 2.4);
     P.sy = 1 + 0.02 * br;
@@ -338,6 +366,24 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
       if (surprise > 0.5) { P.eyes = 'wide'; P.mouth = 'o'; }
       P.blink = 1;
       P.bang = u < 0.12 ? 0 : u < 1.0 ? outBack(seg(u, 0.12, 0.3)) : 1 - seg(u, 1.0, 1.3);
+    } else if (state === 'angry') {
+      // 화남! 움츠렸다가 빵빵하게 부풀며 부르르 → 쿵쿵 제자리 구르기, 머리 위로 김이 칙칙, 몸이 붉어짐
+      const crouch = smooth(seg(u, 0, 0.14)) * (1 - seg(u, 0.14, 0.22));
+      const puff = smooth(seg(u, 0.14, 0.3)) * (1 - smooth(seg(u, 0.85, 1.1)));
+      const shake = u > 0.14 && u < 0.85 ? 1 : 0;
+      P.sy = 1 - 0.14 * crouch + 0.08 * puff;
+      P.sx = P.sz = 1 + 0.07 * crouch + 0.05 * puff;
+      P.rz = Math.sin(u * 55) * 0.05 * shake;
+      P.x = Math.sin(u * 70) * 0.0025 * shake;
+      P.rx = 0.1 * puff;
+      if (shake) P.y = Math.abs(Math.sin(u * PI * 4.5)) * 0.007;
+      P.eyes = 'angry';
+      P.blink = 1;
+      P.mouth = 'grit';
+      P.anger = angerPulse(u - 0.14, t);
+      P.red = puff;
+      if (once('steam1', 0.25)) steam(2);
+      if (once('steam2', 0.55)) steam(2);
     } else if (state === 'attack') {
       // 뒤로 젖혀 힘 모으기 → 앞으로 몸통 쿵! (0.47초에 닿음) → 별이 튀고 어질어질 → 제자리
       const a = smooth(seg(u, 0, 0.35));
@@ -389,6 +435,12 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
       P.show = 0;
     }
 
+    // 화가 난 채로 있을 때: 평소 눈은 화난 눈, 화남 표시가 콩닥콩닥
+    if (mood === 'angry' && P.show > 0.5 && state !== 'die') {
+      if (P.eyes === 'open' && P.blink >= 0.5) P.eyes = 'angry';
+      if (state !== 'angry') P.anger = Math.max(P.anger, 0.75 * angerPulse(moodT, t));
+    }
+
     if (M && !M.loop && u >= M.dur) {
       const ended = state;
       play(ended === 'die' ? 'gone' : 'idle');
@@ -405,22 +457,31 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
     if (P.eyes === 'wide') { ex = 1.45; ey = 1.5; }
     else if (P.eyes === 'squint') { ex = 1.2; ey = 0.2; }
     else if (P.eyes === 'half') ey = 0.45;
+    else if (P.eyes === 'angry') { ex = 1.1; ey = 0.7; }
     ey *= P.blink;
     for (const e of eyes) e.scale.set(ex, Math.max(0.08, ey), 1);
+    for (const b of brows) b.visible = P.eyes === 'angry';
     mouth.visible = P.mouth !== 'o';
     mouth.rotation.z = P.mouth === 'smile' ? PI : 0;
+    mouth.scale.set(P.mouth === 'grit' ? 1.5 : 1, P.mouth === 'grit' ? 0.45 : 1, 1); // 이 악물기: 옆으로 넓고 납작한 입
     mouthO.visible = P.mouth === 'o';
     sweat.visible = P.sweat;
     if (P.sweat) sweat.position.y = H - ((u * 1.5) % 1) * 0.015;
     bang.visible = P.bang > 0.001;
     bang.scale.set(0.03 * P.bang, 0.06 * P.bang, 1);
     bang.position.set(FACE_X, 0.1 + P.y, 0);
+    anger.visible = P.anger > 0.001;
+    anger.scale.setScalar(0.04 * P.anger);
+    anger.position.set(FACE_X - 0.03, 0.09 + P.y, 0);
 
     updateParts(dt);
     syncToon(root, true, outlineScale);
     if (fxParent) syncToon(fx, true, outlineScale);
     core.traverse((o) => {
-      if (o.isMesh && !o.userData.isOutline && !o.material.transparent && o.material.emissive) o.material.emissive.setRGB(P.flash, P.flash, P.flash * 0.9);
+      if (o.isMesh && !o.userData.isOutline && !o.material.transparent && o.material.emissive) {
+        const r = o.name === '눈' || o.name === '종이옷' ? 0 : P.red; // 눈·입은 붉히지 않음 (파란 종이 옷도 붉히면 보라색이 됨)
+        o.material.emissive.setRGB(P.flash + r * 0.32, P.flash + r * 0.02, P.flash * 0.9);
+      }
     });
   }
 
@@ -428,6 +489,8 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
     root,
     play,
     update,
+    // 기분: 'angry'(화난 채로) | null(보통)
+    setMood(m) { if (m !== mood) { mood = m; moodT = 0; } },
     get state() { return state; },
   };
 }

@@ -50,6 +50,7 @@ const ANGRY_LEASH = 25; // 화나서 쫓을 때는 이만큼까지 따라감 (m)
 const ATTACK_REACH = 0.55; // 몸 가장자리에서 이만큼 안이면 공격 (m)
 const ATTACK_COOL = 1.6; // 공격 사이 쉬는 시간 (초)
 const STRIKE_AT = 0.47; // 공격 동작에서 부리·심·몸통이 닿는 순간 (초)
+const RAGE_TIME = 1.0; // 나를 공격 대상으로 알아챘을 때 '화남!' 동작을 하고 이만큼 뒤에 쫓아오기 시작 (초)
 // 발밑 그림자: 주민(character.js)과 같은 반투명 동그라미. 땅에 바짝 붙이고 겹침 깜빡임은 polygonOffset으로
 const SHADOW_MAT = new THREE.MeshBasicMaterial({
   color: 0x2a3b1a, transparent: true, opacity: 0.24, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
@@ -155,12 +156,14 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   let hp = HP;
   let sinceHit = 0;
   let goneFor = 0;
-  let mode = 'route'; // 'route' 제 길 | 'spot' 발견! (멈춰서 놀람) | 'flee' 도망 | 'chase' 쫓아가 공격
+  let mode = 'route'; // 'route' 제 길 | 'spot' 발견! (멈춰서 놀람) | 'flee' 도망 | 'rage' 화남! (멈춰서 씩씩) | 'chase' 쫓아가 공격
   let spotLeft = 0; // '발견!' 동작이 끝나기까지 남은 시간 (초)
   let fleeT = 0; // 이번에 도망친 시간 (초)
   let fleeRun = 0; // 이번에 달아난 거리 (m)
   let fleeSide = 1; // 막혔을 때 먼저 틀어 볼 쪽 (1 왼쪽 | -1 오른쪽): 한번 정하면 그쪽으로 계속 돌아가 좌우로 갈팡질팡하지 않게
   let angry = false; // 내가 때려서 화가 났는지: 화나면 멀어질 때까지 계속 쫓아와 공격
+  let targeting = false; // 나를 공격 대상으로 삼고 있는지 (처음 알아챌 때만 '화남!' 하고, 그동안은 화난 얼굴)
+  let rageLeft = 0; // '화남!' 동작이 끝나기까지 남은 시간 (초)
   let attackCool = 0;
   let attackT = -1; // 공격 동작을 시작한 지 (초), 공격 중이 아니면 -1
 
@@ -211,7 +214,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       kx *= damp;
       kz *= damp;
 
-      if (mon.state === 'die' || mon.state === 'gone') angry = false;
+      if (mon.state === 'die' || mon.state === 'gone') angry = targeting = false;
       attackCool -= dt;
       const near = me ? Math.hypot(me.x - px, me.z - pz) : Infinity;
       const busy = BUSY.has(mon.state);
@@ -230,7 +233,18 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       // 나를 볼 수 있는지: 가까이 있고, 바라보는 쪽 앞에 있음 (뒤에서 다가가면 모른다)
       const sees = me && near < SIGHT && Math.abs(wrap(Math.atan2(me.x - px, me.z - pz) - heading)) < VIEW;
       if (busy || !me) mode = 'route';
-      else if (hostile && (mode === 'chase' || angry ? near < CHASE_LOSE : near < AGGRO_SIGHT)) mode = 'chase';
+      else if (hostile && (mode === 'chase' || mode === 'rage' || angry ? near < CHASE_LOSE : near < AGGRO_SIGHT)) {
+        if (!targeting) {
+          // 처음 공격 대상으로 알아챔: 멈춰서 '화남!' 하고 나서 쫓아옴 (쫓다가 맞은 뒤에는 바로 다시 쫓음)
+          targeting = true;
+          mode = 'rage';
+          rageLeft = RAGE_TIME;
+          mon.play('angry');
+        } else if (mode === 'rage') {
+          rageLeft -= dt;
+          if (rageLeft <= 0) mode = 'chase';
+        } else mode = 'chase';
+      }
       else if (angry) {
         // 화났는데 너무 멀어짐: 나를 잊고 제 길로 돌아감 (다시 보면 '발견!'부터)
         angry = false;
@@ -253,10 +267,13 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         } else mode = 'route';
       } else mode = 'route';
       // 제 길에서 너무 멀어지면 그만두고 돌아감
-      if ((mode === 'flee' || mode === 'chase') && Math.hypot(tx - px, tz - pz) > (angry ? ANGRY_LEASH : LEASH)) {
+      if ((mode === 'flee' || mode === 'chase' || mode === 'rage') && Math.hypot(tx - px, tz - pz) > (angry ? ANGRY_LEASH : LEASH)) {
         mode = 'route';
         angry = false;
       }
+      // 맞는 중(busy)이 아닌데 쫓지 않게 되면 나를 잊음: 다음에 다시 알아채면 또 '화남!'부터
+      if (!busy && mode !== 'chase' && mode !== 'rage') targeting = false;
+      mon.setMood(targeting ? 'angry' : null);
 
       if (mon.state === 'gone') {
         // 쓰러져 사라졌다가 잠시 뒤 제 길 위에서 다시 나타남
@@ -272,6 +289,11 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       } else if (mon.state === 'attack') {
         // 공격하는 동안은 제자리에서 나를 바라봄
         if (me) heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 8);
+      } else if (mode === 'rage') {
+        // 화가 나서 제자리에서 나를 째려보며 씩씩댐
+        if (mon.state === 'walk') mon.play('idle');
+        heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 10);
+        lastKey = s.key;
       } else if (mode === 'spot') {
         // 깜짝 놀라 제자리에서 나를 쳐다봄
         heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 10);
