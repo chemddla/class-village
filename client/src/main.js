@@ -339,8 +339,8 @@ const NET = TOOLS.indexOf('net');
 let invItems = [1, 2, 4, NET]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
-let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이)
-// 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필·반쪽이를 돌아가며)
+let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이·하악냥)
+// 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필·반쪽이·하악냥을 돌아가며)
 // 몬스터 공통 설정: 공격이 닿으면 내가 맞음 (구르는 중·이미 맞는 중이면 피함) · 도망·쫓을 때 벽·분수·광장 나무에 막힘
 const monsterOpts = {
   onAttack(x, z) {
@@ -348,7 +348,7 @@ const monsterOpts = {
   },
   blocked: (x, z, r) => isBlocked(x, z, r) || (lifeSpots.length > 0 && LIFE_COLLIDERS.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r)),
 };
-const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok'];
+const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
 const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
@@ -1070,9 +1070,9 @@ function attach(r) {
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
     if (free && !plazaMonsters.length) {
-      // 몽당연필·반쪽이는 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
+      // 몽당연필·반쪽이·하악냥은 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
       plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 })];
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5 })];
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });

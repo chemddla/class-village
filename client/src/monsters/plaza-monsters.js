@@ -8,6 +8,7 @@ import { curveDrop, blobGeometry } from '../materials.js';
 import { createNalgaekong } from './nalgaekong.js';
 import { createMongdang } from './mongdang.js';
 import { createBanjjok } from './banjjok.js';
+import { createHaaknyang } from './haaknyang.js';
 
 // 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격 · size(크기 배율, 없으면 1) · shadow(발밑 그림자 좌우·앞뒤 배율, 없으면 동그랗게)
 // 성격(temper): 캐릭터를 발견했을 때 어떻게 하는지
@@ -18,6 +19,7 @@ const KINDS = {
   nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter', temper: 'flee' },
   mongdang: { create: createMongdang, r: 0.042, special: 'scribble', temper: 'flee' },
   banjjok: { create: createBanjjok, r: 0.04, special: 'rub', temper: 'flee', size: 1.35, shadow: [1, 0.62] }, // 납작해서 조금 크게 · 그림자는 길쭉하게 · 몸통박치기도 0.47초에 닿음
+  haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', size: 1.15, shadow: [0.75, 1.15] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -84,7 +86,7 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const BUSY = new Set(['hit', 'die', 'gone', 'spawn']);
 
 // spot: 빙 도는 가운데와 반지름 (기본은 광장 분수 둘레, 분수와 벤치 사이 길) · phase: 일정을 이만큼(초) 어긋나게 (여럿이 같은 동작을 하지 않게)
-// kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필) | 'banjjok'(반쪽이) · temper: 성격 (없으면 종류의 기본 성격)
+// kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필) | 'banjjok'(반쪽이) | 'haak'(하악냥) · temper: 성격 (없으면 종류의 기본 성격)
 // onAttack(x, z): 이 몬스터의 공격이 내 캐릭터에 닿았을 때 불림 (몬스터 자리)
 // blocked(x, z, r): 반지름 r인 몸이 (x, z)에 서면 벽·분수·나무 등에 부딪히는지 (없으면 막히는 데 없음)
 export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fountain.z, r: R = 3.0, phase = 0, kind = 'nalgae', temper, onAttack, blocked: blockedAt = () => false } = {}) {
