@@ -298,7 +298,7 @@ function twoHand(P, fx, on = true) {
 // 몸을 옆으로 돌려 왼쪽 어깨가 쏘는 쪽을 향하고, 얼굴만 앞을 본다. 두 팔의 자리는 equipment.js 의 bowDraw 가 조준선 위에 맞춘다
 // (fx.bowL·bowR: 두 팔을 조준선에 맞추는 정도 0~1, fx.draw: 시위를 당긴 정도 0~1, 1보다 크면 놓은 뒤 손이 뒤로 빠지는 것)
 // 아래 팔 관절값은 조준선 자세로 들어가고 나올 때 섞이는 시작·끝 자세
-function bowPose(u, P, fx) {
+function bowPose(u, P, fx, { legs = true } = {}) {
   P['pelvis.ry'] = kf(u, [0, 0], [0.22, -1.15], [0.85, -1.15], [1, 0]);
   P['spine.ry'] = kf(u, [0, 0], [0.22, -0.35], [0.85, -0.35], [1, 0]);
   P['head.ry'] = kf(u, [0, 0], [0.22, 1.3], [0.85, 1.3], [1, 0]);
@@ -306,13 +306,30 @@ function bowPose(u, P, fx) {
   P['shoulderL.rx'] = kf(u, [0, 0], [0.22, -1.5], [0.85, -1.5], [1, 0]);
   P['shoulderR.rx'] = kf(u, [0, 0], [0.25, -1.45], [0.66, -1.3], [0.8, -1.0], [1, 0]);
   P['elbowR.rx'] = kf(u, [0.25, 0], [0.66, -1.2], [0.8, -0.8], [1, 0]);
-  P['hipL.rx'] = kf(u, [0, 0], [0.2, -0.2], [0.85, -0.2], [1, 0]);
+  if (legs) P['hipL.rx'] = kf(u, [0, 0], [0.2, -0.2], [0.85, -0.2], [1, 0]);
   fx.bowL = kf(u, [0, 0], [0.22, 1], [0.85, 1], [1, 0]);
   fx.bowR = kf(u, [0.05, 0], [0.25, 1], [0.7, 1], [0.82, 0]);
   fx.draw = kf(u, [0.28, 0], [0.6, 1], [0.66, 1], [0.7, 1.3]);
   fx.nock = u > 0.28 && u < 0.66;
   fx.arrow = u > 0.25 && u < 0.66;
 }
+
+// 빠르게 한 발 쏘기: t(초, 쏘기 시작부터)를 bowPose 진행도로 바꾼다. draw 초 동안 당기고, rel 초에 놓고, 그 뒤 back 초 동안 팔을 내린다
+function quickBow(t, draw, rel, back) {
+  if (t < draw) return 0.6 * Math.max(0, t) / draw;
+  if (t < rel) return 0.6;
+  return 0.66 + 0.34 * Math.min(1, (t - rel) / back);
+}
+// 아래로 겨누며 쏘기: 활 자세 + 고개·상체를 겨눈 쪽으로 숙인다 (pitch: 아래로 기울인 각)
+function bowDown(t, P, fx, pitch, draw, rel, back) {
+  const v = quickBow(t, draw, rel, back);
+  bowPose(v, P, fx, { legs: false });
+  const w = kf(v, [0, 0], [0.22, 1], [0.85, 1], [1, 0]);
+  fx.bowPitch = pitch;
+  P['spine.rx'] = (P['spine.rx'] ?? 0) + pitch * 0.35 * w;
+  P['head.rx'] = (P['head.rx'] ?? 0) + pitch * 0.45 * w;
+}
+export const BOW_PITCH = { bowAir: 0.6, bowSlam: 0.85 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 35°·50°)
 
 // 두 점 사이 섞기 / 두 방향 사이를 원호로 섞기 (방향은 길이 1)
 const mix = (a, b, t) => a.map((x, i) => x + (b[i] - x) * t);
@@ -1313,6 +1330,39 @@ Object.assign(ACTIONS, {
   // bowShot 의 당기는 구간(0 → 0.6)과 놓는 구간(0.66 → 1)을 그대로 나눠 쓴다
   bowAim: { duration: 0.7, hold: true, equip: 'bow', fn: (u, P, fx) => bowPose(u * 0.6, P, fx) },
   bowRelease: { duration: 0.6, hitAt: 0.01, equip: 'bow', fn: (u, P, fx) => bowPose(0.66 + u * 0.34, P, fx) },
+  // 점프 공격: 뛰어오른 높이를 이어받아, 공중에서 재빨리 당겨 대각선 아래로 쏜다
+  bowAir: {
+    duration: 0.95, equip: 'bow', rootRate: 120, hitAfter: 0.2, offset: 0.15,
+    fn(u, P, fx, sec, sec0) {
+      ACTIONS.jump.fn(u, P);
+      bowDown(sec - (sec0 || 0.15), P, fx, BOW_PITCH.bowAir, 0.16, 0.2, 0.3);
+    },
+  },
+  // 더블 점프 공격: 공중제비를 끝까지 돈 뒤, 떨어지면서 발밑 앞쪽을 향해 가파르게 쏘고 무릎을 굽혀 내려앉는다
+  bowSlam: {
+    duration: 1.15, equip: 'bow', rootRate: 60, hitAt: 0.62 / 1.15, offset: 0.2,
+    fn(u, P, fx, sec) {
+      const F = 0.85;
+      ACTIONS.flip.fn(Math.min(1, sec / F), P);
+      // 공중제비가 끝난 뒤에도 조금 더 떠 있다가(쏠 틈) 내려앉는다
+      const ang = P['root.rx'];
+      const h = 0.45;
+      P['root.py'] = kf(sec, [0, 0.5], [0.22, 0.8], [0.6, 0.72], [0.85, 0]) + h - h * Math.cos(ang);
+      const land = kf(sec, [0.75, 0], [0.86, 0.45], [0.98, 0.5], [1.15, 0]);
+      if (sec > 0.7) crouch(P, land); // 공중에서는 공중제비의 웅크린 다리를 그대로 둔다
+      bowDown(sec - 0.44, P, fx, BOW_PITCH.bowSlam, 0.14, 0.18, 0.35);
+    },
+  },
+  // 달리기 공격: 달리던 쪽으로 미끄러지면서 뒤로 휙 돌아서(돌아서는 건 게임 쪽에서) 재빨리 쏜다
+  bowBack: {
+    duration: 0.8, equip: 'bow', rootRate: 120, hitAt: 0.3 / 0.8,
+    fn(u, P, fx, sec) {
+      bowPose(quickBow(sec, 0.22, 0.3, 0.4), P, fx);
+      crouch(P, kf(sec, [0, 0.35], [0.3, 0.45], [0.55, 0.3], [0.8, 0]));
+      P['root.py'] = kf(sec, [0, 0], [0.12, 0.06], [0.26, 0]); // 돌아서며 살짝 뜬다
+      P['spine.rx'] = (P['spine.rx'] ?? 0) - kf(sec, [0, 0], [0.25, 0.12], [0.6, 0.05], [0.8, 0]); // 미끄러지는 쪽(뒤)으로 몸을 젖힌다
+    },
+  },
   castSpell: {
     // 지팡이를 들고 제자리 한 바퀴 → 앞으로 찌르기 (회전은 각도 차를 감아서 보간하므로 2π에서 0으로 넘어가도 튀지 않음)
     duration: 1.7, hitAt: 0.66, equip: 'staff',

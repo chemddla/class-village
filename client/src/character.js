@@ -64,14 +64,16 @@ const ACTS = {
   [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket',
   [ANIM.NET_SWING]: 'netSwing', [ANIM.NET_HIGH]: 'netHigh', [ANIM.NET_LOW]: 'netLow', [ANIM.FISH_CAST]: 'fishCast', [ANIM.FISH_WAIT]: 'fishWait', [ANIM.FISH_CATCH]: 'fishCatch', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
   [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash', [ANIM.ROLL]: 'roll',
-  [ANIM.BOW_AIM]: 'bowAim', [ANIM.BOW_SHOT]: 'bowRelease',
+  [ANIM.BOW_AIM]: 'bowAim', [ANIM.BOW_SHOT]: 'bowRelease', [ANIM.BOW_AIR]: 'bowAir', [ANIM.BOW_SLAM]: 'bowSlam', [ANIM.BOW_BACK]: 'bowBack',
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
-const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP };
+const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP,
+  [ANIM.BOW_AIR]: ANIM.JUMP, [ANIM.BOW_SLAM]: ANIM.FLIP };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 // 입질 기다리기는 낚시가 끝날 때까지 (main.js 가 다시 이어 줌), 활 조준은 공격키를 뗄 때까지 (main.js 가 끝낸다)
 const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60 };
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
+export const BOW_SLAM_LAND = 0.85; // 활 더블 점프 공격은 쏠 틈을 두려고 조금 더 떠 있다가 내려앉는다
 export const LAND = { jump: 0.78 * ACTIONS.jump.duration + 0.015, flip: 0.74 * ACTIONS.flip.duration };
 // 과일나무 흔들기: 두 팔을 앞으로 뻗었을 때 손끝이 몸 가운데에서 나가는 거리(m, 게임 크기)와
 // 줄기 가운데 높이의 반지름(나무 크기 1일 때). 손끝이 줄기 표면에서 이만큼(m) 앞에 멈추게 한다
@@ -238,19 +240,25 @@ export class Character {
     // 점프: 도약하는 순간 쭉 늘어나고, 착지하는 순간 납작 → 탄성 복원 + 발밑 먼지
     const cur = this.current;
     const M = this.marks;
-    if (cur === 'jump' || cur === 'clubAir' || cur === 'swordAir') {
+    if (cur === 'jump' || cur === 'clubAir' || cur === 'swordAir' || cur === 'bowAir') {
       if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
       // 발이 땅에 닿는 순간(진행도 0.78 = 0.74초)에 맞춘다: 더 이르면 아직 공중에서 납작해지고 먼지가 난다
       if (!M.down && this.actSec >= LAND.jump) { M.down = 1; this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
-    } else if (cur === 'flip' || cur === 'clubSlam' || cur === 'swordSlam') {
+    } else if (cur === 'flip' || cur === 'clubSlam' || cur === 'swordSlam' || cur === 'bowSlam') {
       if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
-      if (!M.down && this.actSec >= LAND.flip) { M.down = 1; this.footPuff(12, 1.2, true); }
+      if (!M.down && this.actSec >= (cur === 'bowSlam' ? BOW_SLAM_LAND : LAND.flip)) { M.down = 1; this.footPuff(12, 1.2, true); }
       // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
       if (cur === 'flip' && this.actSec < 0.55) {
         rig.head.getWorldPosition(vB);
         rig.pelvis.getWorldPosition(vA);
         this.trail('flip', { life: 0.16, color: 0xffffff, alpha: 0.55 }).push(this.time, vA, vB);
       }
+    }
+
+    // 활 달리기 공격: 뒤돌아 미끄러지는 동안 발밑에서 먼지가 인다
+    if (cur === 'bowBack' && this.actSec < 0.55) {
+      this.stepT -= dt;
+      if (this.stepT <= 0) { this.stepT = 0.07; this.footPuff(2, 0.8); }
     }
 
     // 달리기: 발이 땅을 찰 때마다 뒤로 먼지 퐁퐁

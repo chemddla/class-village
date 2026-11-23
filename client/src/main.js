@@ -7,7 +7,8 @@ import {
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel } from './village.js';
 import { buildField } from './field.js';
-import { Character, actTime, LAND } from './character.js';
+import { Character, actTime, LAND, BOW_SLAM_LAND } from './character.js';
+import { BOW_PITCH } from './villager/actions.js';
 import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft, bugSpots } from './life.js';
 import { createLookEditor } from './look-editor.js';
 import { createMinimap } from './minimap.js';
@@ -152,10 +153,11 @@ const CHOP_AT = 0.72; // 넘어가는 때 (동작 길이의 비율): 박혀서 �
 const BOWS = new Set([ANIM.BOW_AIM, ANIM.BOW_SHOT]);
 const MIN_DRAW = 0.4; // 화살을 메기고 시위를 당기기까지 걸리는 시간(초): 짧게 눌렀다 떼도 이만큼 당긴 뒤에 쏜다
 const REDRAW_AT = 0.3; // 쏘고 나서 이만큼(초) 지나면 다음 화살을 당길 수 있다
-const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SLASH_AIR, ANIM.SLASH_SLAM]);
+const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.BOW_AIR, ANIM.BOW_SLAM]);
 // 공격 동작: 하는 동안에는 방향키로 움직이지 못한다 (떠서 하는 공중 공격·내리찍기도 마찬가지)
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
-  ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH]);
+  ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH,
+  ANIM.BOW_AIR, ANIM.BOW_SLAM, ANIM.BOW_BACK]); // 활 점프·더블 점프·달리기 공격
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
 const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 방향키 쪽(없으면 정면)으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
@@ -180,7 +182,8 @@ function getHit(fromX, fromZ) {
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
-  if (action === 'bowRelease') { arrows.shoot(char, char === me); return; } // 활: 시위를 놓는 순간 화살이 날아간다 (맞는 건 arrowHit)
+  // 활: 시위를 놓는 순간 화살이 날아간다 (맞는 건 arrowHit). 점프·더블 점프 공격은 대각선 아래로
+  if (action === 'bowRelease' || action === 'bowAir' || action === 'bowSlam' || action === 'bowBack') { arrows.shoot(char, char === me, BOW_PITCH[action] ?? 0); return; }
   const slam = action === 'clubSlam' || action === 'swordSlam';
   const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
   if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
@@ -789,7 +792,37 @@ function aimRot() {
 }
 
 // 활: 시위를 당기기 시작한다 (공격키를 떼면 updateMe 가 쏜다). 화살이 없으면 당기지 못한다
+// 화살 하나를 꺼낸다 (없으면 알려 주고 false)
+function takeArrow() {
+  if (local.arrows <= 0) { toast('화살통이 비었어요! 화살이 있어야 쏠 수 있어요'); return false; }
+  setArrows(local.arrows - 1);
+  return true;
+}
 function drawBow() {
+  // 점프 중이면 공중에서 대각선 아래로, 더블 점프 중이면 공중제비를 마치고 가파르게 아래로, 달리는 중이면 뒤돌아 쏜다 (모두 누르자마자 바로 쏜다)
+  const el = actTime(local.act) - local.actLeft;
+  const aim = aimRot();
+  if (local.act === ANIM.JUMP && local.actLeft > 0 && el > 0.08 && el < 0.5) {
+    if (!takeArrow()) return;
+    if (aim !== null) me.setPose(me.x, me.z, aim);
+    local.act = ANIM.BOW_AIR; // 길이가 점프와 같아 남은 시간도 그대로
+    return;
+  }
+  if (local.act === ANIM.FLIP && local.actLeft > 0 && el < 0.4) {
+    if (!takeArrow()) return;
+    if (aim !== null) me.setPose(me.x, me.z, aim);
+    local.act = ANIM.BOW_SLAM;
+    local.actLeft = actTime(ANIM.BOW_SLAM) - el;
+    return;
+  }
+  const run = input.read();
+  if (local.actLeft <= 0 && run.run && run.mag > 0) {
+    if (!takeArrow()) return;
+    local.backRot = me.targetRot; // 달리던 쪽: 이쪽으로 미끄러지면서 뒤를 보고 쏜다
+    me.setPose(me.x, me.z, me.targetRot + Math.PI);
+    startAct(ANIM.BOW_BACK);
+    return;
+  }
   const shotAgo = local.act === ANIM.BOW_SHOT ? actTime(ANIM.BOW_SHOT) - local.actLeft : Infinity;
   if (local.actLeft > 0 && shotAgo < REDRAW_AT) return; // 방금 쏜 시위가 아직 떨리는 중 (쏜 뒤 남은 동작은 끊고 바로 다시 당긴다)
   if (local.actLeft > 0 && local.act !== ANIM.BOW_SHOT) return;
@@ -1273,6 +1306,7 @@ function updateMe(dt) {
     const sec = actTime(local.act) - local.actLeft;
     const glide = ([s0, s1], top) => (sec > s0 && sec < s1 ? top * Math.sin(Math.PI * (sec - s0) / (s1 - s0)) : 0);
     let speed = 0;
+    let moveRot = me.targetRot; // 나아가는 쪽 (보통은 보는 쪽)
     if (local.act === ANIM.SMASH_DASH || local.act === ANIM.SLASH_DASH) speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(local.act), 0.35, 0.6));
     else if (local.act === ANIM.SLASH3) speed = glide(THRUST_STEP, THRUST_SPEED);
     else if (STEP_SWINGS.has(local.act)) {
@@ -1285,14 +1319,18 @@ function updateMe(dt) {
       if (inp.mag > 0 && sec < LAND.flip) speed = Math.max(speed, (inp.run ? RUN_SPEED : WALK_SPEED) * AIR_ATTACK_BOOST);
     }
     // 점프 공격: 방향키를 누르고 있으면 착지할 때까지 보는 쪽으로 나아가며 휘두른다 (걷기·달리기보다 조금 느리게)
-    else if ((local.act === ANIM.SMASH_AIR || local.act === ANIM.SLASH_AIR) && inp.mag > 0 && sec < LAND.jump) {
+    else if ((local.act === ANIM.SMASH_AIR || local.act === ANIM.SLASH_AIR || local.act === ANIM.BOW_AIR) && inp.mag > 0 && sec < LAND.jump) {
       speed = (inp.run ? RUN_SPEED : WALK_SPEED) * JUMP_ATTACK_BOOST;
     }
+    // 활 더블 점프 공격: 방향키를 누르고 있으면 내려앉을 때까지 보는 쪽으로 나아간다
+    else if (local.act === ANIM.BOW_SLAM && inp.mag > 0 && sec < BOW_SLAM_LAND) speed = (inp.run ? RUN_SPEED : WALK_SPEED) * JUMP_ATTACK_BOOST;
+    // 활 달리기 공격: 뒤를 보고 쏘면서 달리던 쪽으로 미끄러지다 멈춘다
+    else if (local.act === ANIM.BOW_BACK) { speed = RUN_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(local.act), 0.05, 0.7)); moveRot = local.backRot; }
     if (speed > 0 && local.hurt <= 0) {
       const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
       for (const m of hereMonsters()) extra.push(...m.colliders()); // 날개콩은 지나갈 수 없음
       for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
-      const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
+      const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(moveRot) * speed * dt, me.z + Math.cos(moveRot) * speed * dt, extra);
       me.setPose(nx, nz, me.targetRot);
     }
   } else if (BOWS.has(local.act) && local.actLeft > 0) {

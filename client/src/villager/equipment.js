@@ -893,12 +893,14 @@ const BOW = {
   cant: 0.7, // 활 윗날을 얼굴 반대쪽으로 눕히는 각 (라디안)
   lean: 0.3, // 윗날을 앞으로 숙이는 정도
 };
-function bowDraw(rig, root, wL, wR, draw) {
+// pitch: 아래로 겨누는 각 (라디안, 점프 공격은 대각선 아래로 쏜다)
+function bowDraw(rig, root, wL, wR, draw, pitch = 0) {
   const sc = rig.shoulderL.getWorldScale(V()).x;
   const rootQ = root.getWorldQuaternion(new THREE.Quaternion());
-  const D = V(0, 0, 1).applyQuaternion(rootQ); // 쏘는 쪽
+  const D = V(0, 0, 1).applyQuaternion(rootQ); // 쏘는 쪽 (땅과 나란히)
   const up = V(0, 1, 0);
   const left = V().crossVectors(up, D); // 쏘는 쪽에서 본 왼쪽
+  const A = D.clone().multiplyScalar(Math.cos(pitch)).addScaledVector(up, -Math.sin(pitch)); // 화살이 날아갈 쪽 (아래로 기울임)
   const torsoQ = rig.shoulderL.parent.getWorldQuaternion(new THREE.Quaternion());
   const chest = V(0, 0, 1).applyQuaternion(torsoQ); // 몸통 앞 (옆으로 돌아 오른쪽을 본다)
   chest.addScaledVector(D, -chest.dot(D)).addScaledVector(up, -chest.y);
@@ -909,10 +911,10 @@ function bowDraw(rig, root, wL, wR, draw) {
   const base = root.getWorldPosition(V());
   const SL = rig.shoulderL.getWorldPosition(V());
   const line0 = base.clone().addScaledVector(up, BOW.height * sc).addScaledVector(chest, BOW.front * sc);
-  const onLine = (t) => line0.clone().addScaledVector(D, t);
+  const onLine = (t) => line0.clone().addScaledVector(A, t);
   // 왼손 회전: 활 소켓 축이 +Z = 활 윗날 방향, +Y = 시위 쪽(나를 향함)이 되게
-  const U = up.clone().multiplyScalar(Math.cos(BOW.cant)).addScaledVector(chest, Math.sin(BOW.cant)).addScaledVector(D, BOW.lean).normalize();
-  const S = D.clone().negate();
+  const U = up.clone().multiplyScalar(Math.cos(BOW.cant)).addScaledVector(chest, Math.sin(BOW.cant)).addScaledVector(A, BOW.lean).normalize();
+  const S = A.clone().negate();
   const Ux = U.clone().addScaledVector(S, -U.dot(S)).normalize();
   const sockQ = new THREE.Quaternion().setFromRotationMatrix(m4.makeBasis(V().crossVectors(S, Ux), S, Ux));
   // 왼손: 활을 쥔 팔을 쫙 편다. 손목(팔 끝)이 어깨에서 팔 길이만큼 떨어지도록 조준선 위 쥘 자리(G)를 고른다
@@ -924,8 +926,8 @@ function bowDraw(rig, root, wL, wR, draw) {
   let G = null;
   for (let n = 0; n < 3; n++) {
     const off = rig.leftSocket.position.clone().multiply(rig.handL.getWorldScale(V())).applyQuaternion(handQL);
-    const P0 = line0.clone().sub(off).sub(SL); // |P0 + D·t| = reach 를 푼다 (앞쪽 근)
-    const pd = P0.dot(D);
+    const P0 = line0.clone().sub(off).sub(SL); // |P0 + A·t| = reach 를 푼다 (앞쪽 근)
+    const pd = P0.dot(A);
     const t = -pd + Math.sqrt(Math.max(0, pd * pd - P0.lengthSq() + reach * reach));
     G = onLine(t);
     if (n === 2) break;
@@ -943,8 +945,8 @@ function bowDraw(rig, root, wL, wR, draw) {
   }
   if (wR > 0.001) {
     // 오른손: 손가락(손의 -Y)이 쏘는 쪽을 향해 시위를 건다. 팔꿈치는 뒤로, 어깨 높이로 당긴다
-    const N = G.clone().addScaledVector(D, -(BOW.nock + BOW.pull * draw) * sc);
-    const Y = D.clone().negate();
+    const N = G.clone().addScaledVector(A, -(BOW.nock + BOW.pull * draw) * sc);
+    const Y = A.clone().negate();
     const Z = up.clone().addScaledVector(Y, -up.dot(Y)).normalize();
     const handQ = new THREE.Quaternion().setFromRotationMatrix(m4.makeBasis(V().crossVectors(Y, Z), Y, Z));
     const pole = D.clone().negate().addScaledVector(up, 0.2).addScaledVector(chest, -0.3).normalize().applyQuaternion(toTorso);
@@ -1004,7 +1006,7 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
   if (rig.oneAim && rig.oneHandW > 0.001) oneHandGrip(rig, rig.oneHandW, rig.oneAim);
   else { rig.oneAim = null; rig.elbowPrev = null; rig.oneFist = null; }
   // 활 당기기: 두 팔을 조준선 위에 놓는다 (시위·화살은 아래에서 오른손을 따라간다)
-  if ((fx.bowL ?? 0) > 0.001 || (fx.bowR ?? 0) > 0.001) bowDraw(rig, root, fx.bowL ?? 0, fx.bowR ?? 0, fx.draw ?? 0);
+  if ((fx.bowL ?? 0) > 0.001 || (fx.bowR ?? 0) > 0.001) bowDraw(rig, root, fx.bowL ?? 0, fx.bowR ?? 0, fx.draw ?? 0, fx.bowPitch ?? 0);
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
       const { rod, bow: b, staff: st } = o.userData;

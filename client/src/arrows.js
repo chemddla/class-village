@@ -39,12 +39,12 @@ export function createArrows(scene, hit) {
   }
 
   return {
-    // char: 쏜 캐릭터 (Character), mine: 내 캐릭터가 쐈는지
-    shoot(char, mine) {
+    // char: 쏜 캐릭터 (Character), mine: 내 캐릭터가 쐈는지, pitch: 아래로 기울여 쏘는 각 (점프 공격)
+    shoot(char, mine, pitch = 0) {
       const mesh = makeArrow();
       mesh.scale.setScalar(SCALE);
       syncToon(mesh, true, OUTLINE_SCALE);
-      const dir = new THREE.Vector3(Math.sin(char.targetRot), 0, Math.cos(char.targetRot));
+      const dir = new THREE.Vector3(Math.sin(char.targetRot) * Math.cos(pitch), -Math.sin(pitch), Math.cos(char.targetRot) * Math.cos(pitch));
       // 활 손잡이 자리에서 출발 (화살 꼬리가 원점이므로 반 길이만큼 뒤에서)
       const at = char.villager.rig.leftSocket.getWorldPosition(new THREE.Vector3());
       // 활 손잡이는 조준선 위에 있다 (equipment.js bowDraw): 메긴 화살 자리 그대로 꼬리가 손잡이 조금 뒤에서 출발
@@ -52,7 +52,7 @@ export function createArrows(scene, hit) {
       // 그릴 때만 그 자리만큼 내린다 → 곧게 쏘아도 땅에서 떠오르지 않고 땅을 따라 날아간다
       const pos = at.clone().addScaledVector(dir, -0.15);
       pos.y += curveDrop(at.x, at.z);
-      const a = { mesh, pos, vel: dir.multiplyScalar(ARROW.speed), dir: dir.clone().normalize(), from: char, mine, flown: 0, stuck: -1 };
+      const a = { mesh, pos, vel: dir.multiplyScalar(ARROW.speed), dir: dir.clone().setY(0).normalize(), from: char, mine, flown: 0, stuck: -1 };
       place(a);
       scene.add(mesh);
       list.push(a);

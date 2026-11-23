@@ -40,6 +40,7 @@ export const ANIM = {
   ROLL: 33, // Shift 회피 구르기
   BOW_AIM: 34, BOW_SHOT: 35, // 활: 공격키를 누르고 있는 동안 시위를 당겨 조준 · 떼면 놓아 쏘기
   NET_SWING: 36, NET_HIGH: 37, NET_LOW: 38, // 잠자리채 휘두르기: 가슴 높이 · 머리 위 · 발 앞 낮게 (곤충 채집)
+  BOW_AIR: 39, BOW_SLAM: 40, BOW_BACK: 41, // 활 점프 공격(대각선 아래로) · 더블 점프 공격 · 달리기 공격(뒤돌아 쏘기)
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
