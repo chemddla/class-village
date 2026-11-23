@@ -1,11 +1,11 @@
-// 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터)
-// Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터, 같은 방향 두 번 연타 후 누르고 있으면 달리기)
+// Shift 회피 대시(마우스 쪽으로) · Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
 // 키 → 행동 이름 (화면 버튼은 data-key 로 같은 키를 누른 것처럼 동작)
 const ACTION_KEYS = {
-  Space: 'jump', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyZ: 'attack',
+  Space: 'jump', ShiftLeft: 'dodge', ShiftRight: 'dodge', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyZ: 'attack',
   Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
   Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
 };
@@ -30,16 +30,32 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   const KEYMAP = {
     ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
-    ShiftLeft: 'run', ShiftRight: 'run',
   };
+  // 같은 방향키를 빠르게 두 번 누르면, 두 번째로 누른 키를 누르고 있는 동안 달린다
+  const TAP_MS = 300;
+  let lastTap = { dir: null, t: 0 };
+  let runDir = null;
   addEventListener('keydown', (e) => {
     if (!enabled) return;
-    if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); }
+    const dir = KEYMAP[e.code];
+    if (dir) {
+      keys.add(dir);
+      e.preventDefault();
+      if (!e.repeat) {
+        const now = performance.now();
+        if (lastTap.dir === dir && now - lastTap.t < TAP_MS) { runDir = dir; lastTap.dir = null; }
+        else lastTap = { dir, t: now };
+      }
+    }
     const name = keyAction(e);
     if (name) { held.add(name); if (!e.repeat) onAction(name); e.preventDefault(); } // Ctrl+숫자의 브라우저 탭 넘기기도 막는다
   });
-  addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); if (ACTION_KEYS[e.code]) held.delete(ACTION_KEYS[e.code]); });
-  addEventListener('blur', () => { keys.clear(); held.clear(); });
+  addEventListener('keyup', (e) => {
+    const dir = KEYMAP[e.code];
+    if (dir) { keys.delete(dir); if (dir === runDir) runDir = null; }
+    if (ACTION_KEYS[e.code]) held.delete(ACTION_KEYS[e.code]);
+  });
+  addEventListener('blur', () => { keys.clear(); held.clear(); runDir = null; });
 
   // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
@@ -132,12 +148,12 @@ export function createInput({ onAction, onOrbit, onZoom }) {
   return {
     get pointer() { return pointer; },
     holding(name) { return enabled && held.has(name); },
-    enable(v) { enabled = v; if (!v) { keys.clear(); held.clear(); joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },
+    enable(v) { enabled = v; if (!v) { keys.clear(); held.clear(); runDir = null; joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },
     // 화면 기준 이동 방향: x(오른쪽+), z(아래쪽+), 세기 0~1, 달리기 여부
     read() {
       let x = 0;
       let z = 0;
-      let run = keys.has('run');
+      let run = runDir !== null;
       if (keys.has('left')) x -= 1;
       if (keys.has('right')) x += 1;
       if (keys.has('up')) z -= 1;

@@ -78,14 +78,21 @@ export const ACTIONS = {
     P['spine.rx'] = b * 0.015;
     P['spine.rz'] = sway * 0.015;
     P['head.rx'] = -b * 0.012;
-    P['head.ry'] = Math.sin(t * 0.8) * 0.05;
+    // 가끔(약 9초마다) 고개를 돌려 두리번거리고, 그 사이 한쪽 팔을 살짝 앞뒤로 흔든다
+    const look = Math.sin(Math.PI * Math.min(1, Math.max(0, ((t % 9) - 5) / 2.4))) ** 2;
+    const lookDir = Math.floor(t / 9) % 2 ? 1 : -1;
+    const fidget = Math.sin(Math.PI * Math.min(1, Math.max(0, ((t % 9) - 6.5) / 1.6))) ** 2;
+    P['head.ry'] = Math.sin(t * 0.8) * 0.05 + look * lookDir * 0.35;
     P['head.rz'] = -sway * 0.02;
-    // 팔은 몸통에서 비스듬히 뻗어 내린다 (숨 쉴 때 살짝 벌어졌다 모임)
-    P['shoulderR.rz'] = -ARM_REST - b * 0.02;
-    P['shoulderL.rz'] = ARM_REST + b * 0.02;
-    P['shoulderR.rx'] = sway * 0.03;
-    P['shoulderL.rx'] = -sway * 0.03;
-    P['elbowR.rx'] = P['elbowL.rx'] = -0.08;
+    P['spine.ry'] = look * lookDir * 0.06;
+    // 팔은 힘을 뺀 채 팔꿈치를 살짝 굽혀 손이 몸 약간 앞에 오게, 양팔이 박자를 달리해 느리게 흔들린다
+    const dR = Math.sin(t * 0.9), dL = Math.sin(t * 0.75 + 1.7);
+    P['shoulderR.rz'] = -ARM_REST - b * 0.02 + dR * 0.015;
+    P['shoulderL.rz'] = ARM_REST + b * 0.02 - dL * 0.015;
+    P['shoulderR.rx'] = -0.1 + sway * 0.03 + dR * 0.04 + fidget * Math.sin(t * 7) * 0.12;
+    P['shoulderL.rx'] = -0.1 - sway * 0.03 + dL * 0.04;
+    P['elbowR.rx'] = -0.3 + dR * 0.05 - fidget * 0.1;
+    P['elbowL.rx'] = -0.3 + dL * 0.05;
   },
 
   // 종종걸음: 짧은 다리로 잰걸음을 치며 몸이 좌우로 뒤뚱, 팔은 살짝 벌린 채 작게 흔든다
@@ -332,6 +339,7 @@ export const CLUB_STYLES = {
   // 끝에서는 다시 위로 올라간다. 손은 팔이 닿는 한계 가까이 내보내 두 팔을 거의 다 편다.
   // kick: 젖히는 동안 앞다리(왼다리) 무릎을 들어 올렸다가 타격 직전에 내딛는다
   // hips: 허리 비틀기 중 골반이 함께 도는 몫 (다른 타는 0.4). 3타는 골반도 크게 돌려 다리까지 같이 돈다
+  // coil: 감을 때(젖힘) 골반이 도는 몫. 늘린 만큼 허리 몫을 줄여 어깨가 도는 총량은 같다 (골반이 덜 돌면 어깨·다리만 돌고 골반은 그대로인 것처럼 보인다)
   // 가장 크게 휘두르는 순간 두 팔을 다 폈다가 끝으로 가며 다시 굽힌다. 왼손은 자루 끝을 쥐어 오른손보다 몸쪽에 있으므로
   // 두 손을 오른 어깨 앞쪽 조금 낮게 내보내야 왼팔이 가슴을 가로질러 함께 펴진다.
   // reach: 그 순간 어깨를 옮기는 양 [오른 어깨 앞으로, 왼 어깨 앞으로(음수면 뒤로)]. 왼 어깨를 살짝 빼야 왼팔이 끝까지 펴진다
@@ -340,7 +348,7 @@ export const CLUB_STYLES = {
   //  곧장 아래로 떨구면 오른 아래팔이 세운 몽둥이 아래쪽을 쥔 왼 주먹을 뚫고 지나가므로 바깥 옆으로 조금 비켜 내린다
   homerun: { label: '3타 · 야구 배트처럼 높이 들었다 내리며 크게', back: [-0.35, 0.93, 0.1], elbowDown: true, hit: [-0.3, -0.04, 0.95], end: [0.65, 0.15, 0.72],
     posBack: [-0.11, 0.215, 0.11], posHit: [-0.06, 0.09, 0.2], posEnd: [0.03, 0.16, 0.14], reach: [0.01, -0.03], charge: true,
-    twist: [-2.0, 0.35, 1.6], lean: [-0.32, 0.2, 0.04], crouch: 0.5, stance: 1, kick: 1, hips: 0.55,
+    twist: [-2.0, 0.35, 1.6], lean: [-0.32, 0.2, 0.04], crouch: 0.5, stance: 1, kick: 1, hips: 0.55, coil: 0.85,
     from: 'second', duration: 0.78, via: { dir: CLUB_SIDE[1], pos: CLUB_SIDE[0] } },
   // 4타(= 이어 치는 1타): 야구 스윙이 왼쪽 뒤로 넘어간 자리에서 몽둥이를 오른쪽으로 되돌려 오른 어깨 너머로 젖혔다가 다시 왼쪽 아래로 내리친다.
   // 끝 자세가 1타와 같아 2타가 그대로 받는다: 1타 → 2타 → 3타 → 4타 → 2타 → 3타 → …
@@ -599,6 +607,7 @@ function clubSwing(S) {
   const VIA = S.via ? unit(S.via.dir) : null;
   const tws = prev ? prev.twist[2] : 0;
   const hp = S.hips ?? 0.4; // 골반이 도는 몫
+  const coil = S.coil ?? hp;
   const hps = prev ? prev.hips ?? 0.4 : 0.4;
   const lns = prev ? prev.lean[2] : 0;
   const cs = prev ? (prev.crouch ?? 0.5) * 0.9 : 0;
@@ -654,8 +663,8 @@ function clubSwing(S) {
       P['elbowL.rx'] = kf(u, [0, 0], [0.3, -0.6], [0.62, -0.5], [0.8, -0.14], [1, -0.08]);
       // 몸은 한꺼번에 돌지 않고 골반 → 허리 → 고개 순으로 조금씩 늦게 따라 풀린다 (같은 순간에 다 같이 돌면 로봇처럼 뻣뻣하다).
       // 휘두른 뒤에는 덜컥 멈추지 않고 천천히 넘어갔다가 제자리로 돌아온다
-      P['pelvis.ry'] = kf(u, [0, tws * hps], [0.36, tw0 * hp], [0.47, tw1 * hp * 1.75, 'in'], [0.62, tw2 * hp, 'out'], [1, 0]);
-      P['spine.ry'] = kf(u, [0, tws], [0.4, tw0], [0.495, tw1, 'in'], [0.66, tw2, 'out'], [0.86, tw2 * 0.5], [1, 0]);
+      P['pelvis.ry'] = kf(u, [0, tws * hps], [0.36, tw0 * coil], [0.47, tw1 * hp * 1.75, 'in'], [0.62, tw2 * hp, 'out'], [1, 0]);
+      P['spine.ry'] = kf(u, [0, tws], [0.4, tw0 * (1 + hp - coil)], [0.495, tw1, 'in'], [0.66, tw2, 'out'], [0.86, tw2 * 0.5], [1, 0]);
       P['spine.rx'] += kf(u, [0, lns], [0.4, ln0], [0.5, ln1, 'in'], [0.66, ln2, 'out'], [0.86, ln2 * 0.45], [1, 0]) + shake * 0.05;
       P['spine.rz'] = kf(u, [0, 0], [0.4, tw0 * 0.11], [0.52, -tw0 * 0.08], [1, 0]); // 감는 쪽 어깨가 살짝 내려간다
       P['head.rx'] = kf(u, [0, 0], [0.42, ln0 * 0.45], [0.53, ln1 * 0.33], [1, 0]) - shake * 0.05;
@@ -672,9 +681,11 @@ function clubSwing(S) {
         P['kneeL.rx'] += 1.8 * lift;
         P['footL.rx'] -= 0.2 * lift;
         P['hipL.rz'] -= 0.18 * lift; // 든 무릎을 몸 안쪽으로 살짝 모은다 (감는 허리와 함께 몸이 꼬인다)
-        P['hipR.rx'] -= 0.12 * lift; // 버티는 뒷다리도 살짝 굽혀 몸을 싣는다
-        P['kneeR.rx'] += 0.2 * lift;
-        P['footR.rx'] -= 0.08 * lift;
+        // 버티는 뒷다리도 무릎을 굽혀 몸을 싣고 (발바닥은 땅과 나란히), 굽힌 만큼 몸을 낮춰 발이 뜨지 않게 한다
+        P['hipR.rx'] -= 0.4 * lift;
+        P['kneeR.rx'] += 0.75 * lift;
+        P['footR.rx'] -= 0.35 * lift;
+        P['pelvis.py'] -= 0.02 * lift;
         // 휘두르는 동안 뒷다리는 무릎을 앞으로 밀어 넣어 몸을 돌리고(발끝으로 비틀어 딛는다), 앞다리는 쭉 펴서 버틴다
         const drive = kf(u, [0.44, 0], [0.54, 1], [0.72, 1], [1, 0]) * S.kick;
         P['hipR.rx'] -= 0.3 * drive;
@@ -696,8 +707,11 @@ function clubSwing(S) {
         P['kneeL.rx'] -= 0.45 * brace;
         P['footL.rx'] += 0.2 * brace;
         // 골반이 크게 도는 만큼 다리는 엉덩이에서 일부 되돌려, 발이 땅 위에서 통째로 돌지 않고 무릎만 몸을 따라 돌게 한다
-        for (const s of SIDES) P[`hip${s}.ry`] = -P['pelvis.ry'] * 0.55;
-        P['root.sy'] = kf(u, [0.1, 0], [0.34, 0.07], [0.44, 0.03], [0.53, -0.08, 'in'], [0.66, -0.02], [0.8, 0]);
+        // 감는 동안은 뒷다리도 되돌리는 몫을 줄여 무릎이 몸과 함께 안쪽으로 돈다 (한쪽 다리만 돌면 어색하다)
+        // 들어 올린 앞다리는 되돌리지 않는다: 허벅지가 수평이면 이 회전이 허벅지를 비틀어 무릎이 옆·반대로 굽는다
+        P['hipL.ry'] = -P['pelvis.ry'] * 0.55 * (1 - lift);
+        P['hipR.ry'] = -P['pelvis.ry'] * (0.55 - 0.35 * lift);
+        P['root.sy'] = kf(u, [0.1, 0], [0.34, 0.04], [0.44, 0.03], [0.53, -0.08, 'in'], [0.66, -0.02], [0.8, 0]);
         if (S.reach) {
           const r = kf(u, [0.42, 0], [0.5, 1], [0.6, 1], [0.7, 0]);
           P['shoulderR.pz'] = S.reach[0] * r;

@@ -7,6 +7,7 @@ import { createVillager, PRESETS, EXPRESSIONS, HAIRSTYLES, OUTFITS, HATS, NOSE_S
 import { EQUIPMENT } from './villager/equipment.js';
 import { contactShadow, canvasTexture, setMaxAnisotropy, EYE_STYLES, MOUTH_STYLES } from './villager/textures.js';
 import { syncToon } from './villager/toon.js';
+import { createMongdang, MONGDANG_MOTIONS } from './monsters/mongdang.js';
 
 // 쇼룸 밖에서도 쓰던 외곽선 도우미는 공용 모듈에서 그대로 내보냄
 export { addOutline } from './villager/toon.js';
@@ -114,6 +115,19 @@ villager.root.rotation.y = -0.25;
 scene.add(villager.root);
 let spin = false;
 
+// ── 몬스터: 주민 옆에 몽당연필 (마을과 같은 크기 비율: 날개콩처럼 시안 크기 × 2) ──
+const mon = createMongdang({
+  fxParent: scene,
+  onDone(name) {
+    if (name === 'die') setTimeout(() => { mon.play('spawn'); sync(); }, 800); // 쓰러져 사라지면 잠깐 뒤 다시 등장
+    sync();
+  },
+});
+mon.root.scale.setScalar(3);
+mon.root.position.set(-0.42, 0, -0.1);
+mon.root.rotation.y = 0.45;
+scene.add(mon.root);
+
 // ── 패널 데이터: 버튼 목록은 전부 여기서 만든다 ──
 const ACTION_LABELS = { idle: '대기', walk: '걷기', run: '달리기', jump: '점프', flip: '공중제비', wave: '인사', cheer: '환호' };
 const LIFE_ACTIONS = { gather: '채집', treeShake: '나무 흔들기', pocket: '과일 줍기', chop: '벌목', chopAgain: '벌목(이어 찍기)', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
@@ -206,6 +220,9 @@ for (const [k, e] of Object.entries(EQUIPMENT)) {
 }
 // 액션이 끝나 대기로 돌아가거나 장비가 자동으로 바뀌면 버튼 표시도 갱신
 villager.onChange = () => sync();
+for (const [k, m] of Object.entries(MONGDANG_MOTIONS)) {
+  button($('monster'), { label: m.label, onClick: () => mon.play(k), isOn: () => mon.state === k });
+}
 
 // 탭: 외형 꾸미기 / 생활 · 전투 액션
 for (const tab of document.querySelectorAll('.tab')) {
@@ -311,6 +328,7 @@ renderer.setAnimationLoop(() => {
   const t = clock.elapsedTime;
   if (spin) villager.root.rotation.y += dt * 0.6;
   villager.update(t, dt);
+  mon.update(dt);
   syncToon(villager.root, toon);
   // 뛰어오르면 발밑 그림자가 작고 옅어짐
   const k = 1 - Math.min(0.6, villager.root.position.y * 2.5);
@@ -347,4 +365,4 @@ window.CharacterApp = {
 };
 
 // 개발 중 점검용
-window.__show = { renderer, scene, camera, villager, syncToon: (on) => syncToon(villager.root, on) };
+window.__show = { renderer, scene, camera, villager, mon, syncToon: (on) => syncToon(villager.root, on) };

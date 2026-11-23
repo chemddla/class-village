@@ -48,8 +48,17 @@ html, body {
   border-radius: 50%; background: rgba(255, 250, 240, 0.95); box-shadow: var(--shadow);
 }
 
+/* 미니맵: 우측 하단 구석, 행동 버튼은 그 위로 */
+#minimap {
+  position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+  width: var(--map); height: var(--map); border-radius: 50%; border: 3px solid var(--card);
+  box-shadow: var(--shadow); background: #78bee6; pointer-events: none;
+}
+:root { --map: 140px; }
+@media (max-width: 600px), (max-height: 500px) { :root { --map: 104px; } }
+
 #actions {
-  position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom));
+  position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + var(--map) + 12px);
   display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
 }
 #actions button {

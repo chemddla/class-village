@@ -356,8 +356,220 @@ monsters.push(() => {
   };
 });
 
+// ── 필기도구 몬스터 (monsters.html?set=stationery) ──
+const stationery = [];
+
+// 1. 몽당연필: 너무 깎여서 엄지만 해진 연필. 지우개 쪽으로 서서 뒤뚱뒤뚱, 가끔 깎이는 꿈에 뱅글
+stationery.push(() => {
+  const g = new THREE.Group();
+  const body = new THREE.Group();
+  g.add(body);
+  // 육각 기둥: 평평한 면이 앞을 보도록 30도 돌림
+  const part = (r1, r2, h, y, m, name, n = 6) =>
+    mesh(new THREE.CylinderGeometry(r1, r2, h, n).rotateY(n === 6 ? PI / 6 : 0).translate(0, y + h / 2, 0), m, body, name);
+  part(0.036, 0.036, 0.02, 0, mat('#ff9fb0', 0.95), '지우개', 24);
+  part(0.04, 0.04, 0.014, 0.02, mat('#c9ccd3', 0.35), '쇠테', 24);
+  part(0.04, 0.04, 0.06, 0.034, mat('#ffd23f', 0.6), '몸');
+  part(0.008, 0.04, 0.035, 0.094, mat('#f3d2a2', 0.9), '나무');
+  part(0.003, 0.008, 0.007, 0.129, mat('#4a4a52', 0.5), '심', 12); // 뭉툭하게 닳은 심
+  dotEyes(body, { x: 0.013, y: 0.07, z: 0.035, r: 0.007 });
+  blush(body, { x: 0.021, y: 0.058, z: 0.033, r: 0.006 });
+  smallMouth(body, { y: 0.057, z: 0.036, r: 0.004 });
+  return {
+    g, name: '몽당연필', desc: '너무 깎여서 키가 엄지만 함',
+    update(t) {
+      const c = t % 3.2;
+      if (c < 2.2) {
+        body.position.y = Math.abs(Math.sin(t * 6)) * 0.006;
+        body.rotation.set(0, 0, Math.sin(t * 6) * 0.12);
+      } else {
+        const k = (c - 2.2) / 1; // 연필깎이에 들어간 듯 한 바퀴 뱅글
+        body.position.y = 0;
+        body.rotation.set(0, k * k * (3 - 2 * k) * PI * 2, Math.sin(k * PI * 3) * 0.08);
+      }
+    },
+  };
+});
+
+// 2. 닳은지우개: 열심히 문지르는데 닳는 건 자기 자신. 문지를수록 지우개 가루가 쌓임
+stationery.push(() => {
+  const g = new THREE.Group();
+  const body = new THREE.Group();
+  g.add(body);
+  mesh(new RoundedBoxGeometry(0.11, 0.055, 0.065, 3, 0.012).translate(0, 0.0275, 0), mat('#f4f1ea', 0.95), body, '몸');
+  mesh(new RoundedBoxGeometry(0.06, 0.059, 0.069, 3, 0.006).translate(0.028, 0.0295, 0), mat('#3d8fe0', 0.7), body, '종이');
+  const face = new THREE.Group();
+  face.position.x = -0.03; // 종이 띠 밖으로 나온 하얀 쪽에 얼굴
+  body.add(face);
+  dotEyes(face, { x: 0.01, y: 0.033, z: 0.033, r: 0.006 });
+  blush(face, { x: 0.018, y: 0.022, z: 0.032, r: 0.005 });
+  smallMouth(face, { y: 0.021, z: 0.0335, r: 0.0035 });
+  const crumbs = [];
+  for (let i = 0; i < 5; i++) {
+    const cr = mesh(ball(0.006 + (i % 2) * 0.003, 10).scale(1.6, 0.7, 1), mat('#d9cfc4', 1), g, '가루');
+    cr.position.set(-0.075 - i * 0.008, 0.003, 0.02 - i * 0.011);
+    crumbs.push(cr);
+  }
+  return {
+    g, name: '닳은지우개', desc: '문지를수록 자기만 닳음',
+    update(t) {
+      const rub = Math.sin(t * 7);
+      body.position.x = rub * 0.015;
+      body.rotation.y = rub * 0.05;
+      const pile = (t % 5) / 5; // 가루가 점점 쌓였다가 (누가 치워서) 사라짐
+      crumbs.forEach((cr, i) => cr.scale.setScalar(Math.max(0.001, Math.min(1, pile * 5 - i))));
+    },
+  };
+});
+
+// 3. 똑딱볼펜: 할 줄 아는 건 똑딱뿐. 똑! 할 때마다 볼펜심이 나와 키가 살짝 커짐
+stationery.push(() => {
+  const g = new THREE.Group();
+  const body = new THREE.Group();
+  g.add(body);
+  const NAVY = mat('#2f4a7a', 0.7);
+  const SILVER = mat('#c9ccd3', 0.35);
+  const cyl = (r1, r2, h, y, m, name) => mesh(new THREE.CylinderGeometry(r1, r2, h, 24).translate(0, y + h / 2, 0), m, body, name);
+  mesh(new THREE.ConeGeometry(0.012, 0.022, 16).rotateX(PI).translate(0, 0.011, 0), SILVER, body, '촉');
+  cyl(0.016, 0.02, 0.03, 0.02, NAVY, '손잡이');
+  cyl(0.02, 0.02, 0.075, 0.05, mat('#7cc3f0', 0.4), '몸');
+  cyl(0.021, 0.021, 0.012, 0.125, NAVY, '머리');
+  const knob = mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.02, 16).translate(0, 0.01, 0), NAVY, body, '똑딱이');
+  knob.position.y = 0.133;
+  mesh(new RoundedBoxGeometry(0.008, 0.06, 0.006, 2, 0.002).translate(0, 0.1, -0.023), SILVER, body, '클립');
+  const nib = mesh(new THREE.CylinderGeometry(0.0025, 0.0025, 0.007, 8).translate(0, -0.0035, 0), mat('#3a3a40', 0.4), body, '볼펜심');
+  nib.position.y = 0.002;
+  dotEyes(body, { x: 0.008, y: 0.095, z: 0.019, r: 0.006 });
+  blush(body, { x: 0.015, y: 0.084, z: 0.013, r: 0.005 });
+  smallMouth(body, { y: 0.083, z: 0.0205, r: 0.0035 });
+  return {
+    g, name: '똑딱볼펜', desc: '할 줄 아는 건 똑딱뿐',
+    update(t) {
+      const n = Math.floor(t / 0.7), into = t % 0.7;
+      const k = Math.min(1, into / 0.08);
+      const out = n % 2 ? k : 1 - k; // 누를 때마다 심이 나왔다 들어갔다
+      knob.position.y = 0.133 - (into < 0.12 ? Math.sin((into / 0.12) * PI) * 0.008 : 0);
+      nib.scale.y = Math.max(0.001, out);
+      body.position.y = out * 0.005;
+      body.rotation.z = Math.sin(t * 2.3) * 0.08; // 뾰족한 촉으로 서 있느라 늘 휘청
+      body.rotation.x = Math.sin(t * 1.7) * 0.05;
+    },
+  };
+});
+
+// 4. 마른풀: 뚜껑을 잃어버려서 다 말라 버린 딱풀. 열심히 돌려 올려도 부서져 내려감
+stationery.push(() => {
+  const g = new THREE.Group();
+  const body = new THREE.Group();
+  g.add(body);
+  const ORANGE = mat('#ff8a3d', 0.6);
+  const cyl = (r, h, y, m, name) => mesh(new THREE.CylinderGeometry(r, r, h, 32).translate(0, y + h / 2, 0), m, body, name);
+  const dial = cyl(0.033, 0.012, 0, ORANGE, '돌리개');
+  cyl(0.035, 0.085, 0.012, mat('#fbfbf7', 0.5), '몸');
+  cyl(0.0356, 0.034, 0.016, ORANGE, '상표');
+  const glue = mesh(new THREE.CylinderGeometry(0.026, 0.027, 0.03, 24).translate(0, 0.095, 0), mat('#efe4b0', 1), body, '풀');
+  dotEyes(body, { x: 0.012, y: 0.074, z: 0.034, r: 0.007 });
+  smallMouth(body, { y: 0.061, z: 0.0355, r: 0.005, frown: true });
+  const cap = mesh(new THREE.CylinderGeometry(0.037, 0.037, 0.04, 32).rotateZ(PI / 2), ORANGE, g, '뚜껑'); // 저 멀리 굴러간 뚜껑
+  cap.position.set(0.085, 0.037, -0.04);
+  cap.rotation.y = 0.6;
+  return {
+    g, name: '마른풀', desc: '뚜껑 잃어버려서 다 말라 버림',
+    update(t) {
+      const c = t % 3;
+      const up = c < 1.6 ? c / 1.6 : Math.max(0, 1 - (c - 1.6) / 0.15); // 천천히 올라왔다 툭 꺼짐
+      glue.position.y = up * 0.02;
+      dial.rotation.y = c < 1.6 ? c * 6 : 0;
+      body.rotation.z = c > 1.6 && c < 2.2 ? Math.sin((c - 1.6) * 30) * 0.05 * (2.2 - c) : 0;
+    },
+  };
+});
+
+// 5. 포스트잇: 붙었다 하면 금방 떨어짐. 윗부분이 슬슬 말리다가 뒤로 벌러덩
+stationery.push(() => {
+  const g = new THREE.Group();
+  const H = 0.1;
+  const geo = new THREE.BoxGeometry(0.1, H, 0.005, 1, 16, 1).translate(0, H / 2, 0);
+  const base = geo.attributes.position.array.slice();
+  const note = mesh(geo, mat('#fff27a', 0.8), g, '몸');
+  note.userData.outlineWidth = 0.002; // 얇은 종이라 외곽선도 얇게
+  note.frustumCulled = false; // 매 프레임 모양이 바뀜
+  const face = new THREE.Group();
+  face.position.y = 0.05;
+  g.add(face);
+  dotEyes(face, { x: 0.018, y: 0.004, z: 0, r: 0.008 });
+  blush(face, { x: 0.032, y: -0.008, z: -0.001, r: 0.007 });
+  const mouth = smallMouth(face, { y: -0.012, z: 0.001, r: 0.005 });
+  const curlZ = (u, curl) => -curl * u * u * 0.06; // 높이 u(0~1)에서 뒤로 말린 정도
+  return {
+    g, name: '포스트잇', desc: '붙었다 하면 금방 떨어짐',
+    update(t) {
+      const c = t % 4;
+      const sm = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+      const curl = c < 3.5 ? sm((c - 1.6) / 1) : 1 - sm((c - 3.5) / 0.3);
+      const fall = c < 3.5 ? sm((c - 2.6) / 0.4) : 1 - sm((c - 3.5) / 0.3);
+      const p = geo.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const y0 = base[i * 3 + 1], u = y0 / H;
+        p.setY(i, y0 - curl * u ** 4 * 0.02);
+        p.setZ(i, base[i * 3 + 2] + curlZ(u, curl) + Math.sin(t * 8 + u * 4) * 0.003 * u * (1 - fall));
+      }
+      p.needsUpdate = true;
+      geo.computeVertexNormals();
+      face.position.z = 0.003 + curlZ(0.5, curl);
+      mouth.rotation.z = fall > 0.3 ? 0 : PI; // 넘어질 땐 시무룩
+      g.rotation.x = -fall * 1.45;
+    },
+  };
+});
+
+// 6. 연필밥: 연필 깎다 나온 부스러기. 할 줄 아는 건 데굴데굴 구르기뿐이라 늘 어지러움
+stationery.push(() => {
+  const g = new THREE.Group();
+  const R = 0.06;
+  const roll = new THREE.Group();
+  roll.position.y = R;
+  g.add(roll);
+  const spin = new THREE.Group();
+  roll.add(spin);
+  const disc = new THREE.Group();
+  disc.rotation.x = PI / 2; // 깔때기 모양이 앞을 보게 세움
+  spin.add(disc);
+  // 깔때기처럼 바깥이 앞으로 솟은 얇은 고리를 돌려 만들고, 가장자리만 주름지게
+  const frill = (r0, r1, color, name) => {
+    const y = (r, d) => r * 0.35 + d;
+    const pts = [[r0, -0.003], [r1, -0.003], [r1, 0.003], [r0, 0.003], [r0, -0.003]].map(([r, d]) => new THREE.Vector2(r, y(r, d)));
+    const geo = new THREE.LatheGeometry(pts, 64);
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      const f = Math.max(0, (Math.hypot(x, z) - 0.025) / 0.035);
+      p.setY(i, p.getY(i) + Math.sin(Math.atan2(z, x) * 7) * 0.009 * f);
+    }
+    geo.computeVertexNormals();
+    mesh(geo, mat(color, 0.9), disc, name);
+  };
+  frill(0.0005, 0.05, '#e9c48f', '나무');
+  frill(0.05, R, '#e8504a', '색칠');
+  dotEyes(spin, { x: 0.012, y: 0.006, z: 0.01, r: 0.006, big: true });
+  smallMouth(spin, { y: -0.01, z: 0.008, r: 0.004, frown: true });
+  return {
+    g, name: '연필밥', desc: '구를 줄만 알아서 늘 어지러움',
+    update(t) {
+      const x = Math.sin(t * 1.3) * 0.06;
+      roll.position.x = x;
+      spin.rotation.z = -x / R; // 미끄러지지 않고 굴러감
+      roll.rotation.y = Math.sin(t * 0.9) * 0.3;
+    },
+  };
+});
+
 // ── 배치 ──
-const built = monsters.map((make) => make());
+const STATIONERY = new URLSearchParams(location.search).get('set') === 'stationery';
+if (STATIONERY) {
+  document.getElementById('title').innerHTML = '필기도구 몬스터 시안<span>마우스로 돌려 보기 · 휠로 확대 · 맨 오른쪽은 크기 비교용 주민 · <a href="?">쪼렙 몬스터 보기</a></span>';
+}
+const built = (STATIONERY ? stationery : monsters).map((make) => make());
 const SPACING = 0.36;
 const MON_SCALE = 1.5; // 주민 무릎 높이쯤 오도록 키움
 const startX = -((built.length) * SPACING) / 2;

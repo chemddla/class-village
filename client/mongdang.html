@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>몽당연필 동작 시안</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: 'Pretendard', 'Malgun Gothic', sans-serif; color: #4a3525; }
+  #c { width: 100%; height: 100%; display: block; }
+  #title { position: absolute; left: 16px; top: 12px; font-size: 20px; font-weight: 800; }
+  #title span { display: block; font-size: 13px; font-weight: 400; color: #8a6a55; }
+  #now { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); font-size: 22px; font-weight: 800;
+    background: rgba(255,255,255,.85); border: 2px solid #4a3525; border-radius: 14px; padding: 4px 16px; box-shadow: 0 2px 0 #4a3525; }
+  #bar { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 0 12px; }
+  button { font: inherit; font-size: 15px; font-weight: 700; color: #4a3525; background: #fff8e6; border: 2px solid #4a3525;
+    border-radius: 12px; padding: 7px 14px; box-shadow: 0 3px 0 #4a3525; cursor: pointer; }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #4a3525; }
+  button.on { background: #ffe07a; }
+  .sep { width: 12px; }
+</style>
+</head>
+<body data-mon="mongdang">
+<canvas id="c"></canvas>
+<div id="title">몽당연필 동작 시안<span>버튼을 눌러 동작 보기 · 마우스로 돌려 보기 · 휠로 확대</span></div>
+<div id="now">대기</div>
+<div id="bar"></div>
+<script type="module" src="/src/nalgaekong-view.js"></script>
+</body>
+</html>

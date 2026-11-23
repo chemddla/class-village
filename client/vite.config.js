@@ -17,6 +17,7 @@ export default defineConfig({
         // 몬스터 시안 화면 (쪼렙 몬스터 모음, 날개콩 동작)
         monsters: fileURLToPath(new URL('./monsters.html', import.meta.url)),
         nalgaekong: fileURLToPath(new URL('./nalgaekong.html', import.meta.url)),
+        mongdang: fileURLToPath(new URL('./mongdang.html', import.meta.url)),
       },
     },
   },

@@ -1,15 +1,20 @@
-// 테스트 서버 광장에 소환하는 날개콩: 분수 둘레를 돌며 걷기·쉬기·날기 시도·두리번을 되풀이한다.
+// 광장·들판에 소환하는 쪼렙 몬스터 (날개콩·몽당연필): 정해진 자리를 빙 돌며 걷기·쉬기·특기(날기 시도·물구나무 낙서)·두리번을 되풀이한다.
 // 가야 할 자리와 동작을 시계(Date.now)로 정하므로, 같은 서버에 들어온 사람들 화면에서 거의 같은 자리·같은 동작으로 보인다.
 // 맞는 판정도 (모두의 화면에 똑같이 보이는) 휘두르는 사람의 자리·방향으로 정하므로, 누가 때려도 모두의 화면에서 함께 맞는다.
 // (서버가 따로 몬스터를 관리하지 않는 맛보기용. 가까이 다가가면 내 화면에서만 깜짝 놀란다)
 import { PLAZA } from '../../../shared/world.js';
 import { curveDrop } from '../materials.js';
 import { createNalgaekong } from './nalgaekong.js';
+import { createMongdang } from './mongdang.js';
+
+// 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작
+const KINDS = {
+  nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter' },
+  mongdang: { create: createMongdang, r: 0.042, special: 'scribble' },
+};
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
 const OUTLINE_SCALE = 0.65; // 마을 주민과 같은 외곽선 배율
-const BODY_R = 0.065 * SCALE; // 몸 반지름 (m): 캐릭터가 이 안으로 지나가지 못한다
-const R = 3.0; // 분수 중심에서 떨어진 거리 (분수와 벤치 사이 길) (m)
 const SPEED = 0.3; // 걷는 빠르기 (m/s)
 const CATCH_UP = 0.9; // 맞고 밀려난 뒤 제 길로 돌아가는 빠르기 (m/s)
 const NOTICE_NEAR = 2.0; // 이만큼 가까이 오면 깜짝 놀람 (m)
@@ -20,7 +25,7 @@ const RESPAWN = 4; // 쓰러져 사라진 뒤 다시 나타나기까지 (초)
 const KNOCK = 1.1; // 맞았을 때 밀려나는 첫 빠르기 (m/s)
 
 // 한 바퀴 일정 (동작 이름, 초)
-const PLAN = [['walk', 6], ['idle', 3], ['flutter', 2.2], ['walk', 5], ['idle', 2.5], ['notice', 1.3], ['idle', 1.5]];
+const PLAN = [['walk', 6], ['idle', 3], ['special', 2.7], ['walk', 5], ['idle', 2.5], ['notice', 1.3], ['idle', 1.5]];
 const CYCLE = PLAN.reduce((a, [, d]) => a + d, 0);
 const WALK_PER_CYCLE = PLAN.reduce((a, [n, d]) => a + (n === 'walk' ? d : 0), 0);
 
@@ -42,9 +47,13 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 // 일정과 상관없이 날개콩이 직접 하는 동작 (맞음·쓰러짐 등): 이 동안에는 일정을 따르지 않는다
 const BUSY = new Set(['hit', 'die', 'gone', 'spawn']);
 
-export function createPlazaMonsters(scene) {
-  const f = PLAZA.fountain;
-  const mon = createNalgaekong({ fxParent: scene, outlineScale: OUTLINE_SCALE });
+// spot: 빙 도는 가운데와 반지름 (기본은 광장 분수 둘레, 분수와 벤치 사이 길) · phase: 일정을 이만큼(초) 어긋나게 (여럿이 같은 동작을 하지 않게)
+// kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필)
+export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fountain.z, r: R = 3.0, phase = 0, kind = 'nalgae' } = {}) {
+  const f = { x, z };
+  const K = KINDS[kind];
+  const BODY_R = K.r * SCALE; // 몸 반지름 (m): 캐릭터가 이 안으로 지나가지 못한다
+  const mon = K.create({ fxParent: scene, outlineScale: OUTLINE_SCALE });
   mon.root.scale.setScalar(SCALE);
   scene.add(mon.root);
   let lastKey = '';
@@ -59,7 +68,7 @@ export function createPlazaMonsters(scene) {
   let goneFor = 0;
 
   const target = () => {
-    const s = scheduleAt(Date.now() / 1000);
+    const s = scheduleAt(Date.now() / 1000 + phase);
     const th = (s.walked * SPEED) / R;
     return { s, th, x: f.x + Math.sin(th) * R, z: f.z + Math.cos(th) * R };
   };
@@ -129,7 +138,7 @@ export function createPlazaMonsters(scene) {
           if (s.key !== lastKey) {
             // 새 구간: 한 번짜리 동작은 처음부터 볼 때만 틀고, 중간에 들어왔으면 쉬기로 둔다
             const oneShot = s.name !== 'walk' && s.name !== 'idle';
-            mon.play(oneShot && (lastKey === '' || s.into > 0.4) ? 'idle' : s.name);
+            mon.play(oneShot && (lastKey === '' || s.into > 0.4) ? 'idle' : s.name === 'special' ? K.special : s.name);
             lastKey = s.key;
           } else if (s.name === 'walk' && mon.state !== 'walk') {
             mon.play('walk');

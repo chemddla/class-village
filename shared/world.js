@@ -125,6 +125,7 @@ export const NIBBLE_MS = 260; // 톡 한 번에 입을 찌에 댔다 떼는 빠�
 export const REEL_SLACK = 0.3; // 인터넷이 늦게 닿는 만큼 봐주는 시간 (초)
 // 이 자리에서 낚시할 수 있는 물: 'river' · 'sea' · null (강둑·바닷가 가까이에 서 있어야 함)
 export function waterNear(x, z) {
+  if (inField(x, z)) return null; // 들판 연못은 아직 낚시 못 함
   const river = Math.abs(z - riverCenterZ(x)) - RIVER_HALF_WIDTH;
   const sea = shoreN(x, z) - islandN(x, z);
   if (river < CAST_REACH && river <= sea) return 'river';
@@ -136,6 +137,7 @@ export function waterNear(x, z) {
 export const BOB_AHEAD = 0.95 * 1.7;
 // 찌가 떨어진 자리의 물: 'river' · 'sea' · null (물이 아니면 던질 수 없음)
 export function waterAt(x, z) {
+  if (inField(x, z)) return null;
   if (shoreN(x, z) - islandN(x, z) < 0.15) return 'sea'; // 물가(파도가 닿는 곳)부터 바다
   if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH - 0.15) return 'river';
   return null;
@@ -279,11 +281,87 @@ export function generateWorld(seed = 20261118) {
   return { seed, trees, rocks, flowers, colliders, fruitTrees };
 }
 
+// ── 들판(저렙 사냥터, 가명): 마을 섬과 멀리 떨어진 곳에 따로 있는 맵. 걸어서는 못 가고 포탈로만 오간다 ──
+// 같은 방·같은 좌표계 안이라 접속을 바꾸지 않고 순간이동만 하면 된다 (z는 int16 cm 라 327m 안쪽이어야 함)
+export const FIELD = { x: 0, z: 220, r: 27 }; // 가운데 · 걸어 다닐 수 있는 대략의 반지름 (가장자리는 물결 모양 숲)
+export const inField = (x, z) => z > 120;
+// 그 방향의 들판 가장자리까지 거리 (이보다 멀면 숲이라 못 감)
+export function fieldEdge(x, z) {
+  const a = Math.atan2(z - FIELD.z, x - FIELD.x);
+  return FIELD.r + 1.8 * Math.sin(3 * a + 1) + 1.1 * Math.sin(5 * a + 0.3) + 0.5 * Math.sin(11 * a);
+}
+export const FIELD_POND = { x: FIELD.x - 12, z: FIELD.z - 5, r: 3.4 }; // 작은 연못 (못 들어감)
+// 날개콩이 돌아다니는 자리 (가운데 x,z 를 반지름 r 로 빙 돈다). 나무·바위는 이 둘레를 피해 놓는다
+export const FIELD_MONSTERS = [
+  [6, -2, 2.6], [-4, 6, 2.2], [10, 9, 2.2], [-2, -12, 3], [13, -11, 2.4], [-15, 8, 2.2],
+].map(([x, z, r]) => ({ x: FIELD.x + x, z: FIELD.z + z, r }));
+
+// 포탈: 이 자리를 지나가면 to 번 포탈 앞(그 포탈이 바라보는 쪽 ARRIVE m)으로 순간이동
+// rot: 포탈이 바라보는 쪽 (나오는 사람이 걸어가는 쪽). 문 양쪽 기둥은 부딪힌다
+export const PORTAL = { reach: 0.7, arrive: 2.0, half: 0.85, pillar: 0.22 };
+export const PORTALS = [
+  { name: '들판', x: 5.4, z: 8.4, rot: Math.atan2(SPAWN.x - 5.4, SPAWN.z - 8.4), to: 1 }, // 광장 남동쪽, 분수를 바라봄
+  { name: '마을', x: FIELD.x, z: FIELD.z + 21, rot: Math.PI, to: 0 }, // 들판 남쪽 끝, 들판 안쪽(-z)을 바라봄
+];
+export const portalArrive = (p) => ({ x: p.x + Math.sin(p.rot) * PORTAL.arrive, z: p.z + Math.cos(p.rot) * PORTAL.arrive, rot: p.rot });
+const portalPillars = (p) => [-1, 1].map((k) => ({ x: p.x + Math.cos(p.rot) * PORTAL.half * k, z: p.z - Math.sin(p.rot) * PORTAL.half * k, r: PORTAL.pillar }));
+
+function generateField(seed = 20261123) {
+  const rand = mulberry32(seed);
+  const trees = [];
+  const rocks = [];
+  const gate = PORTALS[1];
+  const ok = (x, z, margin, list) => {
+    if (Math.hypot(x - FIELD.x, z - FIELD.z) > fieldEdge(x, z) - 1.5 - margin) return false;
+    if (Math.abs(x - FIELD.x) < 2 + margin && z > FIELD.z - 2 && z < gate.z + 2) return false; // 포탈 → 가운데 흙길
+    if (Math.hypot(x - FIELD_POND.x, z - FIELD_POND.z) < FIELD_POND.r + 1 + margin) return false;
+    for (const m of FIELD_MONSTERS) if (Math.hypot(x - m.x, z - m.z) < m.r + 1.4 + margin) return false;
+    for (const o of list) if (Math.hypot(x - o.x, z - o.z) < o.r + margin) return false;
+    return true;
+  };
+  const rnd = () => (rand() * 2 - 1) * FIELD.r;
+  // 들판 안에 띄엄띄엄 선 나무 몇 그루 (넓게 트여 사냥하기 좋게)
+  for (let i = 0; i < 200 && trees.length < 14; i++) {
+    const x = FIELD.x + rnd();
+    const z = FIELD.z + rnd();
+    const s = 0.85 + rand() * 0.5;
+    if (ok(x, z, 2.5, trees)) trees.push({ x, z, s, r: 0.55 * s, kind: rand() < 0.3 ? 1 : 0 });
+  }
+  const all = [...trees];
+  for (let i = 0; i < 200 && rocks.length < 16; i++) {
+    const x = FIELD.x + rnd();
+    const z = FIELD.z + rnd();
+    const s = 0.45 + rand() * 0.7;
+    if (ok(x, z, 1.2, all)) {
+      const rock = { x, z, s, r: 0.6 * s, rot: rand() * Math.PI };
+      rocks.push(rock);
+      all.push(rock);
+    }
+  }
+  const colliders = all.map((o) => ({ x: o.x, z: o.z, r: o.r }));
+  colliders.push(...portalPillars(gate));
+  colliders.push({ x: gate.x + 2.6, z: gate.z - 1.2, r: 0.2 }); // 들판 표지판
+  return { trees, rocks, colliders };
+}
+
 // 한 번만 만들어 두고 함께 쓴다
 export const WORLD = generateWorld();
+WORLD.colliders.push(...portalPillars(PORTALS[0]));
+export const FIELD_MAP = generateField();
+
+function fieldBlocked(x, z, radius) {
+  if (Math.hypot(x - FIELD.x, z - FIELD.z) > fieldEdge(x, z) - radius) return true;
+  if (Math.hypot(x - FIELD_POND.x, z - FIELD_POND.z) < FIELD_POND.r + radius * 0.3) return true;
+  for (const c of FIELD_MAP.colliders) {
+    const rr = c.r + radius;
+    if ((x - c.x) ** 2 + (z - c.z) ** 2 < rr * rr) return true;
+  }
+  return false;
+}
 
 // 막힌 곳인지 판정 (화면과 서버가 똑같이 사용)
 export function isBlocked(x, z, radius = PLAYER_RADIUS) {
+  if (inField(x, z)) return fieldBlocked(x, z, radius);
   if (islandN(x, z) > shoreN(x, z) - BEACH.walk) return true; // 바다
   const onBridge = Math.abs(x - BRIDGE.x) < BRIDGE.halfWidth - radius * 0.5;
   if (!onBridge && Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + radius * 0.3) return true;

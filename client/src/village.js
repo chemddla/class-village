@@ -4,8 +4,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   WORLD, HALF, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, RIVER_BANK_CLEAR, riverCenterZ,
   islandN, shoreN, islandRadius, BEACH, FISH, FISH_APPROACH, LURE_HESITATE, NIBBLE_MS, shadowLen, rollFish, NOTICE,
-  VILLAGE_FRUIT, FRUIT_MAX,
+  VILLAGE_FRUIT, FRUIT_MAX, PORTALS,
 } from '../../shared/world.js';
+import { buildPortal } from './portal.js';
 import {
   toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME,
 } from './materials.js';
@@ -1428,6 +1429,9 @@ export function buildVillage(scene, { low = false } = {}) {
   const fishShadows = buildFishShadows(group);
   const lure = buildLure(group);
   const drops = buildDrops(group);
+  const portal = buildPortal(PORTALS[0]); // 광장 → 들판
+  group.add(portal.group, portal.label);
+  labels.push(portal.label);
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)
@@ -1471,6 +1475,7 @@ export function buildVillage(scene, { low = false } = {}) {
       drops.update(dt);
       trees.update(dt);
       rocks.update(dt);
+      portal.update(t);
     },
   };
 }

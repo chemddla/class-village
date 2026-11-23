@@ -14,8 +14,25 @@
     {
       "name": "village-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "village-own",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "concurrently",
+        "node server/index.js",
+        "vite client --host --port 5191 --strictPort"
+      ],
+      "env": {
+        "GAME_PORT": "2591",
+        "VITE_GAME_PORT": "2591"
+      },
+      "port": 5191
     }
   ]
 }

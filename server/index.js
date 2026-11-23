@@ -8,7 +8,7 @@ import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE,
-  RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
+  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
 } from '../shared/world.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
@@ -218,6 +218,19 @@ class VillageRoom extends Room {
 
     this.onMessage('bye', (client) => this.bye.add(client.sessionId));
 
+    // 포탈 타기: [포탈 번호]. 포탈 가까이 있을 때만 이어진 포탈 앞으로 옮기고 'fix'로 알려 준다
+    this.onMessage('portal', (client, i) => {
+      const p = this.state.players.get(client.sessionId);
+      const from = PORTALS[Number(i)];
+      if (!p || !from || Math.hypot(fromCm(p.x) - from.x, fromCm(p.z) - from.z) > PORTAL.reach + 1) return;
+      const to = portalArrive(PORTALS[from.to]);
+      this.stopFishing(client.sessionId);
+      p.x = toCm(to.x);
+      p.z = toCm(to.z);
+      this.last.set(client.sessionId, { x: to.x, z: to.z, t: Date.now() });
+      client.send('fix', [p.x, p.z]);
+    });
+
     // 이동: [x(cm), z(cm), 방향(0~255), 동작, 도구]
     this.onMessage('m', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
@@ -229,8 +242,8 @@ class VillageRoom extends Room {
       const x = fromCm(cx);
       const z = fromCm(cz);
       const dist = Math.hypot(x - prev.x, z - prev.z);
-      // 허용 거리: 달리기 속도 × 시간 × 여유 + 작은 오차
-      const allowed = RUN_SPEED * dt * 1.6 + 0.4;
+      // 허용 거리: 달리기 속도 × 시간 × 여유 + 작은 오차 (Shift 회피 대시가 달리기의 2.6배라 그보다 넉넉히)
+      const allowed = RUN_SPEED * dt * 2.8 + 0.4;
       if (dist > allowed || isBlocked(x, z, 0.2)) {
         // 이상한 이동 → 마지막 정상 위치로 되돌림
         client.send('fix', [toCm(prev.x), toCm(prev.z)]);

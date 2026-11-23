@@ -3,12 +3,14 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
-  FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
+  PORTALS, PORTAL, inField, FIELD_MONSTERS, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
 import { buildVillage, fishModel } from './village.js';
+import { buildField } from './field.js';
 import { Character, actTime, LAND } from './character.js';
 import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft } from './life.js';
 import { createLookEditor } from './look-editor.js';
+import { createMinimap } from './minimap.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
 import { setCurveCenter, curveDrop } from './materials.js';
@@ -87,6 +89,7 @@ addEventListener('resize', resize);
 resize();
 
 const village = buildVillage(scene, { low: LOW });
+const field = buildField(scene, { low: LOW }); // 들판(저렙 사냥터): 마을과 멀리 떨어진 곳, 포탈로 오간다
 
 // ── 화면 요소 ──
 const $id = (id) => document.getElementById(id);
@@ -126,7 +129,7 @@ let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 지금 손에 든 도구 번호,
 // equip: 퀵슬롯에서 고른 장비 번호 (생활 행동 중에는 그 일에 맞는 도구를 잠깐 들었다가, 끝나면 다시 이것으로 돌아온다)
-const local = { sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0, picked: null, fishing: null };
+const local = { dodge: -1, dodgeRot: 0, sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0, picked: null, fishing: null };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·4타 0.62초 × 0.5, 3타(야구 스윙) 0.78초 × 0.5
 const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 390, [ANIM.SMASH4]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
   [ANIM.SLASH1]: 282, [ANIM.SLASH2]: 232, [ANIM.SLASH3]: 264, [ANIM.SLASH4]: 282, // 목검: 동작 길이 × hitAt
@@ -149,6 +152,7 @@ const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM,
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH]);
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
+const DODGE = { speed: RUN_SPEED * 2.6, time: 0.16, cool: 0.5 }; // Shift 회피 대시: 마우스 쪽으로 짧고 빠르게 (speed를 올리면 server/index.js의 허용 거리 2.8배도 같이)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
 const THRUST_STEP = [0.17, 0.33];
 const THRUST_SPEED = 9.8; // 0.1초에 1m 안쪽이라 서버 이동 검사(0.1초에 1.3m)도 통과한다
@@ -158,6 +162,9 @@ const SLAM_STEP = [0.42, 0.72];
 // 점프·더블 점프 공격 중 방향키를 누르고 있을 때 앞으로 나아가는 빠르기 (걷기·달리기 빠르기의 배수)
 const AIR_ATTACK_BOOST = 1.3;
 const SLAM_SPEED = 2.9;
+// 땅에서 휘두르는 타(몽둥이 1~4타, 목검 1·2·4타): 타격 직전부터 직후까지(0.25초) 보는 쪽으로 SWING_STEP(m)만큼 살짝 나아간다
+const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH4]);
+const SWING_STEP = 0.3;
 function getHit(fromX, fromZ) {
   local.act = ANIM.SURPRISE; // 'hit' 피격 모션
   local.actLeft = actTime(ANIM.SURPRISE);
@@ -192,7 +199,7 @@ function hitFx(char, action) {
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
     // 광장 날개콩 (테스트 서버): 휘두른 범위 안이면 맞는다
-    const monHit = action === 'clubSmash' ? plazaMonsters?.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz)) : null;
+    const monHit = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz))).find(Boolean) : null;
     if (victims.length) {
       for (const v of victims) {
         v.shake();
@@ -273,7 +280,20 @@ function nearDrop(x, z) {
 let invItems = [1, 2, 4]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
-let plazaMonsters = null; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩)
+let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필)
+// 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필을 번갈아)
+const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...spot, phase: i * 7.3, kind: i % 2 ? 'mongdang' : 'nalgae' }));
+let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
+// 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
+const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
+function showMap(f) {
+  onField = f;
+  village.group.visible = !f;
+  field.group.visible = f;
+  for (const m of plazaMonsters) m.root.visible = !f;
+  for (const m of fieldMonsters) m.root.visible = f;
+}
+showMap(false);
 // 퀵슬롯: 칸마다 장비 번호 또는 null. Q 를 누르면 맨손 → 1칸 → 2칸 → … 차례로 바꿔 든다
 const quick = (() => {
   try {
@@ -596,6 +616,15 @@ const input = createInput({
         local.actLeft = actTime(ANIM.FLIP);
       } else startAct(ANIM.JUMP);
     }
+    else if (name === 'dodge') {
+      // 공격 중·맞는 중·쿨타임에는 못 한다. 마우스가 없으면(터치) 보던 쪽으로
+      if (local.hurt > 0 || local.dodge > -DODGE.cool || (ATTACKS.has(local.act) && local.actLeft > 0)) return;
+      if (local.fishing) stopFishing();
+      local.actLeft = 0;
+      local.dodge = DODGE.time;
+      local.dodgeRot = aimRot() ?? me.targetRot;
+      me.setPose(me.x, me.z, local.dodgeRot);
+    }
     else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
     else if (name === 'tool') {
       nextQuick();
@@ -748,7 +777,8 @@ function attach(r) {
         const t = performance.now();
         const last = o.buf[o.buf.length - 1];
         // 오래 멈춰 있다가 다시 움직이면, 직전 위치를 "방금 전"으로 다시 찍어 순간이동을 막음
-        if (last && t - last.t > 200) o.buf.push({ ...last, t: t - 100 });
+        if (last && Math.hypot(fromCm(p.x) - last.x, fromCm(p.z) - last.z) > 8) o.buf.length = 0; // 포탈을 탔으면 미끄러지지 않고 바로 그 자리에
+        else if (last && t - last.t > 200) o.buf.push({ ...last, t: t - 100 });
         o.buf.push({ t, x: fromCm(p.x), z: fromCm(p.z), r: byteToAngle(p.r), a: p.a });
         if (o.buf.length > 30) o.buf.shift();
         char.setTool(p.t);
@@ -777,7 +807,11 @@ function attach(r) {
     renderQuick();
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
-    if (free && !plazaMonsters) plazaMonsters = createPlazaMonsters(scene);
+    if (free && !plazaMonsters.length) {
+      // 몽당연필은 날개콩과 같은 분수 둘레 길을 일정 반 바퀴 어긋나게 돈다
+      plazaMonsters = [createPlazaMonsters(scene), createPlazaMonsters(scene, { kind: 'mongdang', phase: 11 })];
+      for (const m of plazaMonsters) m.root.visible = !onField;
+    }
   });
 
   // 과일나무마다 남은 과일: 누가 따거나 다시 열리면 모두의 화면에서 바뀐다
@@ -836,7 +870,17 @@ function attach(r) {
   // 서버가 이상한 이동이라고 판단하면 되돌림
   r.onMessage('fix', ([x, z]) => {
     if (!me) return;
-    me.setPose(fromCm(x), fromCm(z), me.targetRot);
+    const nx = fromCm(x);
+    const nz = fromCm(z);
+    const warp = inField(nx, nz) !== inField(me.x, me.z); // 포탈을 탔다
+    if (warp) {
+      const to = PORTALS.find((p) => inField(p.x, p.z) !== inField(me.x, me.z));
+      if (local.fishing) stopFishing();
+      me.setPose(nx, nz, to.rot);
+      camTarget.set(nx, 0, nz); // 카메라도 바로 옮긴다 (멀리서 미끄러져 오지 않게)
+      showMap(inField(nx, nz));
+      toast(`🌀 ${PORTALS[to.to].name}에 왔어요!`);
+    } else me.setPose(nx, nz, me.targetRot);
     local.last = null;
   });
 
@@ -911,6 +955,7 @@ function enterGame() {
   ui.invBtn.classList.remove('hidden');
   $id('dex-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
+  $id('minimap').classList.remove('hidden');
   input.enable(true);
 }
 
@@ -951,6 +996,16 @@ function updateMe(dt) {
   const inp = input.read();
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
+  local.dodge -= dt; // 0 아래로 내려간 만큼이 쿨타임이 지난 시간
+  if (local.dodge > 0) {
+    const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
+    for (const m of hereMonsters()) extra.push(...m.colliders());
+    for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
+    const step = DODGE.speed * dt;
+    const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(local.dodgeRot) * step, me.z + Math.cos(local.dodgeRot) * step, extra);
+    me.setPose(nx, nz, local.dodgeRot);
+    anim = ANIM.RUN;
+  } else
   // 공격하는 동안은 방향키로 움직이지 못한다. 동작이 스스로 나아가는 만큼만 보는 쪽으로 움직인다:
   // 대시 공격은 뛰어들었다가 내리친 뒤 멈추고, 목검 찌르기와 더블 점프 내리찍기는 정해진 구간에만 살짝 나아간다
   if (ATTACKS.has(local.act) && local.actLeft > 0) {
@@ -959,6 +1014,10 @@ function updateMe(dt) {
     let speed = 0;
     if (local.act === ANIM.SMASH_DASH || local.act === ANIM.SLASH_DASH) speed = DASH_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(local.act), 0.35, 0.6));
     else if (local.act === ANIM.SLASH3) speed = glide(THRUST_STEP, THRUST_SPEED);
+    else if (STEP_SWINGS.has(local.act)) {
+      const h = HIT_DELAY[local.act] / 1000;
+      speed = glide([h - 0.2, h + 0.05], SWING_STEP * Math.PI / (2 * 0.25)); // sin 한 봉우리의 넓이 = 최고 속도 × 길이 × 2/π
+    }
     else if (local.act === ANIM.SMASH_SLAM || local.act === ANIM.SLASH_SLAM) {
       // 더블 점프 공격: 착지하며 내리찍을 때 살짝 나아가고, 방향키를 누르고 있으면 착지할 때까지 보는 쪽으로 힘차게 나아간다
       speed = glide(SLAM_STEP, SLAM_SPEED);
@@ -970,7 +1029,7 @@ function updateMe(dt) {
     }
     if (speed > 0 && local.hurt <= 0) {
       const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
-      if (plazaMonsters) extra.push(...plazaMonsters.colliders()); // 광장 날개콩은 지나갈 수 없음
+      for (const m of hereMonsters()) extra.push(...m.colliders()); // 날개콩은 지나갈 수 없음
       for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
       const [nx, nz] = resolveMove(me.x, me.z, me.x + Math.sin(me.targetRot) * speed * dt, me.z + Math.cos(me.targetRot) * speed * dt, extra);
       me.setPose(nx, nz, me.targetRot);
@@ -983,7 +1042,7 @@ function updateMe(dt) {
     const wz = -inp.x * sn + inp.z * c;
     const speed = inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag);
     const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
-    if (plazaMonsters) extra.push(...plazaMonsters.colliders()); // 광장 날개콩은 지나갈 수 없음
+    for (const m of hereMonsters()) extra.push(...m.colliders()); // 날개콩은 지나갈 수 없음
     for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
     const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
     me.setPose(nx, nz, Math.atan2(wx, wz));
@@ -1054,6 +1113,11 @@ function updateMe(dt) {
   }
   me.setAnim(anim);
 
+  // 포탈: 문 가운데로 들어서는 순간 한 번 서버에 알린다 (서버가 옮겨 주면 'fix'로 받는다)
+  const gate = PORTALS.findIndex((p) => Math.hypot(me.x - p.x, me.z - p.z) < PORTAL.reach);
+  if (gate >= 0 && local.gate !== gate && room) room.send('portal', gate);
+  local.gate = gate;
+
   // 움직임이 있을 때만 초당 10회 전송
   local.sendTimer += dt;
   if (local.sendTimer >= SEND_INTERVAL && room) {
@@ -1102,6 +1166,7 @@ if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam,
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
+const minimap = createMinimap($id('minimap'));
 let fpsFrames = 0;
 let fpsTime = 0;
 
@@ -1111,6 +1176,8 @@ renderer.setAnimationLoop(() => {
   // 히트스톱: 맞는 순간 아주 잠깐 캐릭터·파티클을 멈춰 '퍽' 하는 손맛을 준다 (카메라·풍경은 계속)
   const dt = FX.simDt(realDt);
   village.update(realDt, now / 1000);
+  field.update(now / 1000);
+  if (me && inField(me.x, me.z) !== onField) showMap(!onField);
 
   if (me) updateMe(dt);
   updateOthers(now);
@@ -1128,16 +1195,17 @@ renderer.setAnimationLoop(() => {
   // 둥근 지평선의 중심을 정한 뒤에 캐릭터를 내린다 (한 프레임 늦으면 걸을 때 발이 땅과 어긋남)
   if (me) me.update(dt);
   for (const { char } of others.values()) char.update(dt);
-  plazaMonsters?.update(dt, me);
+  for (const m of hereMonsters()) m.update(dt, me);
   FX.update(dt);
   updateShows(dt);
 
-  for (const label of village.labels) {
+  for (const label of onField ? field.labels : village.labels) {
     const b = label.userData.base;
     label.position.set(b.x, b.y - curveDrop(b.x, b.z), b.z);
   }
 
   renderer.render(scene, camera);
+  if (me) minimap.draw(me, [...others.values()].map((o) => o.char), cam.yaw);
 
   fpsFrames++;
   fpsTime += realDt;
