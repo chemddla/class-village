@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>글꼴 시안 — 클래스 빌리지</title>
+<!-- 구글 글꼴 (한글) -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Black+Han+Sans&family=Do+Hyeon&family=Dongle:wght@400;700&family=Gaegu:wght@400;700&family=Gamja+Flower&family=Gowun+Dodum&family=Gugi&family=Hi+Melody&family=Jua&family=Nanum+Pen+Script&family=Poor+Story&family=Single+Day&family=Sunflower:wght@500;700&family=Yeon+Sung&family=Gasoek+One&display=swap" />
+<!-- 지금 쓰는 글꼴 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<!-- 도트(픽셀) 글꼴 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/galmuri@latest/dist/galmuri.css" />
+<style>
+  /* 눈누 무료 글꼴 (상업 이용 가능) */
+  @font-face { font-family: 'Cafe24Ssurround'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_2105_2@1.0/Cafe24Ssurround.woff') format('woff'); font-weight: normal; }
+  @font-face { font-family: 'Jalnan'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_four@1.2/JalnanOTF00.woff') format('woff'); font-weight: normal; }
+  @font-face { font-family: 'Maplestory'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_20-04@2.1/MaplestoryOTFBold.woff') format('woff'); font-weight: normal; }
+  @font-face { font-family: 'NEXONLv1Gothic'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_20-04@2.1/NEXON Lv1 Gothic OTF.woff') format('woff'); font-weight: normal; }
+  @font-face { font-family: 'CookieRun'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_2001@1.1/CookieRun-Regular.woff') format('woff'); font-weight: normal; }
+  @font-face { font-family: 'TmonMonsori'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_two@1.0/TmonMonsori.woff') format('woff'); font-weight: normal; }
+  @font-face { font-family: 'DungGeunMo'; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/DungGeunMo.woff') format('woff'); font-weight: normal; }
+
+  :root { --ink: #4a3525; --paper: #fff8ec; --sky: #cfe9f7; --leaf: #7cc576; --line: #e7d6bd; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: linear-gradient(#cfe9f7, #e8f6e0 420px, #fdf6e8); color: var(--ink);
+    font-family: 'Pretendard', 'Malgun Gothic', sans-serif; }
+  header { padding: 28px 32px 8px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header p { margin: 0; opacity: .75; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 14px 32px; position: sticky; top: 0; z-index: 5;
+    background: rgba(255,248,236,.92); backdrop-filter: blur(6px); border-bottom: 2px solid var(--line); }
+  .controls input { font: inherit; padding: 8px 12px; border: 2px solid var(--line); border-radius: 10px; min-width: 260px; }
+  .controls button { font: inherit; padding: 8px 12px; border: 2px solid var(--line); border-radius: 10px; background: #fff; cursor: pointer; }
+  .controls button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  section { padding: 10px 32px 24px; }
+  section > h2 { font-size: 18px; margin: 18px 0 12px; display: flex; gap: 8px; align-items: baseline; }
+  section > h2 small { font-weight: 400; opacity: .6; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+
+  .card { background: var(--paper); border: 2px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: 0 4px 0 rgba(74,53,37,.08); }
+  .meta { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 2px dashed var(--line);
+    font-family: 'Pretendard', sans-serif; font-size: 13px; }
+  .meta b { font-size: 14px; }
+  .meta .num { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; border-radius: 50%; background: var(--ink); color: #fff; font-size: 12px; margin-right: 6px; }
+  .meta .tag { padding: 2px 8px; border-radius: 99px; background: #f1e4cf; }
+  .meta .bad { background: #f8d0c8; }
+  .stage { padding: 16px; font-family: var(--f); }
+  .title { font-size: 40px; line-height: 1.1; color: #fff; text-shadow: 0 3px 0 #8a5a33, 3px 0 0 #8a5a33, -3px 0 0 #8a5a33, 0 -3px 0 #8a5a33, 2px 2px 0 #8a5a33, -2px -2px 0 #8a5a33, 2px -2px 0 #8a5a33, -2px 2px 0 #8a5a33, 0 6px 0 rgba(0,0,0,.15);
+    margin-bottom: 14px; }
+  .bubble { position: relative; background: #fff; border: 3px solid var(--ink); border-radius: 16px; padding: 10px 14px; font-size: 19px; line-height: 1.4; margin-bottom: 14px; }
+  .bubble .who { display: inline-block; background: #ffcf5c; border: 2px solid var(--ink); border-radius: 8px; padding: 0 8px; font-size: 15px; margin-bottom: 4px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { background: var(--leaf); color: #fff; border: 3px solid #3f7d3b; border-bottom-width: 6px; border-radius: 14px; padding: 6px 16px; font-size: 20px; font-family: inherit; text-shadow: 0 2px 0 #3f7d3b; }
+  .hp { flex: 1; min-width: 120px; }
+  .hp .lab { font-size: 15px; display: flex; justify-content: space-between; }
+  .hp .bar { height: 12px; border-radius: 99px; background: #f1e4cf; border: 2px solid var(--ink); overflow: hidden; }
+  .hp .bar i { display: block; height: 100%; width: 72%; background: #ff6f6f; }
+  .item { margin-top: 12px; display: flex; gap: 8px; font-size: 16px; }
+  .slot { flex: 1; background: #f6ead6; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; text-align: center; }
+  .slot em { font-style: normal; display: block; font-size: 22px; }
+  .dmg { font-size: 30px; color: #ff9f1c; text-shadow: 2px 2px 0 var(--ink); }
+
+  /* 한 줄만 보기 모드 */
+  body.compact .stage > :not(.title):not(.bubble) { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎨 클래스 빌리지 글꼴 시안</h1>
+  <p>제목 · 말풍선 · 버튼 · 체력 · 아이템 칸에 넣어 본 모습입니다. 카드 왼쪽 번호로 골라 주세요.</p>
+</header>
+<div class="controls">
+  <input id="txt" placeholder="말풍선 문장을 바꿔 보기" value="안녕! 오늘 숙제는 다 했어? 같이 들판에 가자!" />
+  <button id="compact">제목·말풍선만 보기</button>
+  <button id="dark">밤 배경</button>
+</div>
+
+<main id="main"></main>
+
+<script>
+const groups = [
+  { name: '굵고 둥근 제목용', note: '게임 이름, 큰 알림, 피해 숫자', fonts: [
+    ['Bagel Fat One', 'Bagel Fat One (베이글)', '아주 통통하고 둥근 장난감 느낌'],
+    ['Jalnan', '여기어때 잘난체', '굵고 기울어진 간판, 힘 있음'],
+    ['Black Han Sans', '검은고딕', '묵직한 각진 제목'],
+    ['Gasoek One', '가석체', '두껍고 개성 있는 장식'],
+    ['CookieRun', '쿠키런체', '게임용으로 만든 말랑한 굵은 글씨'],
+    ['TmonMonsori', '티몬 몬소리체', '네모나고 씩씩한 만화 느낌'],
+  ]},
+  { name: '귀엽고 읽기 쉬운 체', note: '말풍선, 버튼, 메뉴 전체에 쓰기 좋음', fonts: [
+    ['Jua', '배민 주아체', '둥글둥글, 아이들 게임에 가장 무난'],
+    ['Cafe24Ssurround', '카페24 써라운드', '둥근 굵은 글씨, 화면에서 또렷'],
+    ['Maplestory', '메이플스토리체', 'RPG 게임 느낌 그대로'],
+    ['Do Hyeon', '배민 도현체', '단정한 간판체, 숫자가 깔끔'],
+    ['Dongle', '동글', '납작하고 귀여움 (글씨를 크게 써야 함)'],
+    ['Sunflower', '해바라기', '가늘고 밝은 동화책 느낌'],
+  ]},
+  { name: '손글씨 · 동화 느낌', note: '대화, 일기, 쪽지, 퀘스트 설명', fonts: [
+    ['Gaegu', '개구', '연필로 쓴 듯한 어린이 손글씨'],
+    ['Gamja Flower', '감자꽃', '말랑한 손글씨'],
+    ['Poor Story', '푸어 스토리', '삐뚤빼뚤 일기장'],
+    ['Hi Melody', '하이 멜로디', '가는 볼펜 손글씨'],
+    ['Single Day', '싱글 데이', '장식 많은 귀여운 글씨'],
+    ['Nanum Pen Script', '나눔손글씨 펜', '어른 손글씨, 쪽지 느낌'],
+    ['Yeon Sung', '연성', '붓펜 느낌, 마을 간판'],
+    ['Gugi', '구기', '옛날 판화 느낌, 오래된 지도'],
+  ]},
+  { name: '도트(픽셀) 게임 느낌', note: '옛날 게임 분위기, 작은 글씨도 또렷', fonts: [
+    ['DungGeunMo', '둥근모꼴', '고전 PC 게임 도트'],
+    ['Galmuri11', '갈무리11', '깔끔한 최신 도트'],
+  ]},
+  { name: '본문 · 기본 화면용', note: '설정, 긴 설명, 선생님 화면', fonts: [
+    ['Pretendard', 'Pretendard (지금 쓰는 글꼴)', '깔끔한 기본 고딕'],
+    ['NEXONLv1Gothic', '넥슨 Lv1 고딕', '게임 회사 기본체, 살짝 둥긂'],
+    ['Gowun Dodum', '고운돋움', '부드럽고 따뜻한 본문'],
+  ]},
+];
+
+const main = document.getElementById('main');
+let n = 0;
+for (const g of groups) {
+  const sec = document.createElement('section');
+  sec.innerHTML = `<h2>${g.name} <small>${g.note}</small></h2><div class="grid"></div>`;
+  const grid = sec.querySelector('.grid');
+  for (const [fam, label, feel] of g.fonts) {
+    n++;
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.dataset.fam = fam;
+    c.innerHTML = `
+      <div class="meta"><span><span class="num">${n}</span><b>${label}</b></span><span class="tag">${feel}</span></div>
+      <div class="stage" style="--f:'${fam}', 'Malgun Gothic', sans-serif">
+        <div class="title">클래스 빌리지</div>
+        <div class="bubble"><span class="who">촌장 몽당이</span><br><span class="say"></span></div>
+        <div class="row">
+          <button class="btn">모험 시작!</button>
+          <div class="hp"><div class="lab"><span>체력</span><span>108 / 150</span></div><div class="bar"><i></i></div></div>
+          <span class="dmg">-27</span>
+        </div>
+        <div class="item">
+          <div class="slot"><em>🏹</em>나무 활</div>
+          <div class="slot"><em>🍎</em>사과 ×3</div>
+          <div class="slot"><em>🪙</em>1,250원</div>
+        </div>
+      </div>`;
+    grid.appendChild(c);
+  }
+  main.appendChild(sec);
+}
+
+const txt = document.getElementById('txt');
+const setSay = () => document.querySelectorAll('.say').forEach(s => s.textContent = txt.value);
+txt.addEventListener('input', setSay); setSay();
+document.getElementById('compact').onclick = e => { document.body.classList.toggle('compact'); e.target.classList.toggle('on'); };
+document.getElementById('dark').onclick = e => {
+  e.target.classList.toggle('on');
+  document.body.style.background = e.target.classList.contains('on') ? 'linear-gradient(#1d2747, #2c3a5e)' : '';
+};
+
+// 글꼴을 못 받아온 카드는 표시
+document.fonts.ready.then(async () => {
+  for (const c of document.querySelectorAll('.card')) {
+    const fam = c.dataset.fam;
+    try { await document.fonts.load(`20px '${fam}'`, '가'); } catch {}
+    if (!document.fonts.check(`20px '${fam}'`, '가')) {
+      const t = c.querySelector('.tag'); t.textContent = '글꼴을 못 불러옴'; t.classList.add('bad');
+    }
+  }
+});
+</script>
+</body>
+</html>

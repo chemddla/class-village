@@ -914,6 +914,9 @@ function bowDraw(rig, root, wL, wR, draw) {
   }
 }
 
+// 활시위 튕김: 놓은 뒤 시위 가운데가 앞뒤로 떠는 폭(활 크기 단위)·1초에 떠는 횟수·잦아드는 빠르기·떠는 시간(초)
+const STRING = { amp: 0.04, hz: 11, decay: 6, time: 0.7 };
+
 // 매 프레임: 낚싯줄·찌, 활시위·화살, 지팡이 빛 (fx는 액션이 내놓은 연출 값)
 const v1 = V();
 const v2 = V();
@@ -979,9 +982,21 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
         setLine(rod.line, [rod.tip.position, rod.bobber.position]);
       }
       if (b) {
-        // 시위: 당기는 동안 오른손을 따라가고, 놓으면 빠르게 제자리로 튕김
-        const goal = fx.nock ? o.worldToLocal(rig.rightSocket.getWorldPosition(v1)) : b.rest;
-        b.nock.lerp(goal, 1 - Math.exp(-(fx.nock ? 30 : 45) * dt));
+        // 시위: 당기는 동안 오른손을 따라가고, 놓으면 빠르게 제자리로 돌아오며 앞뒤로 부르르 떨다 잦아든다
+        // base: 떨림을 뺀 시위 가운데 자리, twang: 놓은 뒤 흐른 초 (-1 이면 떨지 않음)
+        b.base ??= b.rest.clone();
+        b.twang ??= -1;
+        if (fx.nock) {
+          b.base.lerp(o.worldToLocal(rig.rightSocket.getWorldPosition(v1)), 1 - Math.exp(-30 * dt));
+          b.pulled = true;
+          b.twang = -1;
+        } else {
+          if (b.pulled) { b.pulled = false; b.twang = 0; } // 방금 놓았다
+          b.base.lerp(b.rest, 1 - Math.exp(-45 * dt));
+          if (b.twang >= 0) b.twang = b.twang + dt > STRING.time ? -1 : b.twang + dt;
+        }
+        b.nock.copy(b.base);
+        if (b.twang >= 0) b.nock.z += STRING.amp * Math.exp(-STRING.decay * b.twang) * Math.sin(PI * 2 * STRING.hz * b.twang); // 활 앞뒤(시위가 오가는 쪽)로
         setLine(b.string, [b.top, b.nock, b.bottom]);
         b.arrow.visible = !!fx.arrow;
         if (fx.arrow) {

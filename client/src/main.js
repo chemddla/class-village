@@ -157,7 +157,7 @@ const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM,
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH]);
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
-const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 마우스 쪽으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
+const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 방향키 쪽(없으면 정면)으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
 const THRUST_STEP = [0.17, 0.33];
 const THRUST_SPEED = 9.8; // 0.1초에 1m 안쪽이라 서버 이동 검사(0.1초에 1.3m)도 통과한다
@@ -755,13 +755,16 @@ const input = createInput({
       } else startAct(ANIM.JUMP);
     }
     else if (name === 'dodge') {
-      // 공격 중·맞는 중·쿨타임에는 못 한다. 마우스가 없으면(터치) 보던 쪽으로
+      // 공격 중·맞는 중·쿨타임에는 못 한다. 방향키(조이스틱)를 누르고 있으면 그쪽으로, 아니면 보던 쪽(정면)으로
       if (local.hurt > 0 || local.dodge > -DODGE.cool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
       if (local.fishing) stopFishing();
       local.act = ANIM.ROLL;
       local.actLeft = actTime(ANIM.ROLL);
       local.dodge = DODGE.time;
-      local.dodgeRot = aimRot() ?? me.targetRot;
+      const inp = input.read();
+      local.dodgeRot = inp.mag > 0
+        ? Math.atan2(inp.x * Math.cos(cam.yaw) + inp.z * Math.sin(cam.yaw), -inp.x * Math.sin(cam.yaw) + inp.z * Math.cos(cam.yaw))
+        : me.targetRot;
       me.setPose(me.x, me.z, local.dodgeRot);
     }
     else if (EMOTES[name] !== undefined) startAct(EMOTES[name]);
