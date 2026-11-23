@@ -329,7 +329,7 @@ function bowDown(t, P, fx, pitch, draw, rel, back) {
   P['spine.rx'] = (P['spine.rx'] ?? 0) + pitch * 0.35 * w;
   P['head.rx'] = (P['head.rx'] ?? 0) + pitch * 0.45 * w;
 }
-export const BOW_PITCH = { bowAir: 0.6, bowSlam: 0.85 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 35°·50°)
+export const BOW_PITCH = { bowAir: 0.3, bowSlam: 0.5 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 17°·29°: 발밑이 아니라 앞쪽 멀리 꽂히게)
 
 // 두 점 사이 섞기 / 두 방향 사이를 원호로 섞기 (방향은 길이 1)
 const mix = (a, b, t) => a.map((x, i) => x + (b[i] - x) * t);
