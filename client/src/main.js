@@ -866,18 +866,20 @@ function swingNet(target) {
     const near = target ? Math.hypot(b.x - target.x, b.z - target.z) < 0.3 : off < 0.87;
     if (near && d < best) { best = d; aim = b; }
   }
+  const y = aim?.y ?? 1;
+  const anim = y < NET_LOW_Y ? ANIM.NET_LOW : y > NET_HIGH_Y ? ANIM.NET_HIGH : ANIM.NET_SWING;
   if (aim) {
     me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z));
     // 채를 젖히는 동안 곤충 쪽으로 한 발 다가서거나 물러서서, 그물 테가 지나가는 자리(몸에서 NET_RING)에 곤충이 오게 한다
-    const want = THREE.MathUtils.clamp(best - NET_RING, -0.7, 1.0);
+    const want = THREE.MathUtils.clamp(best - NET_RING[anim], -0.7, 1.0);
     local.netStep = { left: Math.abs(want), speed: Math.abs(want) / NET_STEP_TIME, rot: me.targetRot + (want < 0 ? Math.PI : 0) };
   }
-  const y = aim?.y ?? 1;
-  startAct(y < NET_LOW_Y ? ANIM.NET_LOW : y > NET_HIGH_Y ? ANIM.NET_HIGH : ANIM.NET_SWING);
+  startAct(anim);
 }
 const NET_LOW_Y = 0.5; // 이보다 낮은 곤충은 발 앞을 낮게 쓸고
 const NET_HIGH_Y = 1.4; // 이보다 높으면 머리 위로 쓴다
-const NET_RING = 1.45; // 휘두를 때 그물 테가 몸에서 이만큼 떨어져 지나간다 (m)
+// 휘두를 때 그물 테가 몸에서 이만큼 떨어져 지나간다 (m). 머리 위로 쓸 때는 팔을 들어 올려 몸 가까이로 지나간다
+const NET_RING = { [ANIM.NET_SWING]: 1.45, [ANIM.NET_LOW]: 1.5, [ANIM.NET_HIGH]: 0.75 };
 const NET_STEP_TIME = 0.28; // 채를 젖히는 동안 (초): 이 사이에 다가서거나 물러선다
 
 // mesh: 들어 보일 모양 (물고기·곤충), big: 원래 크기의 몇 배로 보일지
@@ -965,9 +967,29 @@ function startAct(a) {
   local.actLeft = actTime(a);
 }
 
+// 마우스 클릭(Z): 무기를 들지 않았으면(맨손·도끼·낚싯대·잠자리채) 공격 대신 생활 동작을 한다.
+// 낚시 중이면 G처럼 낚아채기·줄 감기, 잠자리채는 마우스가 가리키는 쪽으로 휘두르기,
+// 가까이에 생활 대상이 없고 과일이 있으면 F처럼 줍기·흔들기. 할 것이 없으면 아무것도 하지 않는다 (빈 땅 클릭에 안내가 뜨지 않게)
+const CLICK_LIFE = new Set(['none', 'axe', 'rod', 'net']);
+function clickAction() {
+  if (local.fishing) return 'life';
+  if (!CLICK_LIFE.has(TOOLS[local.tool])) return 'attack';
+  if (local.actLeft > 0) return null;
+  if (TOOLS[local.equip] === 'net') {
+    const r = aimRot();
+    if (r !== null) me.setPose(me.x, me.z, r);
+    return 'life';
+  }
+  if (findLife(me.x, me.z, lifeSpots)) return 'life';
+  if (nearDrop(me.x, me.z) || findFruit(me.x, me.z)) return 'pick';
+  return null;
+}
+
 const input = createInput({
   onAction(name) {
     if (!me) return;
+    if (name === 'attack') name = clickAction();
+    if (!name) return;
     if (name === 'jump') {
       // 더블 점프: 떠 있는 동안 한 번 더 누르면 앞으로 공중제비
       const up = actTime(ANIM.JUMP) - local.actLeft;
@@ -1545,8 +1567,8 @@ function updateMe(dt) {
       local.actLeft = actTime(ANIM.BOW_SHOT);
     }
   }
-  // 도끼를 들고 G를 누르고 있으면 계속 찍는다: 나무에 박혀 멈춘 도끼를 뽑아 다시 뒤로 보냈다가 또 찍는다
-  if (TOOLS[local.tool] === 'axe' && input.holding('life') && local.hurt <= 0) {
+  // 도끼를 들고 G(또는 마우스)를 누르고 있으면 계속 찍는다: 나무에 박혀 멈춘 도끼를 뽑아 다시 뒤로 보냈다가 또 찍는다
+  if (TOOLS[local.tool] === 'axe' && (input.holding('life') || input.holding('attack')) && local.hurt <= 0) {
     if (local.actLeft <= 0) {
       const t = findTarget('axe', me.x, me.z, lifeSpots);
       if (t) {
