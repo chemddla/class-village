@@ -119,23 +119,38 @@ export function syncToon(root, on, widthScale = 1) {
 // 여럿이 모이면 그리기 횟수가 곧 프레임이라 마을 캐릭터에만 쓴다 (syncToon 뒤에 부른다. 이미 합친 것은 건너뛴다)
 // skip(o): 합치지 않을 가지 (손에 든 도구·화살통처럼 부품이 따로 움직이거나 숨는 것)
 // shortcut: 부품을 개별로 숨기거나 움직이면 합친 외곽선이 따라가지 않는다, 몸 부품에 그런 연출이 생기면 그 부품은 skip 으로 뺀다
-export function mergeOutlines(root, skip = () => false) {
+// 관절 아래의 굳은 메시를 모은다 (pick 으로 고른 것만). 움직이지 않는 묶음(꽃관의 꽃송이·안경·가방처럼 isJoint 가 아닌 Group)은
+// 통과해 들어가며 그 자리(행렬)를 곱해 두고, 다른 관절 아래로는 들어가지 않는다. 돌려주는 값: [{ m: 메시, mat: 관절 기준 자리 }]
+function rigidUnder(joint, skip, isJoint, pick) {
+  const out = [];
+  const go = (node, chain) => {
+    for (const c of node.children) {
+      if (c.userData.isOutline || c.userData.merged || skip(c) || (!c.isMesh && isJoint(c))) continue;
+      if (c.matrixAutoUpdate) c.updateMatrix(); // 행렬을 직접 써 넣는 가지(matrixAutoUpdate 꺼짐)는 건드리지 않는다
+      const mat = chain ? chain.clone().multiply(c.matrix) : c.matrix.clone();
+      if (c.isMesh) { if (!c.isSkinnedMesh && pick(c)) out.push({ m: c, mat }); } else go(c, mat);
+    }
+  };
+  go(joint, null);
+  return out;
+}
+// isJoint(o): o 가 스스로 움직이는 관절인가. 안 주면 모든 가지를 관절로 보아 같은 부모에 붙은 것끼리만 합친다
+export function mergeOutlines(root, skip = () => false, isJoint = () => true) {
   const walk = (parent) => {
     if (skip(parent)) return;
-    const own = parent.children.filter((m) => m.isMesh && !m.isSkinnedMesh && m.userData.outline?.parent === m
-      && m.userData.outline.geometry.index && m.userData.outline.geometry.attributes.normal);
+    const own = parent === root || isJoint(parent) ? rigidUnder(parent, skip, isJoint, (m) => m.userData.outline?.parent === m
+      && m.userData.outline.geometry.index && m.userData.outline.geometry.attributes.normal) : [];
     if (own.length > 1) {
-      const T = Math.max(...own.map((m) => m.userData.outline.userData.thickness * m.scale.x));
-      const parts = own.map((m) => {
+      const T = Math.max(...own.map(({ m, mat }) => m.userData.outline.userData.thickness * mat.getMaxScaleOnAxis()));
+      const parts = own.map(({ m, mat }) => {
         const o = m.userData.outline;
-        m.updateMatrix();
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', o.geometry.attributes.position.clone());
         g.setAttribute('normal', o.geometry.attributes.normal.clone());
         g.setIndex(o.geometry.index.clone());
-        g.applyMatrix4(m.matrix);
+        g.applyMatrix4(mat);
         // 부품마다 다른 두께는 꼭짓점 값(noLine)으로 옮긴다: 가장 두꺼운 두께 T 를 기준으로 줄이는 정도
-        const k = (o.userData.thickness * m.scale.x) / T;
+        const k = (o.userData.thickness * mat.getMaxScaleOnAxis()) / T;
         const src = o.geometry.attributes.noLine;
         const nl = new Float32Array(g.attributes.position.count);
         for (let i = 0; i < nl.length; i++) nl[i] = 1 - (1 - (src ? src.getX(i) : 0)) * k;
@@ -143,12 +158,12 @@ export function mergeOutlines(root, skip = () => false) {
         copySeam(g, o.geometry);
         return g;
       });
-      const merged = new THREE.Mesh(mergeGeometries(parts), outlineMaterial(T, own[0].userData.outline.userData.color, seamOf(own.map((m) => m.userData.outline))));
+      const merged = new THREE.Mesh(mergeGeometries(parts), outlineMaterial(T, own[0].m.userData.outline.userData.color, seamOf(own.map(({ m }) => m.userData.outline))));
       merged.name = '외곽선';
       merged.userData.isOutline = true;
       merged.raycast = () => {};
       parent.add(merged);
-      for (const m of own) { m.remove(m.userData.outline); m.userData.outline = merged; }
+      for (const { m } of own) { m.remove(m.userData.outline); m.userData.outline = merged; }
     }
     for (const c of parent.children) if (!c.userData.isOutline) walk(c);
   };
@@ -182,7 +197,7 @@ function paintMaterial(side) {
 // 묶을 수 있는 재질인지, 같은 묶음에 들어갈 열쇠는 무엇인지 (꼭짓점 색으로 옮길 수 있으면 'p…', 아니면 텍스처·색이 같은 것끼리)
 const mergeable = (m) => m.material?.isMeshToonMaterial && !m.material.transparent && !m.material.emissive.getHex() && m.children.every((c) => c.userData.isOutline);
 const paintable = (mat) => !mat.map || !!mat.map.userData.bake;
-const mergeKey = (mat) => (paintable(mat) ? `p${mat.side}` : `${mat.map.uuid}${mat.bumpMap?.uuid}${mat.side}${mat.color.getHex()}`);
+const mergeKey = (mat) => (paintable(mat) ? `p${mat.side}` : `${mat.map.id}:${mat.bumpMap?.id}:${mat.side}:${mat.color.getHex()}`);
 // 묶을 조각 하나: 위치·법선(+ 꼭짓점 색 또는 UV)만 옮겨 담는다
 function mergePart(m, paint) {
   const src = m.geometry;
@@ -203,29 +218,28 @@ function mergePart(m, paint) {
   } else g.setAttribute('uv', src.attributes.uv.clone());
   return g;
 }
-export function mergeMeshes(root, skip = () => false) {
+export function mergeMeshes(root, skip = () => false, isJoint = () => true) {
   const walk = (parent) => {
     if (skip(parent)) return;
     const groups = new Map();
-    for (const m of parent.children) {
-      if (!m.isMesh || m.isSkinnedMesh || m.userData.isOutline || m.userData.merged || !mergeable(m)) continue;
-      const key = mergeKey(m.material);
+    for (const e of parent === root || isJoint(parent) ? rigidUnder(parent, skip, isJoint, mergeable) : []) {
+      const key = mergeKey(e.m.material);
       if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(m);
+      groups.get(key).push(e);
     }
     for (const [key, list] of groups) {
       if (list.length < 2) continue;
       const paint = key[0] === 'p';
-      const parts = list.map((m) => { m.updateMatrix(); return mergePart(m, paint).applyMatrix4(m.matrix); });
-      const merged = new THREE.Mesh(mergeGeometries(parts), paint ? paintMaterial(list[0].material.side) : list[0].material);
+      const parts = list.map(({ m, mat }) => mergePart(m, paint).applyMatrix4(mat));
+      const merged = new THREE.Mesh(mergeGeometries(parts), paint ? paintMaterial(list[0].m.material.side) : list[0].m.material);
       merged.name = '묶음';
       merged.userData.merged = merged.userData.toon = true;
-      merged.userData.outline = list.find((m) => m.userData.outline)?.userData.outline;
+      merged.userData.outline = list.find(({ m }) => m.userData.outline)?.m.userData.outline;
       parent.add(merged);
-      for (const m of list) {
+      for (const { m, mat } of list) {
         // 혼자 외곽선을 가진 부품이면 그 외곽선은 관절로 옮겨 남긴다 (여럿이 합친 외곽선은 이미 관절에 붙어 있다)
-        for (const o of [...m.children]) { o.position.copy(m.position); o.quaternion.copy(m.quaternion); o.scale.copy(m.scale); parent.add(o); }
-        parent.remove(m);
+        for (const o of [...m.children]) { mat.decompose(o.position, o.quaternion, o.scale); parent.add(o); }
+        m.removeFromParent();
         m.geometry.dispose();
       }
     }

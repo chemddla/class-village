@@ -87,6 +87,7 @@ function buildPond(group) {
   group.add(new THREE.Mesh(mergeGeometries(reeds.map((g) => g.toNonIndexed())), windToon(0xffffff, { vertexColors: true })));
 }
 
+const TREE_CELL = 20;
 // 나무: 들판 안 나무(부딪힘) + 가장자리를 빽빽이 두르는 숲(장식, 어차피 못 들어감)
 function buildTrees(group, low) {
   const rand = seeded(20261124);
@@ -114,22 +115,35 @@ function buildTrees(group, low) {
     q.setFromAxisAngle(Y, (t.x * 13.7 + t.z) % 6.28);
     return m.compose(p.set(t.x, 0, t.z), q, sc.setScalar(t.s));
   };
-  const trunks = new THREE.InstancedMesh(trunkGeometry(), toon(0xb98a58), list.length);
-  list.forEach((t, i) => trunks.setMatrixAt(i, pose(t)));
-  group.add(addOutline(trunks, 0.03));
+  // 나무 수백 그루를 한 덩어리로 두면 화면 밖 나무까지 늘 다 그린다 (삼각형 150만 개): TREE_CELL(m) 칸으로 나눠 화면 밖 칸은 빠지게 한다
+  const cells = new Map();
+  for (const t of list) {
+    const key = `${Math.floor(t.x / TREE_CELL)},${Math.floor(t.z / TREE_CELL)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(t);
+  }
+  const trunkGeo = trunkGeometry();
+  const trunkMat = toon(0xb98a58);
   const leafMat = swayToon(0xffffff, { vertexColors: true });
-  [roundCanopy(), pineCanopy(), ovalCanopy()].forEach((geo, k) => {
-    const mine = list.filter((t) => t.look === k);
-    const mesh = new THREE.InstancedMesh(geo, leafMat, mine.length);
-    mine.forEach((t, j) => {
-      mesh.setMatrixAt(j, pose(t));
-      const h = ((t.x * 7.1) % 1 + 1) % 1;
-      if (k === 1) col.setHSL(0.38 + h * 0.05, 0.42, 0.32 + h * 0.06);
-      else col.setHSL(0.2 + h * 0.1, 0.52, 0.45 + h * 0.08);
-      mesh.setColorAt(j, col);
+  const canopies = [roundCanopy(), pineCanopy(), ovalCanopy()];
+  for (const here of cells.values()) {
+    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, here.length);
+    here.forEach((t, i) => trunks.setMatrixAt(i, pose(t)));
+    group.add(addOutline(trunks, 0.03));
+    canopies.forEach((geo, k) => {
+      const mine = here.filter((t) => t.look === k);
+      if (!mine.length) return;
+      const mesh = new THREE.InstancedMesh(geo, leafMat, mine.length);
+      mine.forEach((t, j) => {
+        mesh.setMatrixAt(j, pose(t));
+        const h = ((t.x * 7.1) % 1 + 1) % 1;
+        if (k === 1) col.setHSL(0.38 + h * 0.05, 0.42, 0.32 + h * 0.06);
+        else col.setHSL(0.2 + h * 0.1, 0.52, 0.45 + h * 0.08);
+        mesh.setColorAt(j, col);
+      });
+      group.add(addOutline(mesh, 0.025, { sway: true }));
     });
-    group.add(addOutline(mesh, 0.025, { sway: true }));
-  });
+  }
 }
 
 function buildRocks(group) {

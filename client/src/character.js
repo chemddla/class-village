@@ -158,10 +158,14 @@ export class Character {
   // 툰 명암·외곽선을 입히고, 같은 관절에 붙은 몸 부품과 그 외곽선은 하나로 합친다 (손에 든 도구·등에 멘 화살통은 부품이 따로 움직여서 뺀다)
   toon() {
     syncToon(this.villager.root, true, OUTLINE_SCALE);
-    const { rightSocket, leftSocket } = this.villager.rig;
+    const { rig } = this.villager;
+    const { rightSocket, leftSocket } = rig;
     const held = (o) => o === rightSocket || o === leftSocket || o.userData.back;
-    mergeOutlines(this.villager.root, held);
-    mergeMeshes(this.villager.root, held);
+    // 리그에 이름이 올라 있는 것만 스스로 움직이는 관절이다. 그 밖의 묶음(꽃관의 꽃송이·안경·가방)은 붙어 있는 관절째로 합친다
+    const joints = new Set([...Object.values(rig), ...(rig.colliders ?? []).map((c) => c.joint)].filter((o) => o?.isObject3D));
+    const isJoint = (o) => joints.has(o);
+    mergeOutlines(this.villager.root, held, isJoint);
+    mergeMeshes(this.villager.root, held, isJoint);
     mergeSkinned(this.villager.root, held);
   }
 

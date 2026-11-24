@@ -53,11 +53,18 @@ const nl = V();
 const pw = V();
 const sc = V();
 // 세계 좌표 점 p(반지름 rad)가 가장 깊이 박힌 몸 부피를 찾아 { depth, n(세계 방향) } 로
+// fixed: resolveArmCollision 이 도는 동안 true. 그동안 몸 관절은 움직이지 않으므로 몸 부피마다 역행렬·배율을 한 번만 구해 두고 쓴다
+// (worldToLocal·getWorldScale 은 부를 때마다 조상 행렬을 모두 다시 계산해서, 한 캐릭터에 수백 번 부르면 그것만으로 한 장면 계산의 절반이 넘는다)
+let fixed = false;
 function deepest(colliders, p, rad, out) {
   out.depth = 0;
   for (const c of colliders) {
-    c.joint.worldToLocal(pl.copy(p));
-    const s = c.joint.getWorldScale(sc).x;
+    let s = c.s;
+    if (fixed) pl.copy(p).applyMatrix4(c.inv);
+    else {
+      c.joint.worldToLocal(pl.copy(p));
+      s = c.joint.getWorldScale(sc).x;
+    }
     const inside = (c.ell ? ellDepth(c, pl, nl) : latheDepth(c, pl, nl)) + rad / s;
     const depth = inside * s;
     if (depth > out.depth) {
@@ -134,8 +141,9 @@ function measure(el, hand, colliders, only) {
   for (const smp of SAMPLES) {
     if (only && smp.kind !== only) continue;
     const j = smp.joint === 'elbow' ? el : hand;
-    j.localToWorld(pw.set(...smp.at));
-    deepest(colliders, pw, smp.r * j.getWorldScale(E).x, hit);
+    const e = j.matrixWorld.elements; // 팔 행렬은 돌릴 때마다 바로 갱신해 둔다 (rotateWorld·apply)
+    pw.set(...smp.at).applyMatrix4(j.matrixWorld);
+    deepest(colliders, pw, smp.r * Math.sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]), hit); // 세계 배율(x): getWorldScale 과 같은 값
     if (hit.depth > best.depth + 1e-5) {
       best.depth = hit.depth;
       best.n.copy(hit.n);
@@ -217,6 +225,7 @@ function resolveArm(rig, s, colliders, hold) {
   const sh = rig[`shoulder${s}`];
   const el = rig[`elbow${s}`];
   const hand = rig[`hand${s}`];
+  sh.updateWorldMatrix(true, true);
   // 1) 팔꿈치가 박혔으면 먼저 비틀어 본다 (손 자리 유지). 안 박혔으면 앞 장면에 비튼 각을 서서히 푼다
   (rig.twist ??= {})[s] = twistElbow(sh, el, hand, colliders, rig.twist[s] ?? 0);
   // 2) 그래도 남으면 어깨째 몸 밖으로 민다. 두 손 쥐기 중에는 도구를 놓치지 않게 손 자리를 그대로 둠
@@ -245,7 +254,17 @@ export function resolveArmCollision(rig) {
   const colliders = rig.colliders;
   if (!colliders?.length) return [0, 0];
   const hold = THREE.MathUtils.smoothstep(rig.twoHandW ?? 0, 0.15, 0.85);
-  return ['R', 'L'].map((s) => resolveArm(rig, s, colliders, hold));
+  for (const c of colliders) {
+    c.joint.updateWorldMatrix(true, false);
+    (c.inv ??= new THREE.Matrix4()).copy(c.joint.matrixWorld).invert();
+    c.s = c.joint.getWorldScale(sc).x;
+  }
+  fixed = true;
+  try {
+    return ['R', 'L'].map((s) => resolveArm(rig, s, colliders, hold));
+  } finally {
+    fixed = false;
+  }
 }
 
 // 점검용: 보정 없이 지금 자세에서 팔이 가장 깊이 박힌 깊이
