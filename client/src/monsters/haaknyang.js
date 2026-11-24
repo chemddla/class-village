@@ -699,10 +699,25 @@ hmotion('공격 ② 덮치기', '납작 엎드려 엉덩이 씰룩 → 덮치다
   }
   const plant = ease(seg(c, 1.6, 1.7)) * (1 - ease(seg(c, 2.5, 2.8)));
   if (c >= 1.6 && c < 2.8) { // 코 박고 엉덩이만 하늘로
-    H.body.rotation.x = 0.75 * plant;
+    // 땅에 닿는 순간(land)엔 덮치던 자세에서 이어지고, 다 일어날 땐(plant 가 줄 때) 제자리 자세로 돌아감
+    const land = ease(seg(c, 1.6, 1.75));
+    const k = c < 2.5 ? 1 : plant;
+    const mix = (fly, pose) => THREE.MathUtils.lerp(fly, pose, land) * k;
+    H.body.rotation.x = mix(0.5, 0.75);
     H.move.position.y = 0.012 * plant;
     H.head.scale.set(1 + plant * 0.1, 1 - plant * 0.15, 1);
-    H.legs[2].rotation.x = H.legs[3].rotation.x = 0.3 * plant;
+    H.legs.forEach((l, i) => {
+      const sd = i % 2 ? 1 : -1;
+      if (i < 2) { // 앞발: 받치지 못하고 양옆으로 철퍼덕 벌어짐 (팔꿈치 접혀 납작)
+        l.rotation.x = mix(-1.5, -0.95);
+        l.rotation.z = sd * mix(0.25, 0.65);
+        l.scale.y = 1 - 0.25 * land * k;
+      } else { // 뒷발: 엉덩이를 받치고 버팀. 몸이 숙여진 만큼 거꾸로 세워 발바닥은 땅에, 힘줘서 바들바들
+        l.rotation.x = mix(1.1, -0.55) + Math.sin(t * 9 + i) * 0.06 * land * k;
+        l.rotation.z = sd * 0.12 * land * k;
+        l.scale.y = 1 + (0.1 + 0.04 * Math.sin(t * 22 + i * 2)) * land * k;
+      }
+    });
     H.tail.rotation.z = Math.sin(t * 6) * 0.5 * plant;
     H.squint(true); // 코 박고 > <
     H.mouthAs('frown');
