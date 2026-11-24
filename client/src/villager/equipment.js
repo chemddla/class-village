@@ -177,10 +177,10 @@ function bugCase() {
 function club() {
   const g = new THREE.Group();
   g.name = '나무몽둥이';
-  part(new THREE.CylinderGeometry(0.012, 0.013, 0.16, 8), DARK_WOOD(), g, '몽둥이자루', [0, 0, 0]);
+  part(new THREE.CylinderGeometry(0.012, 0.013, 0.11, 8), DARK_WOOD(), g, '몽둥이자루', [0, -0.005, 0]); // 두 주먹 바로 위에서 머리가 시작되게 짧게
   // 끝으로 갈수록 굵어지는 머리 + 둥근 끝
-  part(new THREE.CylinderGeometry(0.03, 0.016, 0.2, 9), WOOD(), g, '몽둥이머리', [0, 0.18, 0]);
-  part(new THREE.SphereGeometry(0.03, 9, 6, 0, PI * 2, 0, PI / 2), WOOD(), g, '몽둥이끝', [0, 0.28, 0]);
+  part(new THREE.CylinderGeometry(0.03, 0.016, 0.2, 9), WOOD(), g, '몽둥이머리', [0, 0.15, 0]);
+  part(new THREE.SphereGeometry(0.03, 9, 6, 0, PI * 2, 0, PI / 2), WOOD(), g, '몽둥이끝', [0, 0.25, 0]);
   return grip(g);
 }
 function sword() {
