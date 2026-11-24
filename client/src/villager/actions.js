@@ -628,28 +628,29 @@ const NET_LEAD = 50 * PI / 180;
 function netSweep(level) {
   const y = [-0.38, 0.02, 1.1][level + 1];
   const plane = slashPlane([0.05, y, 1 - Math.abs(y) * 0.3], [-1, 0.25 + Math.max(0, -y) * 0.6, -0.1], [-0.4, -1, 0.1], NET_LEAD);
-  const keys = [{ ...SWORD_READY, u: 0 }, plane(0.3, 115, 0.17), plane(0.45, 0, REACH, 'in'), { ...plane(0.6, -45, REACH, 'out'), pole: [-0.5, -1, -0.4] }];
+  // 들고 있던 자세 → 오른쪽 뒤로 젖힘 → 앞을 지나 왼쪽까지 고르게 크게 쓸기(테 입구가 나아가는 쪽을 향함) → 멈추지 않고 쥔 자리를 서서히 놓아 들고 다니는 자세로.
+  // 쓰는 구간을 몰아서 빠르게 하면 휙 사라지고, 끝에서 멈췄다 놓으면 툭 끊겨 보인다
+  const keys = [{ ...SWORD_READY, u: 0 }, plane(0.3, 110, 0.17), plane(0.48, 0, REACH), { ...plane(0.64, -50, REACH * 0.97, 'out'), pole: [-0.5, -1, -0.4] }];
   const low = level < 0 ? 1 : 0;
   return {
-    duration: 0.95, hitAt: 0.6, equip: 'net', rate: 32, trail: [0.3, 0.6],
+    duration: 1.1, hitAt: 0.64, equip: 'net', rate: 32, trail: [0.3, 0.64],
     fn(u, P, fx) {
-      const back = sm(u, 0.7, 1); // 0 → 1: 평소 자세로 풀기
-      const tw = kf(u, [0, 0], [0.3, -0.95], [0.45, 0.15, 'in'], [0.6, 0.9, 'out'], [0.7, 0.8], [1, 0]);
+      const tw = kf(u, [0, 0], [0.3, -0.95], [0.47, 0.15, 'in'], [0.64, 0.85, 'out'], [1, 0]);
       P['spine.ry'] = tw * 0.6;
       P['pelvis.ry'] = tw * 0.4;
       P['head.ry'] = -tw * 0.5; // 눈은 채가 지나가는 앞쪽을
-      P['head.rx'] = (low * 0.35 - (level > 0 ? 0.25 : 0)) * kf(u, [0, 0], [0.3, 1], [0.7, 1], [1, 0]);
-      crouch(P, kf(u, [0, 0.05], [0.3, 0.2 + low * 0.5], [0.45, 0.35 + low * 0.75, 'in'], [0.7, 0.3 + low * 0.6], [1, 0]));
-      wideStance(P, kf(u, [0, 0], [0.3, 0.8], [0.7, 0.8], [1, 0]));
-      P['spine.rx'] += kf(u, [0, 0], [0.3, -0.1], [0.45, 0.18 + low * 0.3], [0.6, 0.2 + low * 0.25], [1, 0]) * (1 - back);
-      // 왼손(채집통): 채와 반대쪽으로 벌려 균형을 잡는다
-      P['shoulderL.rz'] = kf(u, [0, ARM_REST], [0.3, 0.9], [0.45, 0.7], [0.6, 0.45], [1, ARM_REST]);
-      P['shoulderL.rx'] = kf(u, [0, 0], [0.3, -0.35], [0.6, 0.1], [1, 0]);
-      P['elbowL.rx'] = kf(u, [0, -0.08], [0.3, -0.5], [0.6, -0.4], [1, -0.08]);
-      if (u < 0.7) {
-        const g = swordPath(Math.min(u, 0.6), keys);
-        fx.oneHand = { arm: g.pos.map((x, n) => x - SHOULDER_R[n]), dir: g.dir, pole: g.pole, body: true };
-      }
+      // 쓸 때는 곤충 높이를 본다
+      P['head.rx'] = (low * 0.35 - (level > 0 ? 0.25 : 0)) * kf(u, [0, 0], [0.3, 1], [0.64, 1], [1, 0]);
+      crouch(P, kf(u, [0, 0.05], [0.3, 0.2 + low * 0.5], [0.47, 0.35 + low * 0.75, 'in'], [0.64, 0.3 + low * 0.6], [1, 0]));
+      wideStance(P, kf(u, [0, 0], [0.3, 0.8], [0.64, 0.8], [1, 0]));
+      P['spine.rx'] += kf(u, [0, 0], [0.3, -0.1], [0.47, 0.18 + low * 0.3], [0.64, 0.2 + low * 0.25], [1, 0]);
+      // 왼손(채집통): 채와 반대쪽으로 벌려 균형을 잡는다. 몸은 손을 놓는 박자(0.66 → 1)에 맞춰 함께 천천히 풀린다
+      P['shoulderL.rz'] = kf(u, [0, ARM_REST], [0.3, 0.9], [0.47, 0.7], [0.64, 0.45], [1, ARM_REST]);
+      P['shoulderL.rx'] = kf(u, [0, 0], [0.3, -0.35], [0.64, 0.1], [1, 0]);
+      P['elbowL.rx'] = kf(u, [0, -0.08], [0.3, -0.5], [0.64, -0.4], [1, -0.08]);
+      const g = swordPath(Math.min(u, 0.64), keys);
+      // 다 쓴 뒤에는 쓸어 온 길을 되짚지 않고, 쥔 자리를 서서히 놓아 평소 들고 다니는 자세로 녹아들게 한다
+      fx.oneHand = { arm: g.pos.map((x, n) => x - SHOULDER_R[n]), dir: g.dir, pole: g.pole, body: true, w: 1 - sm(u, 0.66, 1) };
       fx.carry = true;
     },
   };

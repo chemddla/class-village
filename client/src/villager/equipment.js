@@ -1007,8 +1007,10 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
   else { rig.toolFix = null; rig.lastAim = null; } // 두 손 쥐기가 끝나면 밀어낸 기록을 지운다
   // 한 손 쥐기 (한손검): 쥘 때는 빠르게, 놓을 때는 조금 느긋하게. 놓는 동안에는 마지막 자리를 기준으로 삼는다
   if (fx.oneHand) rig.oneAim = fx.oneHand;
-  const w1 = fx.oneHand ? 1 : 0;
-  rig.oneHandW = (rig.oneHandW ?? 0) + (w1 - (rig.oneHandW ?? 0)) * (1 - Math.exp(-(w1 ? 40 : 14) * dt));
+  // oneHand.w: 동작이 쥐는 정도를 직접 정한다 (서서히 놓아 평소 들고 다니는 자세로 녹아들게. 잠자리채 휘두른 뒤)
+  const w1 = fx.oneHand ? (fx.oneHand.w ?? 1) : 0;
+  const rate = fx.oneHand?.w != null ? 60 : w1 ? 40 : 14;
+  rig.oneHandW = (rig.oneHandW ?? 0) + (w1 - (rig.oneHandW ?? 0)) * (1 - Math.exp(-rate * dt));
   if (rig.oneAim && rig.oneHandW > 0.001) oneHandGrip(rig, rig.oneHandW, rig.oneAim);
   else { rig.oneAim = null; rig.elbowPrev = null; rig.oneFist = null; }
   // 활 당기기: 두 팔을 조준선 위에 놓는다 (시위·화살은 아래에서 오른손을 따라간다)
