@@ -295,25 +295,31 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
   });
   shape('flat', (gr) => mesh(new THREE.CapsuleGeometry(0.0007, 0.006, 4, 6).rotateZ(PI / 2), BLACK, gr, '입').position.set(0, -0.0025, 0)); // 힘준 ㅡ
   shape('tongue', (gr) => mesh(ball(0.0024, 14).scale(1, 1.35, 0.35), mat('#ff8fa5', 0.5), gr, '혀').position.set(0.0012, -0.0032, 0)); // ω 밑으로 혀 빼꼼
-  // 꼬리는 두 마디(뼈): 뿌리 쪽은 동작이 직접 움직이고, 끝 마디는 한 박자 늦게 따라와 휘청 휘어짐
-  // 꼬리 전체를 관 하나로 만들고 두 뼈에 나눠 붙여서, 휘어도 이음매 없이 부드럽게 이어짐
-  const tail = new THREE.Bone(); // 꼬리 뿌리
-  tail.position.set(0, 0.036, -0.03);
-  body.add(tail);
-  const tailTip = new THREE.Bone();
-  tailTip.position.set(0.002, 0.026, -0.015);
-  tail.add(tailTip);
+  // 꼬리: 관 하나를 뼈 여러 마디에 나눠 붙여서, 어떻게 휘어도 이음매 없이 고양이 꼬리처럼 부드럽게 휨
+  // 첫 뼈(tail)는 동작이 각도를 정하고, 그 각도는 마디마다 나눠 휘게 함 (whiskers 에서)
+  const TAIL_N = 6;
+  const tailBones = [];
   {
-    const TR = 0.005, SEG = 40, RAD = 12;
+    const TR = 0.005, SEG = 48, RAD = 12;
     const pts = [[0, 0, 0], [0, 0.014, -0.012], [0.002, 0.026, -0.015], [0.004, 0.035, -0.0145], [0.010, 0.045, -0.009]]; // 뿌리 기준
-    const curve = new THREE.CatmullRomCurve3(pts.map((q) => new THREE.Vector3(...q).add(tail.position)), false, 'centripetal');
-    const geo = new THREE.TubeGeometry(curve, SEG, TR, RAD);
-    const lens = curve.getLengths(200);
-    const joint = lens[100] / lens[200]; // 가운데 점(이음매)이 꼬리 길이의 어디쯤인지
+    const root = new THREE.Vector3(0, 0.036, -0.03);
+    const curve = new THREE.CatmullRomCurve3(pts.map((q) => new THREE.Vector3(...q).add(root)), false, 'centripetal');
+    let prev = new THREE.Vector3();
+    for (let j = 0; j < TAIL_N; j++) {
+      const b = new THREE.Bone();
+      const at = curve.getPointAt(j / TAIL_N);
+      b.position.copy(at).sub(prev);
+      prev = at;
+      (j ? tailBones[j - 1] : body).add(b);
+      tailBones.push(b);
+    }
+    const geo = new THREE.TubeGeometry(curve, SEG, TR, RAD); // 고리 하나가 꼬리 길이의 같은 간격
     const n = geo.attributes.position.count, idx = [], wt = [];
     for (let i = 0; i < n; i++) {
-      const w = THREE.MathUtils.smoothstep(Math.floor(i / (RAD + 1)) / SEG, joint - 0.15, joint + 0.15); // 이음매 둘레는 두 뼈가 나눠 가짐
-      idx.push(0, 1, 0, 0);
+      const x = (Math.floor(i / (RAD + 1)) / SEG) * TAIL_N - 0.5; // 이웃한 두 마디가 경계 둘레를 나눠 가짐
+      const j0 = THREE.MathUtils.clamp(Math.floor(x), 0, TAIL_N - 1), j1 = Math.min(j0 + 1, TAIL_N - 1);
+      const w = x < 0 ? 0 : THREE.MathUtils.smoothstep(x - j0, 0, 1);
+      idx.push(j0, j1, 0, 0);
       wt.push(1 - w, w, 0, 0);
     }
     geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
@@ -323,9 +329,10 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
     sk.name = '꼬리';
     body.add(sk);
     body.updateMatrixWorld(true);
-    sk.bind(new THREE.Skeleton([tail, tailTip]));
-    mesh(ball(TR, 12), tailFur, tailTip, '꼬리').position.set(0.008, 0.019, 0.006); // 꼬리 끝 동글
+    sk.bind(new THREE.Skeleton(tailBones));
+    mesh(ball(TR, 12), tailFur, tailBones[TAIL_N - 1], '꼬리').position.copy(curve.getPointAt(1)).sub(prev); // 꼬리 끝 동글
   }
+  const tail = tailBones[0]; // 꼬리 뿌리
   // 윤곽선 굵기를 부품 크기와 상관없이 모두 같게
   g.traverse((o) => { if (o.isMesh) o.userData.outlineWidth = HAAK_LINE; });
   const ws = { u: 0, uv: 0, b: 0, bv: 0, e: 0, ev: 0, tx: 0, txv: 0, tz: 0, tzv: 0, trx: 0, trz: 0, tprev: null, tp: new THREE.Vector3(), tv: new THREE.Vector3(), t: null, prev: null, tmp: new THREE.Vector3(), vel: new THREE.Vector3(), q: new THREE.Quaternion() };
@@ -364,6 +371,9 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
       head.rotation.x -= k * 0.15;
       this.hissK = k;
     },
+    tailCurl: 0.15, // 꼬리 끝을 앞으로 말아 올리는 정도 (- 는 뒤로 펴짐)
+    tailWave: 0.1, // 꼬리 살랑임 크기
+    tailWaveF: 2.4, // 꼬리 살랑임 빠르기
     // 수염: 코끝이 움직인 만큼 끝이 뒤늦게 따라오며 출렁 (용수철), 하악질하면 앞쪽 위로 쫙 펴짐
     hissK: 0,
     whiskers(t) {
@@ -410,10 +420,17 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
       }
       ws.tprev = (ws.tprev ?? new THREE.Vector3()).copy(tb);
       ws.trx = rx; ws.trz = rz;
-      tail.rotation.x += ws.tx * 0.35;
-      tail.rotation.z += ws.tz * 0.35;
-      tailTip.rotation.x = ws.tx + Math.sin(t * 2.1) * 0.08; // 끝 마디가 더 크게, 가만있어도 살랑
-      tailTip.rotation.z = ws.tz + Math.sin(t * 2.6 + 1) * 0.15;
+      // 동작이 정한 각도는 뿌리에 다 몰지 않고 마디마다 나눠서 둥글게 휨. 끝으로 갈수록
+      // 몸 움직임에 뒤늦게 따라오는 출렁임(ws)·끝을 말아 올리는 정도(tailCurl)·뿌리에서 끝으로 번지는 살랑임(tailWave)이 커짐
+      const bx = rx + ws.tx * 0.35, bz = rz + ws.tz * 0.35;
+      tail.rotation.x = bx * 0.3;
+      tail.rotation.z = bz * 0.3;
+      for (let j = 1; j < TAIL_N; j++) {
+        const k = j / (TAIL_N - 1);
+        const b = tailBones[j];
+        b.rotation.x = (bx * 0.7) / (TAIL_N - 1) + ws.tx * 0.25 * k + this.tailCurl * 0.5 * k + Math.sin(t * this.tailWaveF * 0.8 - j * 0.6) * this.tailWave * 0.3 * k;
+        b.rotation.z = (bz * 0.7) / (TAIL_N - 1) + ws.tz * 0.25 * k + Math.sin(t * this.tailWaveF - j * 0.7) * this.tailWave * (0.3 + 0.7 * k);
+      }
     },
     // 귀 접기: 옆으로 너무 벌리지 않고 뒤로 눕혀서 밑동이 머리에 붙어 있게
     earAt(a) { ears.forEach(([e, s]) => { e.rotation.z = -s * (0.35 + a * 0.55); e.rotation.x = -Math.max(0, a) * 0.6; }); },
@@ -451,6 +468,9 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
       head.rotation.set(0, 0, 0);
       head.scale.set(1, 1, 1);
       tail.rotation.set(0, 0, 0);
+      this.tailCurl = 0.15;
+      this.tailWave = 0.1;
+      this.tailWaveF = 2.4;
       roar.scale.set(1, 0.01, 1);
       roar.visible = false;
       face.mouth.scale.setScalar(1);
@@ -493,6 +513,9 @@ const walkLegs = (H, p, amp) => H.legs.forEach((l, i) => (l.rotation.x = (i === 
 hmotion('대기', '꼬리 살랑살랑, 앞발 할짝할짝', 4.4, (c, H, t) => {
   H.tail.rotation.z = Math.sin(t * 2) * 0.45;
   H.tail.rotation.x = Math.sin(t * 1.3) * 0.15;
+  H.tailCurl = 0.35; // 느긋하게 끝을 살짝 말고
+  H.tailWave = 0.22;
+  H.tailWaveF = 1.8;
   H.body.scale.y = 1 + Math.sin(t * 3) * 0.015;
   const k = ease(seg(c, 1.6, 1.9)) * (1 - ease(seg(c, 3.5, 3.8)));
   H.legs[1].rotation.x = -1.9 * k;
@@ -517,6 +540,9 @@ hmotion('걷기', '꼬리 바짝 세우고 종종종', (2 * PI) / 0.7, (c, H, t)
   H.head.rotation.y = -H.move.rotation.y * 0.35; // 걸으면서 힐끔 이쪽
   H.tail.rotation.x = -0.25;
   H.tail.rotation.z = Math.sin(p * 0.5) * 0.15;
+  H.tailCurl = 0.8; // 꼬리 세우고 끝은 물음표처럼 톡 말아서
+  H.tailWave = 0.08;
+  H.tailWaveF = 3;
   hBlink(H, t);
 });
 
@@ -540,6 +566,9 @@ hmotion('달리기', '귀 젖히고 꼬리 휘날리며 다다닥', (2 * PI) / 1
   H.mouthAs('o', 0.55);
   H.tail.rotation.x = -1.0 + s * 0.15; // 뒤로 휘날림
   H.tail.rotation.z = Math.sin(p * 0.5) * 0.1;
+  H.tailCurl = -0.15; // 끝까지 쭉 펴서
+  H.tailWave = 0.12;
+  H.tailWaveF = 5;
   hBlink(H, t);
 });
 
@@ -556,6 +585,8 @@ hmotion('발견', '깜짝! 제자리에서 폴짝, 털이 펑', 2.6, (c, H, t) =
   H.eyeSize(1 + f * 0.45);
   if (f > 0.15) H.mouthAs('o', 0.6 + f * 0.6); // 깜짝 ㅇ
   H.tail.rotation.x = -0.5 * f;
+  H.tailCurl = 0.15 * (1 - f); // 털 펑! 꼬리가 막대처럼 꼿꼿
+  H.tailWave = 0.1 * (1 - f);
   H.body.position.x = Math.sin(t * 60) * 0.001 * f;
   if (c < 0.25) hBlink(H, t);
 });
@@ -576,6 +607,8 @@ hmotion('위협', '옆으로 서서 게걸음 하악… "냐"', 3.4, (c, H, t) =
   H.body.position.z = Math.sin(t * 70) * 0.0012 * on; // 바들바들
   H.tail.rotation.x = -0.4 * on;
   H.tail.rotation.z = 0.6 * on;
+  H.tailCurl = 0.15 + 1.0 * on; // 꼬리를 세워 끝을 둥글게 꺾음 (뒤집은 U)
+  H.tailWave = 0.1 * (1 - on);
 });
 
 // 5. 공격 ① 냥냥펀치: 쨉쨉쨉, 근데 다 허공
@@ -835,6 +868,7 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
       H.body.position.x = Math.sin(t * 70) * 0.0012 * on;
       H.move.position.y = Math.abs(Math.sin(u * PI * 4)) * 0.004 * on;
       H.tail.rotation.x = -0.4 * on;
+      H.tailCurl = 0.15 + 0.9 * on; // 위협처럼 꼬리 끝을 둥글게 꺾음
       angerK = angerPulse(u - 0.1, t);
     } else if (state === 'attack') {
       // 덮치기: 엉덩이 씰룩(빠르게) → 0.47초에 덮쳐 닿음 → 코 박고 > < → 부르르 → 제자리
