@@ -462,6 +462,46 @@ export const EYE_STYLES = {
 
 // ── 눈: 세로 1.25배 타원. mode: open | round | happy | closed | angry | wince ──
 // 눈 조각은 실제 크기가 정사각형이므로 그린 비율이 그대로 보인다. 텍스처 오른쪽(+u)이 바깥쪽 눈꼬리.
+// 찡그리기: 그려진 눈(어떤 모양이든)의 윗부분을 코 쪽(왼쪽)이 더 내려오게 비스듬히 잘라내고, 잘린 자리에 눈꺼풀 선을 얹는다
+function frownCut(g, c, W) {
+  const img = g.getImageData(0, 0, c.width, c.height).data;
+  let top = c.height, bottom = -1, left = c.width, right = -1;
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      if (img[(y * c.width + x) * 4 + 3] < 40) continue;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+      if (x < left) left = x;
+      if (x > right) right = x;
+    }
+  }
+  if (bottom < 0) return;
+  const k = W / c.width; // 실제 픽셀 → 512 기준
+  [top, bottom, left, right] = [top * k, bottom * k, left * k, right * k];
+  const h = bottom - top;
+  const yIn = top + h * 0.48; // 코 쪽
+  const yOut = top + h * 0.16; // 바깥 눈꼬리 쪽
+  const lid = (x) => yIn + ((x - left) / Math.max(1, right - left)) * (yOut - yIn);
+  g.save();
+  g.globalCompositeOperation = 'destination-out';
+  g.beginPath();
+  g.moveTo(0, 0);
+  g.lineTo(W, 0);
+  g.lineTo(W, lid(W));
+  g.lineTo(0, lid(0));
+  g.closePath();
+  g.fill();
+  // 눈꺼풀 선: 남은 눈 위에만 (source-atop)
+  g.globalCompositeOperation = 'source-atop';
+  g.strokeStyle = '#24160f';
+  g.lineWidth = Math.max(14, h * 0.16);
+  g.beginPath();
+  g.moveTo(0, lid(0) + g.lineWidth * 0.35);
+  g.lineTo(W, lid(W) + g.lineWidth * 0.35);
+  g.stroke();
+  g.restore();
+}
+
 export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic' }) {
   const c = tex.image;
   const g = c.getContext('2d');
@@ -472,12 +512,14 @@ export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic
   g.clearRect(0, 0, W, H);
   // 눈 모양을 고른 경우: 평소(뜬 눈)일 때만 그 모양으로, 웃음·감음·놀람·화남은 아래 공통 표정을 쓴다
   const styled = EYE_STYLES[style] ?? EYE_STYLES.basic; // 모르는 이름(예전에 저장된 'classic' 등)은 콩눈으로
-  if (styled?.draw && mode === 'open') {
+  // 화남도 고른 눈 모양 그대로 그린 뒤 윗부분만 비스듬히 잘라 찡그린다 (다른 큰 눈으로 바뀌면 남의 눈처럼 보인다)
+  if (styled?.draw && (mode === 'open' || mode === 'angry')) {
     g.save();
     g.translate(W / 2, H * 0.52);
     g.scale(12, 12); // 도안은 눈 하나를 가로세로 약 ±20 칸 안에 그렸다
     styled.draw(g, css(iris));
     g.restore();
+    if (mode === 'angry') frownCut(g, c, W);
     tex.needsUpdate = true;
     return;
   }
@@ -595,7 +637,7 @@ export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic
   g.moveTo(cx - rx + rc, yb);
   g.lineTo(cx + rx - rc, yb);
   g.stroke();
-  if (lash) {
+  if (lash && mode !== 'angry') { // 화난 눈은 윗부분을 잘라내므로 바깥 속눈썹이 뿔처럼 남지 않게 뺀다
     g.lineWidth = 20;
     g.beginPath();
     g.moveTo(cx + rx * 0.85, cy - ry * 0.55);
@@ -608,31 +650,30 @@ export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic
   }
 
   if (mode === 'angry') {
-    // 찡그린 눈: 안쪽(코 쪽, 왼쪽)으로 갈수록 낮아지는 사선으로 윗부분을 잘라냄
-    const yIn = cy - ry * 0.1;
-    const yOut = cy - ry * 0.72;
+    // 찡그린 눈: 윗부분을 코 쪽(왼쪽)이 조금 더 내려오게 비스듬히 잘라 눈꺼풀을 내리깔고 (너무 깊이 자르면 눈이 반쪽이 된다)
+    const yIn = cy - ry * 0.32;
+    const yOut = cy - ry * 0.78;
+    const lid = (x) => yIn + ((x - (cx - rx)) / (2 * rx)) * (yOut - yIn); // 눈 왼쪽 끝 → 오른쪽 끝을 잇는 눈꺼풀 높이
     g.save();
     g.globalCompositeOperation = 'destination-out';
     g.beginPath();
     g.moveTo(0, 0);
     g.lineTo(W, 0);
-    g.lineTo(W, yOut - (W - cx - rx) * 0.4);
-    g.lineTo(0, yIn + (cx - rx) * 0.4);
+    g.lineTo(W, lid(W));
+    g.lineTo(0, lid(0));
     g.closePath();
     g.fill();
     g.restore();
-    // 잘린 자리에 눈꺼풀 선 + 그 위로 찡그린 눈썹
-    g.lineWidth = 24;
+    // 눈꺼풀 선: 굵게, 눈 모양 안쪽만 (눈 밖으로 삐져나오지 않게). 눈썹 없이 이 선만으로 찡그린 느낌
+    g.save();
+    eyeShape();
+    g.clip();
+    g.lineWidth = 34;
     g.beginPath();
-    g.moveTo(cx - rx * 0.95, yIn - rx * 0.02);
-    g.lineTo(cx + rx * 0.95, yOut + rx * 0.02);
+    g.moveTo(cx - rx * 1.1, lid(cx - rx * 1.1) + 10);
+    g.lineTo(cx + rx * 1.1, lid(cx + rx * 1.1) + 10);
     g.stroke();
-    g.strokeStyle = '#3a2418';
-    g.lineWidth = 28;
-    g.beginPath();
-    g.moveTo(cx - rx * 1.0, yIn - 66);
-    g.lineTo(cx + rx * 1.0, Math.max(18, yOut - 70));
-    g.stroke();
+    g.restore();
   }
   tex.needsUpdate = true;
 }
