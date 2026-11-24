@@ -262,14 +262,15 @@ class VillageRoom extends Room {
       const x = fromCm(cx);
       const z = fromCm(cz);
       const dist = Math.hypot(x - prev.x, z - prev.z);
-      // 허용 거리: 달리기 속도 × 시간 × 여유 + 작은 오차
-      const allowed = RUN_SPEED * dt * 1.6 + 0.4;
-      if (dist > allowed || isBlocked(x, z, 0.2)) {
+      // 허용 거리: 달리기 속도 × 시간 × 여유를 '모아 둔 여유(b)'에 쌓고, 움직인 만큼 쓴다 (+ 작은 오차).
+      // 메시지 사이 시간만 보면, 통신이 잠깐 밀려 두 메시지가 한꺼번에 도착할 때(사이 시간 0) 달리던 학생이 뒤로 튕긴다
+      const budget = Math.min((prev.b ?? 0) + RUN_SPEED * dt * 1.6, RUN_SPEED * 1.5 * 1.6);
+      if (dist > budget + 0.4 || isBlocked(x, z, 0.2)) {
         // 이상한 이동 → 마지막 정상 위치로 되돌림
         client.send('fix', [toCm(prev.x), toCm(prev.z)]);
         return;
       }
-      this.last.set(client.sessionId, { x, z, t: now });
+      this.last.set(client.sessionId, { x, z, t: now, b: Math.max(0, budget - dist) });
       if (dt > 0.03) this.speeds.set(client.sessionId, { v: dist / dt, t: now });
       p.x = cx;
       p.z = cz;

@@ -29,7 +29,9 @@ const SERVER = params.get('server')
     ? `wss://${location.host}/colyseus`
     : `ws://${location.hostname}:${import.meta.env.VITE_GAME_PORT || 2567}`);
 const SEND_INTERVAL = 0.1; // 초당 10회
-const INTERP_DELAY = 150; // 다른 학생은 150ms 늦게 그림
+// 다른 학생은 200ms 늦게 그림: 내가 보내는 때(0.1초)와 서버가 묶어 보내는 때(0.1초)가 엇갈리면 소식이 0.2초 만에 오기도 해서,
+// 이보다 짧으면 그때마다 잠깐 멈췄다가 튄다
+const INTERP_DELAY = 200;
 
 // ── 저장 도우미 (사생활 보호 모드에서도 오류 없이) ──
 const store = {
@@ -1032,7 +1034,7 @@ function attach(r) {
         const last = o.buf[o.buf.length - 1];
         // 오래 멈춰 있다가 다시 움직이면, 직전 위치를 "방금 전"으로 다시 찍어 순간이동을 막음
         if (last && Math.hypot(fromCm(p.x) - last.x, fromCm(p.z) - last.z) > 8) o.buf.length = 0; // 포탈을 탔으면 미끄러지지 않고 바로 그 자리에
-        else if (last && t - last.t > 200) o.buf.push({ ...last, t: t - 100 });
+        else if (last && t - last.t > 300) o.buf.push({ ...last, t: t - 100 });
         o.buf.push({ t, x: fromCm(p.x), z: fromCm(p.z), r: byteToAngle(p.r), a: p.a });
         if (o.buf.length > 30) o.buf.shift();
         char.setTool(p.t);
@@ -1454,7 +1456,7 @@ function updateMe(dt) {
   // 움직임이 있을 때만 초당 10회 전송
   local.sendTimer += dt;
   if (local.sendTimer >= SEND_INTERVAL && room) {
-    local.sendTimer = 0;
+    local.sendTimer %= SEND_INTERVAL; // 남은 시간을 넘겨 정확히 0.1초마다 (0으로 되돌리면 60fps에서 0.117초마다가 돼 서버 묶음과 계속 어긋난다)
     const msg = [toCm(me.x), toCm(me.z), angleToByte(me.targetRot), anim, local.tool, local.arrows];
     const l = local.last;
     if (!l || msg.some((v, i) => v !== l[i])) {
@@ -1466,7 +1468,7 @@ function updateMe(dt) {
   }
 }
 
-// ── 다른 학생: 150ms 늦게 그리면서 사이를 채움 ──
+// ── 다른 학생: 200ms 늦게 그리면서 사이를 채움 ──
 function updateOthers(now) {
   const renderT = now - INTERP_DELAY;
   for (const o of others.values()) {

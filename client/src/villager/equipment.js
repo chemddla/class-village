@@ -417,19 +417,21 @@ export const EQUIPMENT = {
 const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'roll', 'wave', 'cheer']);
 
 // 소켓을 비우고 새 장비를 쥐어 준다
+// 재질은 dispose 하지 않는다: 버리면 셰이더 프로그램까지 지워져, 다음에 쥘 때 다시 컴파일하느라 화면이 수십 ms 멈춘다
+// (재질이 쥔 GPU 자원은 프로그램뿐이고 종류가 정해져 있어 쌓이지 않는다. 지오메트리는 버린다)
 export function attachEquipment(rig, id) {
   const e = EQUIPMENT[id] ?? EQUIPMENT.none;
   for (const [sock, make] of [[rig.rightSocket, e.right], [rig.leftSocket, e.left]]) {
     for (const c of [...sock.children]) {
       sock.remove(c);
-      c.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); });
+      c.traverse((x) => x.geometry?.dispose());
     }
     if (make) sock.add(make());
   }
   // 등에 메는 것 (활을 들면 화살통): 몸통에 붙인다
   for (const c of rig.spine.children.filter((x) => x.userData.back)) {
     rig.spine.remove(c);
-    c.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); });
+    c.traverse((x) => x.geometry?.dispose());
   }
   rig.quiver = null;
   if (e.back) {

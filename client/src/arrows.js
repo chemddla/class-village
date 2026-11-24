@@ -24,7 +24,7 @@ export function createArrows(scene, hit) {
 
   function remove(a) {
     scene.remove(a.mesh);
-    a.mesh.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); });
+    a.mesh.traverse((x) => x.geometry?.dispose()); // 재질은 두어 셰이더를 다시 컴파일하지 않게 (equipment.js attachEquipment 참고)
     list.splice(list.indexOf(a), 1);
   }
 

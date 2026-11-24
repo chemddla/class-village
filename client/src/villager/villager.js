@@ -1540,11 +1540,11 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
     e.eyes.forEach((mode, i) => drawEye(live.eyes[i], { iris: o.iris, lash: o.lash, mode, style: o.eyeStyle }));
   }
 
-  // 재질만 버리고 텍스처는 남긴다 (캐시·실시간 텍스처를 계속 재사용)
+  // 지오메트리만 버린다. 재질은 그냥 둔다: 버리면 셰이더 프로그램이 지워져 다시 만들 때 컴파일로 화면이 멈춘다 (equipment.js attachEquipment 참고)
   function clear() {
     for (const c of [...root.children]) {
       root.remove(c);
-      c.traverse((x) => { if (x.isMesh) { x.geometry.dispose(); x.material.dispose(); x.skeleton?.dispose(); } });
+      c.traverse((x) => { if (x.isMesh) { x.geometry.dispose(); x.skeleton?.dispose(); } });
     }
   }
 
