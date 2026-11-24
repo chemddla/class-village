@@ -794,15 +794,17 @@ export const DASH_RATE = 1.2;
 export const DIVE = { raise: 0.18, time: 0.2, from: 0.3, rate: 1.2 };
 
 // ── 잠자리채 휘두르기: 오른 어깨 뒤로 채를 젖혔다가, 팔을 쭉 뻗은 채 오른쪽 → 앞 → 왼쪽으로 크게 쓸어 담는다 ──
-// level: 0 가슴 높이로 가로 쓸기, 1 머리 위로 높이 쓸기(나는 곤충), -1 쪼그려 앉으며 발 앞을 낮게 쓸기(땅·꽃 곤충)
+// level: 0 가슴 높이로 오른쪽 위에서 앞 아래로 덮기, 1 머리 위로 높이 쓸기(나는 곤충), -1 쪼그려 앉으며 발 앞을 위에서 덮기(땅·꽃 곤충)
 // 그물 테가 실제로 지나간 자리에 곤충이 있어야 잡힌다 (character.js 가 그 길을 모아 main.js 가 서버로 보낸다)
 const NET_LEAD = 50 * PI / 180;
 function netSweep(level) {
-  const y = [-0.38, 0.02, 1.1][level + 1];
-  const plane = slashPlane([0.05, y, 1 - Math.abs(y) * 0.3], [-1, 0.25 + Math.max(0, -y) * 0.6, -0.1], [-0.4, -1, 0.1], NET_LEAD);
+  const y = [-0.3, -0.08, 1.1][level + 1];
+  // 젖히는 쪽: 가슴·발 앞은 오른쪽 위로 치켜들었다가 앞 아래로 덮듯이 내리고(위에서 아래로 잡는 느낌), 머리 위는 옆으로 쓴다
+  const up = level > 0 ? [-1, 0.25, -0.1] : [-0.62, 0.78, -0.12];
+  const plane = slashPlane([0.05, y, 1 - Math.abs(y) * 0.3], up, [-0.4, -1, 0.1], NET_LEAD);
   // 들고 있던 자세 → 오른쪽 뒤로 젖힘 → 앞을 지나 왼쪽까지 고르게 크게 쓸기(테 입구가 나아가는 쪽을 향함) → 멈추지 않고 쥔 자리를 서서히 놓아 들고 다니는 자세로.
   // 쓰는 구간을 몰아서 빠르게 하면 휙 사라지고, 끝에서 멈췄다 놓으면 툭 끊겨 보인다
-  const keys = [{ ...SWORD_READY, u: 0 }, plane(0.3, 110, 0.17), plane(0.48, 0, REACH), { ...plane(0.64, -50, REACH * 0.97, 'out'), pole: [-0.5, -1, -0.4] }];
+  const keys = [{ ...SWORD_READY, u: 0 }, plane(0.3, 110, 0.17), plane(0.48, 0, REACH), { ...plane(0.64, level < 0 ? -25 : -50, REACH * 0.97, 'out'), pole: [-0.5, -1, -0.4] }];
   const low = level < 0 ? 1 : 0;
   return {
     duration: 1.1, hitAt: 0.64, equip: 'net', rate: 32, trail: [0.3, 0.64],
@@ -1783,6 +1785,31 @@ Object.assign(ACTIONS, {
       P['hipR.rx'] = kf(u, [0, 0], [0.15, 0.25], [1, 0]);
     },
   },
+  // 화냄: 두 주먹을 허리 옆에 꽉 쥐고 발을 동동 구르며, 고개를 도리도리 (자꾸 맞으면). 발을 처음 구를 때 먼지
+  angry: {
+    duration: 1.5, hitAt: 0.2, expression: 'angry',
+    fn(u, P) {
+      const on = kf(u, [0, 0], [0.12, 1], [0.85, 1], [1, 0]);
+      const s = Math.sin(u * PI * 2 * 4); // 동동 네 번
+      const upR = Math.max(0, s) * on;
+      const upL = Math.max(0, -s) * on;
+      P['hipR.rx'] = -0.45 * upR;
+      P['kneeR.rx'] = 0.85 * upR;
+      P['footR.rx'] = -0.4 * upR;
+      P['hipL.rx'] = -0.45 * upL;
+      P['kneeL.rx'] = 0.85 * upL;
+      P['footL.rx'] = -0.4 * upL;
+      P['root.py'] = 0.015 * Math.abs(s) * on;
+      // 주먹: 팔을 몸에 붙이고 팔꿈치를 굽혀 허리 옆에서 꽉 (위아래로 들썩)
+      P['shoulderR.rz'] = -0.3 * on;
+      P['shoulderL.rz'] = 0.3 * on;
+      P['shoulderR.rx'] = P['shoulderL.rx'] = (-0.25 + 0.12 * s) * on;
+      P['elbowR.rx'] = P['elbowL.rx'] = -1.25 * on;
+      P['spine.rx'] = (0.14 + 0.05 * Math.abs(s)) * on;
+      P['head.rx'] = 0.08 * on;
+      P['head.ry'] = 0.22 * Math.sin(u * PI * 2 * 3) * on; // 도리도리
+    },
+  },
   // 무릎을 꿇었다가 옆으로 쓰러져 그대로 누워 있음 (다른 액션을 고르면 일어남)
   faint: {
     duration: 2.2, hold: true, expression: 'ko',
@@ -1803,6 +1830,8 @@ Object.assign(ACTIONS, {
     },
   },
 });
+// 아파함: 맞아서 움찔하는 몸짓은 hit(깜짝)과 같고, 표정만 눈을 질끈 감고 입을 찡그린다 (몽둥이·잠자리채에 맞았을 때)
+ACTIONS.hurt = { ...ACTIONS.hit, duration: 0.75, expression: 'hurt' };
 
 // 액션 재생기: 일회성 액션의 진행·타격 콜백·종료를 관리하고, 모든 관절을 lerp로 목표에 붙인다.
 // 액션을 바꿔도 현재 자세에서 목표 자세로 미끄러지듯 넘어간다 (일회성이 끝나면 대기 자세로 돌아감).

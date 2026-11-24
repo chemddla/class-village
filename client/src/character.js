@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { ANIM, COLORS, TOOLS, WORLD } from '../../shared/world.js';
 import { blobGeometry, curveDrop } from './materials.js';
-import { makeLabel } from './label.js';
+import { makeLabel, makeBubble } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { ACTIONS, SHAKE, BOBBER, bowDrawn, DIVE } from './villager/actions.js';
 import { syncToon, mergeOutlines, mergeMeshes, mergeSkinned } from './villager/toon.js';
@@ -58,7 +58,7 @@ function lerpAngle(a, b, t) {
 const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 // 잠깐 하는 동작: 번호 → 주민 액션 이름. 길이는 일회성은 액션 길이, 반복형은 정해 둔 시간
 const ACTS = {
-  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
+  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.HURT]: 'hurt', [ANIM.ANGRY]: 'angry', [ANIM.FAINT]: 'faint',
   [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3', [ANIM.SMASH4]: 'clubSmash4',
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
   [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket',
@@ -121,6 +121,7 @@ export class Character {
     this.shakeT = 0;
     this.trails = {};
     this.netPath = [];
+    this.netSegs = [];
 
     const shadow = new THREE.Mesh(blobGeometry, shadowMat);
     shadow.position.y = 0.004;
@@ -174,8 +175,35 @@ export class Character {
   // 화살통에 든 화살 개수 (등의 화살통에 그만큼 보인다)
   setArrows(n) { this.villager.state.arrows = n; }
 
+  // 머리 위 말풍선: secs 초 동안 보였다가 흐려지며 사라진다 (새로 말하면 바꿔 끼움)
+  say(text, secs = 4) {
+    this.unsay();
+    this.bubble = makeBubble(text);
+    this.bubble.position.y = LABEL_Y + 0.2 + this.bubble.scale.y / 2;
+    this.bubbleT = secs;
+    this.root.add(this.bubble);
+  }
+  unsay() {
+    if (!this.bubble) return;
+    this.bubble.removeFromParent();
+    this.bubble.material.map.dispose();
+    this.bubble.material.dispose();
+    this.bubble = null;
+  }
+
+  // 남의 화면에서 그 학생의 동작을 미리 틀어 둔다 (맞는 순간 바로 아파하게: 그 학생이 보낸 동작이 도착하기 전까지 secs 초 동안 덮지 않음)
+  forceAnim(a, secs) {
+    this.forced = null;
+    this.setAnim(a);
+    this.forced = { a, until: performance.now() + secs * 1000 };
+  }
+
   // 동작 바꾸기 (잠깐 하는 동작으로 바뀌는 순간 한 번 재생)
   setAnim(a) {
+    if (this.forced) {
+      if (performance.now() < this.forced.until && a !== this.forced.a) return;
+      if (performance.now() >= this.forced.until) this.forced = null;
+    }
     if (a !== this.anim && ACTS[a]) {
       const from = CONTINUES[a];
       this.startAt = from !== undefined && this.anim === from && this.actLeft > 0 ? actTime(from) - this.actLeft : 0;
@@ -190,6 +218,11 @@ export class Character {
 
   update(dt) {
     this.time += dt;
+    if (this.bubble) {
+      this.bubbleT -= dt;
+      this.bubble.material.opacity = Math.min(1, this.bubbleT / 0.4);
+      if (this.bubbleT <= 0) this.unsay();
+    }
     this.root.rotation.y = lerpAngle(this.root.rotation.y, this.targetRot, Math.min(1, dt * 14));
 
     if (this.actLeft > 0) this.actLeft -= dt;
@@ -306,9 +339,12 @@ export class Character {
     const u = this.villager.progress;
     if (((def?.trail && u >= def.trail[0] && u <= def.trail[1]) || this.villager.trailOn) && toolEnds(rig, vA, vB)) {
       this.trail('swing', { life: 0.15, color: 0xfffbe8, alpha: 0.95 }).push(this.time, vA, vB);
-      if (cur?.startsWith('net')) this.netPath.push(vB.toArray()); // 잠자리채: 그물 테(채 끝)가 지나간 길
+      if (cur?.startsWith('net')) {
+        this.netPath.push(vB.toArray()); // 잠자리채: 그물 테(채 끝)가 지나간 길
+        this.netSegs.push([vA.toArray(), vB.toArray()]); // 채 전체(손잡이 쪽 → 끝): 물체에 부딪히는지 볼 때
+      }
     }
-    if (cur?.startsWith('net') && def?.trail && u < def.trail[0]) this.netPath = [];
+    if (cur?.startsWith('net') && def?.trail && u < def.trail[0]) { this.netPath = []; this.netSegs = []; this.netBonked = false; }
     for (const k in this.trails) this.trails[k].update(this.time);
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)
@@ -333,6 +369,7 @@ export class Character {
   }
 
   dispose() {
+    this.unsay();
     for (const k in this.trails) this.trails[k].dispose();
     this.villager.dispose();
     this.label.material.map.dispose();
