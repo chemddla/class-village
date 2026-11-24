@@ -101,7 +101,7 @@ const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
   fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
-  hp: $id('hp-bar'), mp: $id('mp-bar'), sp: $id('sp-bar'),
+  hp: $id('hp-bar'), mp: $id('mp-bar'),
   toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), pickBtn: $id('pick-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
 let toastTimer = 0;
@@ -176,11 +176,11 @@ const SLAM_SPEED = 2.9;
 // 땅에서 휘두르는 타(몽둥이 1~4타, 목검 1·2·4타): 타격 직전부터 직후까지(0.25초) 보는 쪽으로 SWING_STEP(m)만큼 살짝 나아간다
 const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH4]);
 const SWING_STEP = 0.3;
-// 체력·마나·기력 (내 화면에서만 셈)
-// 마나: 대시 공격·더블 점프 내리찍기에 쓰고 천천히 찬다 · 기력: 구르기에 쓰고, 안 쓰고 잠깐 있으면 빠르게 찬다
-const STAT = { max: 100, hit: 10, hpRegen: 2, mpRegen: 3, roll: 25, skill: 20, spWait: 0.6, spRegen: 70 };
-const stats = { hp: STAT.max, mp: STAT.max, sp: STAT.max, spIdle: 0 };
-const ghost = { hp: { v: STAT.max, hold: 0 }, mp: { v: STAT.max, hold: 0 }, sp: { v: STAT.max, hold: 0 } };
+// 체력·마나 (내 화면에서만 셈)
+// 마나: 대시 공격·더블 점프 내리찍기에 쓰고 천천히 찬다
+const STAT = { max: 100, hit: 10, hpRegen: 2, mpRegen: 3, skill: 20 };
+const stats = { hp: STAT.max, mp: STAT.max };
+const ghost = { hp: { v: STAT.max, hold: 0 }, mp: { v: STAT.max, hold: 0 } };
 // 모자라서 못 썼을 때 그 줄을 떨어 보인다
 function statShort(k) {
   const row = ui[k];
@@ -196,9 +196,7 @@ function useMana(n) {
 function updateStats(dt) {
   stats.hp = Math.min(STAT.max, stats.hp + STAT.hpRegen * dt);
   stats.mp = Math.min(STAT.max, stats.mp + STAT.mpRegen * dt);
-  stats.spIdle += dt;
-  if (stats.spIdle > STAT.spWait) stats.sp = Math.min(STAT.max, stats.sp + STAT.spRegen * dt);
-  for (const k of ['hp', 'mp', 'sp']) {
+  for (const k of ['hp', 'mp']) {
     // 잔상: 줄어든 자리에 잠깐(0.4초) 머물렀다가 빠르게 따라 내려온다 (차오를 때는 바로 같이)
     const g = ghost[k];
     if (stats[k] >= g.v) { g.v = stats[k]; g.hold = 0.4; }
@@ -982,9 +980,6 @@ const input = createInput({
     else if (name === 'dodge') {
       // 공격 중·맞는 중·쿨타임에는 못 한다. 방향키(조이스틱)를 누르고 있으면 그쪽으로, 아니면 보던 쪽(정면)으로
       if (local.hurt > 0 || local.dodge > -DODGE.cool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
-      if (stats.sp < STAT.roll) { statShort('sp'); return; } // 기력이 모자라면 못 구른다
-      stats.sp -= STAT.roll;
-      stats.spIdle = 0;
       if (local.fishing) stopFishing();
       local.act = ANIM.ROLL;
       local.actLeft = actTime(ANIM.ROLL);

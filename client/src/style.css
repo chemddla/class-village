@@ -56,10 +56,10 @@ button, input, textarea, select { font-family: inherit; }
 }
 #hud { align-items: flex-start; }
 #hud .hud-right { display: flex; gap: 8px; }
-/* 체력·마나·기력: 아이콘 + 막대 + 숫자. 줄어든 만큼은 연한 잔상이 잠깐 남았다가 따라 줄어든다 */
+/* 체력·마나: 아이콘 + 막대 + 숫자. 줄어든 만큼은 연한 잔상이 잠깐 남았다가 따라 줄어든다 */
 #stats { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px 8px 8px; border-radius: 18px; }
 #stats .stat { display: flex; align-items: center; gap: 6px; }
-#stats .ic { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; flex: none; }
+#stats .ic { width: 22px; font-size: 11px; font-weight: 900; letter-spacing: -0.3px; text-align: center; flex: none; }
 #stats .bar {
   position: relative; width: 140px; height: 13px; border-radius: 999px; overflow: hidden;
   background: #efe3cf; box-shadow: inset 0 1px 2px rgba(74, 53, 37, 0.25);
@@ -70,12 +70,10 @@ button, input, textarea, select { font-family: inherit; }
   box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
 }
 #stats em { width: 26px; text-align: right; font-style: normal; font-size: 12px; font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
-#stats .hp .ic { background: #fde1dd; }
-#stats .mp .ic { background: #dde9fb; }
-#stats .sp .ic { background: #fdf0cf; }
+#stats .hp .ic { color: #d6473c; }
+#stats .mp .ic { color: #3f7fd6; }
 #stats .hp i { background: linear-gradient(90deg, #e2574c, #ff8a6e); }
 #stats .mp i { background: linear-gradient(90deg, #3f7fd6, #6fb5ff); }
-#stats .sp i { background: linear-gradient(90deg, #eea21c, #ffd25a); }
 /* 얼마 안 남았을 때: 막대가 깜빡깜빡 */
 #stats .stat.low i { animation: stat-low 0.8s ease-in-out infinite; }
 #stats .stat.low em { color: #d9534f; }
