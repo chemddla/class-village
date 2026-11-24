@@ -462,6 +462,14 @@ function renderQuick() {
 const INV_COLS = 5;
 const INV_MIN_CELLS = 15; // 물건이 적어도 빈칸을 보여 가방처럼 보이게
 let invInfo = ''; // 마지막으로 누른 칸의 설명 (손가락으로 누를 때도 이름을 볼 수 있게)
+// 가방 칸 자리: 물건 열쇠('t:3'·'arrow'·'f:peach'…) → 칸 번호. 끌어다 옮긴 것만 적고, 나머지는 빈칸을 앞에서부터 채운다
+const invPos = (() => {
+  try { const v = JSON.parse(store.get(localStorage, 'invPos') ?? '{}'); if (v && typeof v === 'object' && !Array.isArray(v)) return v; } catch { /* 깨졌으면 처음부터 */ }
+  return {};
+})();
+// 지금 쏘는 화살 (칸 테두리가 파랗다). 다른 화살을 이 칸으로 끌어다 놓으면 그 화살로 바뀐다
+// shortcut: 화살이 한 종류('arrow')뿐이라 저장하지 않고 쏘는 화살도 그대로다, 화살 종류가 생기면 열쇠를 'arrow:종류'로 하고 저장·발사에 잇는다
+let activeArrow = 'arrow';
 function setQuickSlot(slot, t) {
   const was = quick.findIndex((v, i) => v === t && slotItem(i) === t);
   if (was >= 0) quick[was] = slotItem(slot); // 다른 칸에 있던 무기를 옮기면 두 칸을 맞바꾼다
@@ -510,7 +518,8 @@ function renderInv() {
     b.ondragleave = () => b.classList.remove('drop');
     b.ondrop = (e) => {
       e.preventDefault();
-      const d = Number(e.dataTransfer.getData('text/plain'));
+      const k = e.dataTransfer.getData('text/plain');
+      const d = k.startsWith('t:') ? Number(k.slice(2)) : NaN;
       if (invItems.includes(d) && !isLifeItem(d)) setQuickSlot(i, d);
     };
     qRow.appendChild(b);
@@ -526,13 +535,12 @@ function renderInv() {
   grid.className = 'inv-grid';
   grid.style.gridTemplateColumns = `repeat(${INV_COLS}, 1fr)`;
   const cells = [];
+  const add = (key, b) => { b.dataset.key = key; cells.push(b); return b; };
   // 무기: 퀵슬롯에 넣거나 뺀다
   for (const t of invItems.filter((x) => !isLifeItem(x))) {
     const slot = quick.findIndex((v, i) => v === t && slotItem(i) === t);
     const name = EQUIPMENT[TOOLS[t]].label;
     const b = cell(TOOL_ICON[TOOLS[t]], { cls: slot >= 0 ? 'in-quick' : '', badge: slot >= 0 ? slot + 1 : undefined, title: name });
-    b.draggable = true;
-    b.ondragstart = (e) => e.dataTransfer.setData('text/plain', String(t));
     b.onclick = () => {
       if (slot >= 0) {
         quick[slot] = null;
@@ -548,7 +556,7 @@ function renderInv() {
       renderQuick();
       renderInv();
     };
-    cells.push(b);
+    add(`t:${t}`, b);
   }
   // 생활 도구: 누르면 들고, 든 것을 다시 누르면 내려놓는다
   for (const t of LIFE_ITEMS.filter((x) => invItems.includes(x))) {
@@ -558,35 +566,67 @@ function renderInv() {
       invInfo = t === local.equip ? `${name}을(를) 내려놓았어요` : `${name}을(를) 들었어요 (생활 도구는 R로도 들어요)`;
       equipTool(t === local.equip ? 0 : t);
     };
-    cells.push(b);
+    add(`t:${t}`, b);
   }
   // 소모품·모은 것: 누르면 이름과 설명만 보여 준다
   const info = (b, text) => { b.onclick = () => { invInfo = text; renderInv(); }; return b; };
   if (invItems.includes(BOW) || local.arrows > 0) {
-    cells.push(info(cell('➶', { count: local.arrows, title: `화살 ×${local.arrows}` }),
+    add('arrow', info(cell('➶', { cls: activeArrow === 'arrow' ? 'active' : '', count: local.arrows, title: `화살 ×${local.arrows}` }),
       local.arrows ? `화살 ×${local.arrows}: 활을 들면 등의 화살통에 들어가요 (한 발에 하나씩 써요)` : '화살을 다 썼어요. 화살이 있어야 활을 쏠 수 있어요'));
   }
   for (const f of FRUITS.filter((x) => bag.get(x) > 0)) {
-    cells.push(info(cell(FRUIT_ICON[f], { count: bag.get(f), title: `${FRUIT_NAMES[f]} ×${bag.get(f)}` }),
+    add(`f:${f}`, info(cell(FRUIT_ICON[f], { count: bag.get(f), title: `${FRUIT_NAMES[f]} ×${bag.get(f)}` }),
       `${FRUIT_NAMES[f]} ×${bag.get(f)}: 상점이 열리면 팔 수 있어요`));
   }
   for (const f of FISH.filter((x) => bag.get(x.id) > 0)) {
     const color = `#${f.color.toString(16).padStart(6, '0')}`;
-    cells.push(info(cell('🐟', { count: bag.get(f.id), title: `${f.name} ×${bag.get(f.id)}`, color }),
+    add(`fish:${f.id}`, info(cell('🐟', { count: bag.get(f.id), title: `${f.name} ×${bag.get(f.id)}`, color }),
       `${f.name} ×${bag.get(f.id)} (${RARITY[f.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
   }
   for (const b of BUGS.filter((x) => bag.get(x.id) > 0)) {
-    cells.push(info(cell('🦋', { count: bag.get(b.id), title: `${b.name} ×${bag.get(b.id)}` }),
+    add(`bug:${b.id}`, info(cell('🦋', { count: bag.get(b.id), title: `${b.name} ×${bag.get(b.id)}` }),
       `${b.name} ×${bag.get(b.id)} (${RARITY[b.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
   }
-  const total = Math.max(INV_MIN_CELLS, Math.ceil(cells.length / INV_COLS) * INV_COLS);
-  for (let i = cells.length; i < total; i++) cells.push(cell('', { cls: 'empty' }));
-  for (const c of cells) grid.appendChild(c);
+  // 자리 잡기: 옮겨 둔 물건은 그 칸에, 나머지는 빈칸을 앞에서부터
+  const at = [];
+  for (const c of cells) { const p = invPos[c.dataset.key]; if (Number.isInteger(p) && p >= 0 && p < 100 && !at[p]) at[p] = c; }
+  let free = 0;
+  for (const c of cells) {
+    if (at.includes(c)) continue;
+    while (at[free]) free++;
+    at[free] = c;
+  }
+  const total = Math.max(INV_MIN_CELLS, Math.ceil(at.length / INV_COLS) * INV_COLS);
+  for (let i = 0; i < total; i++) {
+    const c = at[i] ?? cell('', { cls: 'empty' });
+    if (at[i]) {
+      c.draggable = true;
+      c.ondragstart = (e) => e.dataTransfer.setData('text/plain', c.dataset.key);
+    }
+    // 끌어다 놓으면 이 칸으로 옮긴다 (물건이 있던 칸이면 서로 맞바꾼다)
+    c.ondragover = (e) => { e.preventDefault(); c.classList.add('drop'); };
+    c.ondragleave = () => c.classList.remove('drop');
+    c.ondrop = (e) => {
+      e.preventDefault();
+      const from = e.dataTransfer.getData('text/plain');
+      const src = at.findIndex((x) => x?.dataset.key === from);
+      const to = at[i]?.dataset.key;
+      if (src >= 0 && src !== i) {
+        at.forEach((x, j) => { invPos[x.dataset.key] = j; }); // 다른 물건이 밀려 움직이지 않게 지금 자리를 모두 적어 둔다
+        if (to) invPos[to] = src;
+        invPos[from] = i;
+        if (to === activeArrow && from.startsWith('arrow')) activeArrow = from;
+        store.set(localStorage, 'invPos', JSON.stringify(invPos));
+      }
+      renderInv();
+    };
+    grid.appendChild(c);
+  }
   ui.inv.appendChild(grid);
 
   const help = document.createElement('p');
   help.className = 'inv-help inv-info';
-  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해, 곤충은 잠자리채(R)를 들고 G로 잡아 모아요.';
+  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 가방 칸끼리 끌어다 놓으면 자리를 옮겨요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해, 곤충은 잠자리채(R)를 들고 G로 잡아 모아요.';
   ui.inv.appendChild(help);
 }
 
@@ -910,7 +950,7 @@ const input = createInput({
         local.actLeft = actTime(A.slam) - el;
       } else if (local.actLeft <= 0) {
         const inp = input.read();
-        if (inp.run && inp.mag > 0) startAct(A.dash); // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
+        if (inp.run && inp.mag > 0) { startAct(A.dash); input.stopRun(); } // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
         else {
           if (rot !== null) me.setPose(me.x, me.z, rot);
           startAct(A.first);

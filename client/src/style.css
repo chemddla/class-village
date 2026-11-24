@@ -170,6 +170,7 @@ button, input, textarea, select { font-family: inherit; }
 .inv-cell.life { background: #e6f5f1; }
 .inv-cell.life.on { border-color: #3f9c8c; background: #cdeee6; }
 .inv-cell.drop { border-color: var(--accent); border-style: solid; background: #eef8e6; }
+.inv-cell.active, .inv-cell.active:hover { border-color: #3d8bfd; } /* 지금 쏘는 화살 */
 .inv-info { margin: 8px 0 0; min-height: 2.6em; }
 #look-panel h3:first-child { margin-top: 0; }
 .look-row { display: flex; flex-wrap: wrap; gap: 6px; }

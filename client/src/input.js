@@ -131,6 +131,7 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
     if (e.pointerId !== joy.id) return;
     joy.id = null;
     joy.x = joy.y = 0;
+    joy.noRun = false;
     base.classList.add('hidden');
   };
   canvas.addEventListener('pointerup', end);
@@ -151,6 +152,7 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
   return {
     get pointer() { return pointer; },
     holding(name) { return enabled && held.has(name); },
+    stopRun() { runDir = null; joy.noRun = joy.id !== null; }, // 대시 공격 뒤 걷기로: 스틱은 한 번 덜 밀었다가 다시 끝까지 밀어야 달린다
     enable(v) { enabled = v; if (!v) { keys.clear(); held.clear(); runDir = null; joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },
     // 화면 기준 이동 방향: x(오른쪽+), z(아래쪽+), 세기 0~1, 달리기 여부
     read() {
@@ -170,7 +172,8 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
           x = joy.x / jm;
           z = joy.y / jm;
           mag = Math.min(1, jm);
-          run = run || jm >= RUN_AT;
+          if (jm < RUN_AT) joy.noRun = false;
+          run = run || (jm >= RUN_AT && !joy.noRun);
         }
       }
       return { x, z, mag, run };
