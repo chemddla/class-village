@@ -257,18 +257,17 @@ function hitFx(char, action) {
     const rock = action === 'clubSmash' ? village.nearRock(hx, hz, 0.7) : -1;
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
-    // 광장 날개콩 (테스트 서버): 휘두른 범위 안이면 맞는다
-    const monHit = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me)).find(Boolean) : null;
-    if (victims.length) {
+    // 몬스터: 휘두른 범위 안에 있는 것은 모두 맞는다 (한 번 휘둘러 여럿)
+    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me)).filter(Boolean) : [];
+    if (victims.length || monHits.length) {
       for (const v of victims) {
         v.shake();
         burst('star', 9, at(v.x, v.z, 1.35), { spread: Math.PI, power: 0.9 });
         burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
         if (v === me) strong = true;
       }
-    } else if (monHit) {
-      // 깃털이 빠지고 찌부되는 건 날개콩이 직접 하고, 여기서는 맞은 자리에 별만 튀긴다
-      burst('star', 8, at(monHit.x, monHit.z, monHit.y), { spread: Math.PI, power: 0.8 });
+      // 깃털이 빠지고 찌부되는 건 몬스터가 직접 하고, 여기서는 맞은 자리마다 별만 튀긴다
+      for (const m of monHits) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 });
     } else if (rock >= 0) {
       const r = WORLD.rocks[rock];
       village.shakeRock(rock, fx, fz);
