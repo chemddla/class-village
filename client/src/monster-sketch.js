@@ -2073,8 +2073,10 @@ const SETS = {
 const cur = SETS[SET] ? SET : 'basic';
 document.getElementById('title').innerHTML = `${SETS[cur].title}<span>마우스로 돌려 보기 · 휠로 확대 · 맨 오른쪽은 크기 비교용 주민 · ${
   Object.entries(SETS).filter(([k]) => k !== cur).map(([, s]) => `<a href="${s.link}">${s.title.replace(' 시안', '')} 보기</a>`).join(' · ')}</span>`;
-const built = SETS[cur].list.map((make) => make());
-const COLS = SETS[cur].cols ?? built.length; // 한 줄에 몇 마리
+// &only=툭툭,실망: 이름이 맞는 것만 골라 한 줄로 크게, 비스듬히 옆에서 보이게
+const ONLY = new URLSearchParams(location.search).get('only')?.split(',').map((x) => x.trim()).filter(Boolean);
+const built = SETS[cur].list.map((make) => make()).filter((m) => !ONLY || ONLY.includes(m.name));
+const COLS = ONLY ? built.length : SETS[cur].cols ?? built.length; // 한 줄에 몇 마리
 const ROWS = Math.ceil(built.length / COLS);
 const GRID = ROWS > 1;
 const SPACING = GRID ? 0.6 : 0.36;
@@ -2089,7 +2091,8 @@ built.forEach((m, i) => {
   const row = Math.floor(i / COLS), col = i % COLS;
   m.g.position.x = startX + col * SPACING + (GRID ? SPACING / 2 : 0);
   m.g.position.z = GRID ? (row - (ROWS - 1) / 2) * ROW_GAP : 0;
-  m.g.scale.setScalar(MON_SCALE);
+  m.g.scale.setScalar(ONLY ? 3.2 : MON_SCALE);
+  if (ONLY) m.g.rotation.y = -1.35; // 다리 움직임이 잘 보이게 거의 옆모습으로
   m.g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   scene.add(m.g);
 });

@@ -1624,6 +1624,7 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720, seg
     updateEquipment(rig, root, fx, t, dt, state);
     resolveArmCollision(rig); // 팔이 몸·옷 속으로 들어가지 않게 (장비 IK까지 끝난 뒤)
     straightenWrists(rig); // 팔꿈치가 옮겨진 뒤에도 손목은 아래팔과 한 줄로
+    rig.armPrev = [rig.shoulderR, rig.elbowR, rig.handR].map((o) => o.quaternion.clone()); // 이 장면의 최종 오른팔 자세 (팔 붙잡기의 기준)
     for (const s of ['R', 'L']) (rig.armDir ??= {})[s] = new THREE.Vector3(0, -1, 0).applyQuaternion(rig[`shoulder${s}`].quaternion); // 다음 장의 어깨 위치에 쓴다
     // 간헐적 눈 깜빡임
     blinkT -= dt;

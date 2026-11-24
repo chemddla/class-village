@@ -4,7 +4,7 @@ import { ANIM, COLORS, TOOLS, WORLD } from '../../shared/world.js';
 import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel, makeBubble } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
-import { ACTIONS, SHAKE, BOBBER } from './villager/actions.js';
+import { ACTIONS, SHAKE, BOBBER, bowDrawn, DIVE } from './villager/actions.js';
 import { syncToon, mergeOutlines, mergeMeshes, mergeSkinned } from './villager/toon.js';
 import { FX } from './fx.js';
 
@@ -65,14 +65,16 @@ const ACTS = {
   [ANIM.NET_SWING]: 'netSwing', [ANIM.NET_HIGH]: 'netHigh', [ANIM.NET_LOW]: 'netLow', [ANIM.FISH_CAST]: 'fishCast', [ANIM.FISH_WAIT]: 'fishWait', [ANIM.FISH_CATCH]: 'fishCatch', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
   [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash', [ANIM.ROLL]: 'roll',
   [ANIM.BOW_AIM]: 'bowAim', [ANIM.BOW_SHOT]: 'bowRelease', [ANIM.BOW_AIR]: 'bowAir', [ANIM.BOW_SLAM]: 'bowSlam', [ANIM.BOW_BACK]: 'bowBack',
-  [ANIM.STAFF_CAST]: 'staffBolt',
+  [ANIM.STAFF_CAST]: 'staffBolt', [ANIM.STAFF_CHARGE]: 'staffCharge', [ANIM.STAFF_FIRE]: 'staffFire', [ANIM.STAFF_BIG]: 'staffBig',
+  [ANIM.DAGGER1]: 'daggerStab1', [ANIM.DAGGER2]: 'daggerStab2', [ANIM.DAGGER3]: 'daggerStab3', [ANIM.DAGGER4]: 'daggerStab4',
+  [ANIM.DAGGER_AIR]: 'daggerAir', [ANIM.DAGGER_SLAM]: 'daggerSlam', [ANIM.DAGGER_DASH]: 'daggerDash', [ANIM.DAGGER_AIR2]: 'daggerAir2', [ANIM.DAGGER5]: 'daggerStab5', [ANIM.DAGGER_DASH2]: 'daggerDash2',
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
-const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP,
+const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP, [ANIM.DAGGER_AIR]: ANIM.JUMP, [ANIM.DAGGER_SLAM]: ANIM.FLIP, [ANIM.DAGGER_AIR2]: ANIM.DAGGER_AIR,
   [ANIM.BOW_AIR]: ANIM.JUMP, [ANIM.BOW_SLAM]: ANIM.FLIP };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 // 입질 기다리기는 낚시가 끝날 때까지 (main.js 가 다시 이어 줌), 활 조준은 공격키를 뗄 때까지 (main.js 가 끝낸다)
-const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60 };
+const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60, staffCharge: 60 }; // 기 모으기도 떼거나 다 모을 때까지 (main.js 가 끝낸다)
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
 export const BOW_SLAM_LAND = 0.85; // 활 더블 점프 공격은 쏠 틈을 두려고 조금 더 떠 있다가 내려앉는다
 export const LAND = { jump: 0.78 * ACTIONS.jump.duration + 0.015, flip: 0.74 * ACTIONS.flip.duration };
@@ -207,6 +209,9 @@ export class Character {
       this.startAt = from !== undefined && this.anim === from && this.actLeft > 0 ? actTime(from) - this.actLeft : 0;
       this.actLeft = actTime(a) - this.startAt;
       if (a === ANIM.TREE_SHAKE) this.shakeStep = shakeStep(this.x, this.z);
+      // 활: 조준을 시작한 때를 적어 두었다가, 쏘는 순간 시위를 얼마나 당겼는지(0~1) 정한다 (화살 사거리·정확도, main.js hitFx)
+      if (a === ANIM.BOW_AIM) this.aimAt = this.time;
+      if (a === ANIM.BOW_SHOT) this.bowPower = this.anim === ANIM.BOW_AIM && this.aimAt != null ? bowDrawn(this.time - this.aimAt) : 1;
     }
     this.anim = a;
   }
@@ -226,6 +231,7 @@ export class Character {
       this.current = want;
       const at = ACTS[this.anim] === want ? this.startAt ?? 0 : 0;
       this.actSec = at;
+      this.actStart = at; // 이어받아 시작한 자리 (단검 더블 점프 공격은 여기서부터 DIVE.raise + DIVE.time 뒤에 착지)
       this.marks = at > 0 ? { up: 1 } : {}; // 이어받은 동작은 도약 연출을 다시 하지 않는다
       this.startAt = 0;
       this.villager.setAction(want, (name, n) => Character.onHit?.(this, name, n), undefined, at);
@@ -284,13 +290,13 @@ export class Character {
     // 점프: 도약하는 순간 쭉 늘어나고, 착지하는 순간 납작 → 탄성 복원 + 발밑 먼지
     const cur = this.current;
     const M = this.marks;
-    if (cur === 'jump' || cur === 'clubAir' || cur === 'swordAir' || cur === 'bowAir') {
+    if (cur === 'jump' || cur === 'clubAir' || cur === 'swordAir' || cur === 'bowAir' || cur === 'daggerAir' || cur === 'daggerAir2') {
       if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
       // 발이 땅에 닿는 순간(진행도 0.78 = 0.74초)에 맞춘다: 더 이르면 아직 공중에서 납작해지고 먼지가 난다
       if (!M.down && this.actSec >= LAND.jump) { M.down = 1; this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
-    } else if (cur === 'flip' || cur === 'clubSlam' || cur === 'swordSlam' || cur === 'bowSlam') {
+    } else if (cur === 'flip' || cur === 'clubSlam' || cur === 'swordSlam' || cur === 'bowSlam' || cur === 'daggerSlam') {
       if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
-      if (!M.down && this.actSec >= (cur === 'bowSlam' ? BOW_SLAM_LAND : LAND.flip)) { M.down = 1; this.footPuff(12, 1.2, true); }
+      if (!M.down && this.actSec >= (cur === 'bowSlam' ? BOW_SLAM_LAND : cur === 'daggerSlam' ? (this.actStart || 0.2) + DIVE.raise + DIVE.time / DIVE.rate : LAND.flip)) { M.down = 1; this.footPuff(12, 1.2, true); }
       // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
       if (cur === 'flip' && this.actSec < 0.55) {
         rig.head.getWorldPosition(vB);
@@ -343,7 +349,7 @@ export class Character {
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)
     let leanX = run * 0.16 + (cur === 'flip' ? 0.2 * (1 - Math.min(1, this.actSec / 0.5)) : 0);
-    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip' && cur !== 'clubDash' && cur !== 'swordDash') leanX = 0; // 생활·공격 동작 중에는 똑바로
+    if (ACTS[this.anim] && cur !== 'jump' && cur !== 'flip' && cur !== 'clubDash' && cur !== 'swordDash' && cur !== 'daggerDash' && cur !== 'daggerDash2') leanX = 0; // 생활·공격 동작 중에는 똑바로
     const leanZ = THREE.MathUtils.clamp(-turn * 0.035, -0.22, 0.22) * run;
     const a = 1 - Math.exp(-dt * 10);
     this.body.rotation.x += (leanX - this.body.rotation.x) * a;

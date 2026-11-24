@@ -43,14 +43,21 @@ export const ANIM = {
   BOW_AIR: 39, BOW_SLAM: 40, BOW_BACK: 41, // 활 점프 공격(대각선 아래로) · 더블 점프 공격 · 달리기 공격(뒤돌아 쏘기)
   STAFF_CAST: 42, // 마법 지팡이: 앞으로 찔러 마법 에너지 볼 날리기
   HURT: 43, ANGRY: 44, // 맞아서 아파함 (질끈 감은 눈) · 자꾸 맞으면 발을 동동 구르며 화냄
+  DAGGER1: 45, DAGGER2: 46, DAGGER3: 47, DAGGER4: 48, // 나무 단검(역수): 가로 베기 · 되베기 · 내려찍기 · 3타에 이어 치는 1타
+  DAGGER_AIR: 49, DAGGER_SLAM: 50, DAGGER_DASH: 51, // 나무 단검 점프 베기 · 더블 점프 뒤 앞 아래로 내려가며 베기 · 숙여 달려들며 베기
+  DAGGER_AIR2: 52, // 나무 단검 점프 공격 2타 (팔꿈치를 펴며 되베기)
+  DAGGER5: 53, // 나무 단검 4타: 내려찍은 자세에서 그대로 올려 베기 (DAGGER4 는 4타에 이어 치는 1타)
+  DAGGER_DASH2: 54, // 나무 단검 대시 공격 2타 (팔꿈치를 펴며 되베기)
+  STAFF_CHARGE: 55, STAFF_FIRE: 56, STAFF_BIG: 57, // 마법 지팡이: 꾹 눌러 기 모으기 · 다 모으기 전에 떼어 보통 볼 쏘기 · 다 모아 큰 볼 쏘기
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
-export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', 'staff']; // net: 잠자리채(+ 왼손 채집통)
+export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', 'staff', 'dagger']; // net: 잠자리채(+ 왼손 채집통), dagger: 나무 단검
 // 활: 화살통에 넣고 다니는 화살 최대 개수 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
 export const ARROW = { max: 30, speed: 24, range: 20 };
 // 마법 지팡이: 에너지 볼 한 발에 드는 마나 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
-export const BOLT = { cost: 12, speed: 8, range: 16, splash: 1 }; // speed: m/초 (눈으로 따라갈 수 있게 화살보다 느리게), splash: 터질 때 맞는 반지름(m)
+export const BOLT = { cost: 12, speed: 8, range: 16, splash: 1, // speed: m/초 (눈으로 따라갈 수 있게 화살보다 느리게), splash: 터질 때 맞는 반지름(m)
+  charge: 1.2, chargeCost: 15, big: 2 }; // 기 모으기: 다 모으는 데 걸리는 시간(초) · 모으는 동안 1초에 드는 마나 · 다 모아 쏜 볼의 크기·터지는 둘레 배수
 export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이·목검)는 인벤토리에서 꺼냄
 // 테스트 서버에서 광장에 놓는 생활 체험용 나무
 export const LIFE_SPOTS = [
@@ -416,6 +423,16 @@ export function inThrust(ax, az, rot, bx, bz) {
   const ahead = dx * Math.sin(rot) + dz * Math.cos(rot);
   const side = dx * Math.cos(rot) - dz * Math.sin(rot);
   return ahead > -0.1 && ahead < 2.4 && Math.abs(side) < 0.5;
+}
+
+// 단검 더블 점프 공격(앞 아래로 내려가며 베기)에 맞았는지: 내려온 길 전체 (착지한 자리에서 보는 쪽 뒤로 2.3m ~ 앞으로 0.9m, 옆으로 0.6m)
+// 앞으로 곧게 내려오므로, 착지한 순간에 지나온 길을 거슬러 한 번에 잰다
+export function inDive(ax, az, rot, bx, bz) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const ahead = dx * Math.sin(rot) + dz * Math.cos(rot);
+  const side = dx * Math.cos(rot) - dz * Math.sin(rot);
+  return ahead > -2.3 && ahead < 0.9 && Math.abs(side) < 0.6;
 }
 
 // 네트워크용 압축: m → cm 정수, 각도 → 0~255

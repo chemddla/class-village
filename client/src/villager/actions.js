@@ -3,6 +3,7 @@
 // 관절: root → pelvis → spine → head / shoulderR·L → elbowR·L → handR·L,  pelvis → hipR·L → kneeR·L → footR·L
 // 부호: 팔·다리 rx < 0 이면 앞으로, 무릎 rx > 0 이면 뒤로 굽힘, 오른팔(R, -x쪽) rz < 0 이면 옆으로 들어 올림.
 import * as THREE from 'three';
+import { BOLT } from '../../../shared/world.js';
 
 const PI = Math.PI;
 const sm = THREE.MathUtils.smoothstep;
@@ -304,12 +305,14 @@ function bowPose(u, P, fx, { legs = true } = {}) {
   P['head.ry'] = kf(u, [0, 0], [0.22, 1.3], [0.85, 1.3], [1, 0]);
   P['head.rx'] = kf(u, [0, 0], [0.22, 0.12], [0.85, 0.12], [1, 0]); // 살짝 숙여 화살 줄을 내려다본다
   P['shoulderL.rx'] = kf(u, [0, 0], [0.22, -1.5], [0.85, -1.5], [1, 0]);
-  P['shoulderR.rx'] = kf(u, [0, 0], [0.25, -1.45], [0.66, -1.3], [0.8, -1.0], [1, 0]);
-  P['elbowR.rx'] = kf(u, [0.25, 0], [0.66, -1.2], [0.8, -0.8], [1, 0]);
+  // 놓은 뒤 오른팔은 앞으로 다시 들지 않고 곧장 내려간다 (조준선 자세에서 풀릴 때 팔이 위로 튀어 오르지 않게)
+  P['shoulderR.rx'] = kf(u, [0, 0], [0.25, -1.45], [0.66, -1.3], [1, 0]);
+  P['elbowR.rx'] = kf(u, [0.25, 0], [0.66, -1.2], [1, 0]);
   if (legs) P['hipL.rx'] = kf(u, [0, 0], [0.2, -0.2], [0.85, -0.2], [1, 0]);
   fx.bowL = kf(u, [0, 0], [0.22, 1], [0.85, 1], [1, 0]);
-  fx.bowR = kf(u, [0.05, 0], [0.25, 1], [0.7, 1], [0.82, 0]);
+  fx.bowR = kf(u, [0.05, 0], [0.25, 1], [0.76, 1], [0.97, 0]);
   fx.draw = kf(u, [0.28, 0], [0.6, 1], [0.66, 1], [0.7, 1.3]);
+  fx.drop = kf(u, [0.69, 0], [0.9, 1]); // 놓은 뒤 뒤로 빠진 손이 아래로 떨어지는 정도 (equipment.js bowDraw)
   fx.nock = u > 0.28 && u < 0.66;
   fx.arrow = u > 0.25 && u < 0.66;
 }
@@ -329,7 +332,30 @@ function bowDown(t, P, fx, pitch, draw, rel, back) {
   P['spine.rx'] = (P['spine.rx'] ?? 0) + pitch * 0.35 * w;
   P['head.rx'] = (P['head.rx'] ?? 0) + pitch * 0.45 * w;
 }
-export const BOW_PITCH = { bowAir: 0.3, bowSlam: 0.5 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 17°·29°: 발밑이 아니라 앞쪽 멀리 꽂히게)
+// 조준(bowAim)을 sec 초 동안 했을 때 시위를 당긴 정도 0~1 (그림에서 시위가 당겨진 정도 fx.draw 와 같다)
+export function bowDrawn(sec) {
+  const u = Math.min(1, Math.max(0, sec) / ACTIONS.bowAim.duration);
+  return Math.min(1, kf(u * 0.6, [0.28, 0], [0.6, 1]));
+}
+// 지팡이 기 모으기: staffBolt 에서 다 들어 올려 끝에 기를 모은 진행도 · 찌르기를 시작하는 진행도
+const BOLT_RAISED = 0.56;
+const BOLT_THRUST = 0.58;
+function fireFromRaised(size) {
+  const bolt = () => ACTIONS.staffBolt;
+  const rest = 1 - BOLT_THRUST;
+  return {
+    get duration() { return bolt().duration * rest; },
+    get hitAt() { return (bolt().hitAt - BOLT_THRUST) / rest; },
+    equip: 'staff',
+    fn(u, P, fx) {
+      const v = BOLT_THRUST + u * rest;
+      bolt().fn(v, P, fx);
+      fx.charge = v < bolt().hitAt ? (size > 1 ? size : 0.5) : 0; // 다 모은 기는 쏠 때까지 크게 남아 있다 (1 = 날아가는 볼 크기)
+      if (size > 1) fx.glow = Math.max(fx.glow, kf(v, [0.58, 3.2], [0.76, 3.2], [0.82, 0.6], [1, 0]));
+    },
+  };
+}
+export const BOW_PITCH ={ bowAir: 0.3, bowSlam: 0.5 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 17°·29°: 발밑이 아니라 앞쪽 멀리 꽂히게)
 
 // 두 점 사이 섞기 / 두 방향 사이를 원호로 섞기 (방향은 길이 1)
 const mix = (a, b, t) => a.map((x, i) => x + (b[i] - x) * t);
@@ -620,6 +646,152 @@ function swordSwing(name) {
     },
   };
 }
+
+// ── 나무 단검 (역수): 짧고 빠르게 여러 번 ──
+// 1타 오른쪽 → 왼쪽 가로 베기 · 2타 왼쪽 → 오른쪽 되베기 · 3타 머리 옆으로 치켜들었다가 앞 아래로 내려찍기 · 이어 치는 1타 …
+// 키의 날 방향(blade)은 칼끝 쪽. 역수라 도구 +Y(자루 끝)는 그 반대쪽이므로 뒤집어 넘긴다.
+// 가로 베기는 주먹이 앞장서고 날은 주먹 뒤로 끌리게 둔다 (날끝이 움직이는 쪽을 향하면 베기가 아니라 찌르는 것처럼 보인다)
+// 왼손은 칼을 잡지 않고 가슴 앞에 들어 막는 자세를 잡는다
+const dkey = (u, arm, reach, blade, pole, ease, line) => key(u, arm, reach, blade.map((x) => -x), pole, ease, line);
+// 평소 들고 다니는 자세 그대로 (쇼룸 대기 자세에서 잰 값): 팔은 거의 곧게 내리고, 날은 아래팔을 따라 뒤 위로 눕는다.
+// 동작은 여기서 시작해 여기로 돌아온 뒤 손을 놓는다 → 쥐는 순간·놓는 순간 주먹이 한 장면 만에 뒤집히지 않는다
+const DAGGER_READY = { arm: [-0.12, -0.17, 0.05], reach: 0.21, dir: [0.18, -0.3, 0.94], pole: [-0.1, -0.25, -0.97] };
+const DAGGER_STYLES = {
+  // 1타: 팔을 오른쪽 옆 뒤로 길게 뻗어 당겼다가, 팔꿈치를 안쪽으로 깊이 접으며 몸 앞을 크게 감아 주먹을 왼쪽 어깨 너머까지 밀어 넣으며 벤다
+  // (팔꿈치는 오른쪽 바깥 → 앞을 향한다). 허리도 오른쪽으로 깊이 감았다가 왼쪽까지 크게 풀어 베는 길이를 늘린다
+  stab1: { duration: 0.46, hitAt: 0.4,
+    keys: [dkey(0.2, [-0.85, -0.1, -0.2], 0.215, [-0.1, 0.2, -0.97], [-0.3, -1, -0.4]),
+      dkey(0.4, [-0.1, -0.15, 1], 0.17, [-0.9, -0.25, 0.35], [-1, -0.3, 0], 'in'),
+      dkey(0.53, [0.65, -0.12, 0.75], 0.11, [-0.55, -0.25, 0.8], [-0.9, -0.2, 0.4]),
+      dkey(0.62, [0.95, -0.08, 0.25], 0.085, [-0.15, -0.2, 0.97], [-0.5, -0.2, 0.85]),
+      dkey(0.7, [0.9, -0.05, -0.2], 0.08, [0.25, -0.2, 0.95], [-0.2, -0.2, 0.95], 'out')],
+    // 돌아오는 길: 벤 끝의 팔 자세에서 평소 팔 자세까지 어깨·팔꿈치·손목을 함께 같은 비율로 옮긴다 (settle, equipment.js settleArm).
+    // 팔꿈치가 펴지는 동안 어깨도 함께 내려간다 (길을 되짚거나 날 방향을 키로 맞추면 관절이 차례로 움직이거나 엉뚱하게 꺾인다)
+    settle: true, tail: 0.25,
+    twist: [[0, 0], [0.2, -0.9], [0.4, 0.2, 'in'], [0.7, 1.15, 'out']] },
+  // 2타: 1타를 베어 낸 자세(왼쪽 어깨 앞에 접은 팔)를 그대로 붙잡고, 팔꿈치만 펴고 어깨만 살짝 바깥으로 돌리며 오른쪽으로 되벤다.
+  // 손목은 돌리거나 꺾지 않는다 (hold: 앞 장면 팔 자세에서 팔꿈치 펴기 ext · 어깨 돌리기 yaw, equipment.js holdArm).
+  // keys 의 끝 키는 그렇게 편 끝 자세를 잰 값: 3타와 돌아오는 길이 여기서 이어진다
+  stab2: { duration: 0.34, hitAt: 0.4, from: 'stab1',
+    hold: { ext: [[0.06, 0], [0.4, 0.75, 'in'], [0.6, 1, 'out']], yaw: [[0.06, 0], [0.4, -0.08, 'in'], [0.6, -0.12, 'out']] },
+    keys: [dkey(0.6, [-0.94, -0.35, 0.02], 0.216, [0.42, 0.72, -0.55], [-0.2, 0.26, -0.94])],
+    // ↑ 쇼룸에서 1타 → 2타로 재생해 잰 끝 자세. 팔이 다 펴져 팔꿈치 자리로는 굽는 쪽을 못 재므로, 위팔이 실제로 비틀린 쪽(뼈 +Z의 반대)을 쓴다
+    // 돌아오는 길: 오른쪽으로 편 팔을 그대로 내리며 날을 뒤로 눕힌다
+    back: [dkey(0.78, [-0.6, -0.75, 0.1], 0.21, [0.2, 0.5, -0.85], [-0.4, -0.3, -0.85])],
+    twist: [[0, 0.9], [0.06, 0.9], [0.4, 0, 'in'], [0.6, -0.3, 'out']] },
+  // 3타: 오른쪽 머리 옆 위로 치켜들었다가, 왼쪽 앞 아래로 대각선으로 내려찍는다 (날끝은 찍는 쪽 아래를 향한다)
+  stab3: { duration: 0.46, hitAt: 0.45, from: 'stab2',
+    keys: [dkey(0.25, [-0.7, 0.6, 0.3], 0.18, [0.3, -0.3, 0.9], [-1, -0.3, -0.2]),
+      dkey(0.45, [0.25, -0.5, 0.85], REACH, [0.35, -0.9, 0.3], [-0.6, -1, 0], 'in'),
+      dkey(0.62, [0.45, -0.75, 0.5], 0.18, [0.4, -0.9, 0.2], [-0.5, -1, 0.1], 'out')],
+    // 돌아오는 길: 날을 아래 뒤로 돌리며 팔을 내린다
+    back: [dkey(0.8, [0, -0.85, 0.45], 0.19, [-0.1, -0.5, -0.85], [-0.4, -0.5, -0.7])],
+    // 찍을 때 상체를 깊이 숙이고 무릎도 더 굽혀 몸무게를 실어 더 아래까지 찍는다 (lean: 상체 숙임, sink: 무릎 굽힘)
+    lean: [[0, 0.1], [0.25, -0.05], [0.45, 0.5, 'in'], [0.62, 0.55], [0.8, 0.3], [1, 0]],
+    sink: [[0, 0.3], [0.25, 0.25], [0.45, 0.65, 'in'], [0.7, 0.55], [1, 0]],
+    twist: [[0, -0.5], [0.25, -0.7], [0.45, 0.3, 'in'], [0.62, 0.6, 'out']] },
+};
+const SIDE4 = -0.42; // 4타 끝에서 상체를 왼쪽으로 기울이는 각 (음수가 왼쪽)
+// 4타: 3타로 왼쪽 앞 아래까지 내려찍은 자세에서, 팔을 앞으로 쭉 뻗은 채 몸 앞을 크게 지나 오른쪽 위로 대각선으로 베어 올린다
+// (팔을 접은 채 3타 길을 되감으면 찍은 칼을 뽑는 것처럼 보인다). 베어 올리는 동안 손목을 살짝 위로 꺾어, 아래를 향했던 날끝을 앞으로 세운다.
+// 숙였던 상체도 펴며 올라온다. 끝나면 1타처럼 어깨·팔꿈치·손목을 함께 내린다
+{
+  DAGGER_STYLES.stab4 = { duration: 0.4, hitAt: 0.42, from: 'stab3',
+    keys: [dkey(0.26, [0.35, -0.62, 0.7], REACH, [0.3, -0.7, 0.65], [-0.6, -0.9, 0]), // 숙인 채 발 앞 낮은 곳에서 출발해 크게 베어 올린다
+      dkey(0.42, [-0.3, 0.45, 0.85], REACH, [0.1, -0.1, 0.99], [-0.8, -0.6, 0], 'in'),
+      dkey(0.6, [-0.35, 0.92, 0.18], REACH, [0, 0.2, 0.98], [-1, -0.3, -0.2], 'out')], // 오른쪽 대각선 위로 팔을 쭉 뻗어 올린다 (몸 앞 가운데로 올리면 날이 얼굴 앞을 지나 머리에 닿는다)
+    settle: true, tail: 0.25,
+    // 시작할 때 더 숙였다가, 베어 올리며 무릎·상체를 다 펴고 끝에는 살짝 뒤로 젖힌다 (몸 전체로 크게 올려 벤다)
+    lean: [[0, 0.55], [0.1, 0.65], [0.26, 0.6], [0.42, 0.1, 'in'], [0.6, -0.22, 'out'], [0.8, -0.12], [1, 0]],
+    side: [[0, 0], [0.26, 0], [0.6, SIDE4, 'out'], [0.8, SIDE4 * 0.6], [1, 0]], // 베어 올릴 때 상체·머리를 왼쪽으로 기울여 팔이 머리에 걸리지 않고 위로 쭉 올라가게
+    sink: [[0, 0.55], [0.1, 0.65], [0.26, 0.6], [0.42, 0.25, 'in'], [0.6, 0, 'out'], [1, 0]],
+    twist: [[0, 0.6], [0.1, 0.7], [0.26, 0.6], [0.42, 0.1, 'in'], [0.6, -0.9, 'out']] };
+}
+// 4타에 이어 치는 1타: 올려 벤 오른쪽 위 자세에서 팔을 오른쪽 옆으로 내리며, 아래를 향한 날을 아래 뒤로 돌려 눕혀 당긴다
+// (날이 앞 아래에서 뒤로 거의 반 바퀴 돌아야 해서, 곧장 가면 주먹이 한 장면 만에 뒤집힌다)
+DAGGER_STYLES.stab1b = { ...DAGGER_STYLES.stab1, from: 'stab4',
+  keys: [dkey(0.1, [-0.95, 0, 0.1], 0.2, [-0.3, -0.85, -0.4], [-0.4, -1, -0.2]), ...DAGGER_STYLES.stab1.keys] };
+const DAGGER_TAIL = 0.2;
+function daggerSwing(name) {
+  const S = DAGGER_STYLES[name];
+  const prev = S.from ? DAGGER_STYLES[S.from] : null;
+  // 끝에 평소 자세로 돌아오는 키를 붙인다 (이어 치는 다음 타는 그 앞, 휘두른 끝 자세에서 시작한다)
+  const keys = [{ ...(prev ? prev.keys.at(-1) : DAGGER_READY), u: 0 }, ...S.keys, ...(S.back ?? []), { ...DAGGER_READY, u: 0.95 }];
+  const rel = 0.7;
+  // 돌아오는 부분만 DAGGER_TAIL 초 늘린다: 휘두르는 박자(타격·이어 치기 시각, 초)는 그대로이고,
+  // 한 번만 치고 멈출 때 날을 뒤로 눕히며 평소 자세로 돌아오는 길이 급하지 않게 한다
+  const D = S.duration + (S.tail ?? DAGGER_TAIL);
+  const cut = S.keys.at(-1).u; // 휘두른 끝 자세 (여기까지는 원래 빠르기)
+  const toU = (sec) => (sec <= S.duration * cut ? sec / S.duration : cut + (1 - cut) * (sec - S.duration * cut) / (D - S.duration * cut));
+  const scale = S.duration / D;
+  return {
+    duration: D, hitAt: S.hitAt * scale, equip: 'dagger', rate: 48, trail: [(S.hold ? 0.15 : S.keys[0].u) * scale, cut * scale],
+    fn(u0, P, fx) {
+      const u = toU(u0 * D);
+      const back = sm(u, rel, 1);
+      const tw = kf(u, ...S.twist) * (1 - back);
+      P['spine.ry'] = tw * 0.6;
+      P['pelvis.ry'] = tw * 0.4;
+      P['head.ry'] = -tw * 0.75;
+      crouch(P, S.sink ? kf(u, ...S.sink) : kf(u, [0, prev ? 0.3 : 0.1], [S.hitAt, 0.4, 'in'], [rel, 0.35], [1, 0]));
+      wideStance(P, kf(u, [0, prev ? 0.8 : 0], [0.2, 0.9], [rel, 0.9], [1, 0]));
+      P['spine.rx'] += S.lean ? kf(u, ...S.lean) : kf(u, [0, 0.05], [S.hitAt, 0.15], [rel, 0.12], [1, 0]) * (1 - back);
+      if (S.lean) P['head.rx'] = -kf(u, ...S.lean) * 0.5; // 깊이 숙여도 고개는 들어 앞을 본다
+      if (S.side) { // 상체·머리를 옆으로 기울인다 (팔을 머리 위쪽으로 올릴 자리를 낸다)
+        const z = kf(u, ...S.side);
+        P['spine.rz'] = (P['spine.rz'] ?? 0) + z;
+        P['head.rz'] = z * 0.5;
+      }
+      // 왼팔: 가슴 앞에 들어 올려 막는 자세 (때릴 때마다 살짝 당긴다)
+      const pull = kf(u, [0, 0], [S.hitAt, 1, 'in'], [rel, 0.4], [1, 0]);
+      swordLeftArm(P, 0.45 + pull * 0.15, -0.75 + pull * 0.25, -1.5 - pull * 0.2, back);
+      // 오른팔의 바탕 자세는 평소 대기 자세 (쥔 손을 놓으면 여기로 녹아든다)
+      P['shoulderR.rz'] = -ARM_REST;
+      P['shoulderR.rx'] = -0.1;
+      P['elbowR.rx'] = -0.08;
+      if (S.settle && u >= cut) {
+        if (u < 0.99) fx.armSettle = sm(u, cut, 0.99);
+      } else if (S.hold && u < cut) {
+        // 팔 붙잡기: 한 손 쥐기는 끝 자세를 겨눈 채(다음 동작이 곧장 이어받게) 두고, 실제 팔은 붙잡은 자세에서 팔꿈치·어깨만 움직인다
+        const k = S.keys.at(-1);
+        fx.oneHand = { arm: unit(k.arm).map((x) => x * k.reach), dir: unit(k.dir), pole: unit(k.pole), body: true };
+        fx.armHold = { ext: kf(u, ...S.hold.ext), yaw: kf(u, ...S.hold.yaw) };
+      } else {
+        // 평소 자세로 돌아온 뒤(0.95)에야 쥔 자리를 놓는다
+        const g = swordPath(Math.min(u, 0.95), keys);
+        fx.oneHand = { arm: g.pos.map((x, n) => x - SHOULDER_R[n]), dir: g.dir, pole: g.pole, body: true, w: 1 - sm(u, 0.93, 1) };
+      }
+      fx.carry = true; // 주먹 속 단검 각도(역수)는 휘두르는 동안에도 그대로
+    },
+  };
+}
+
+// 나무 단검 공중·대시 공격의 키 자세
+// 점프 공격 (v: 휘두르기 시작부터, 0.5 = 타격): 오른쪽 위로 당겼다가 팔꿈치를 접으며 왼쪽 앞 아래로 대각선으로 벤다.
+// 1타처럼 주먹이 앞장서고 날은 뒤로 끌린다. 벤 뒤에는 1타처럼 어깨·팔꿈치·손목을 함께 옮겨 평소 팔 자세로 내린다 (settleArm)
+// (오른쪽 옆 뒤로 길게 당겼다가, 팔꿈치를 깊이 접으며 왼쪽 옆구리 앞까지 밀어 넣어 베는 길을 늘린다)
+const DAGGER_AIR_KEYS = [{ ...DAGGER_READY, u: 0 }, dkey(0.25, [-0.65, 0.25, -0.65], 0.19, [-0.1, 0.5, -0.85], [-0.4, -1, -0.4]), // 당길 때 팔꿈치를 살짝 굽혀 둔다 (다 펴 두면 벨 때 접히는 쪽을 못 정해 팔이 튄다)
+  dkey(0.38, [-0.9, -0.05, 0.35], 0.17, [-0.45, 0.35, -0.82], [-0.6, -0.8, -0.1]), // 오른쪽 옆을 지나간다 (등 뒤에서 몸 앞으로 곧장 가면 팔이 어느 쪽으로 돌지 못 정해 튄다)
+  dkey(0.5, [0, -0.25, 1], 0.125, [-0.75, 0.35, 0.55], [-1, -0.3, 0], 'in'), dkey(0.63, [0.65, -0.35, 0.7], 0.09, [-0.5, 0.25, 0.8], [-0.9, -0.3, 0.35]), // 팔꿈치를 안쪽으로 접은 채 감아 벤다
+  dkey(0.72, [0.95, -0.35, 0.15], 0.085, [-0.15, 0.2, 0.97], [-0.5, -0.2, 0.85]),
+  dkey(0.8, [0.8, -0.35, -0.4], 0.08, [0.45, 0.2, 0.87], [-0.1, -0.2, 0.97], 'out')]; // 왼쪽 어깨 뒤쪽까지 밀어 넣는다
+// 대시 공격 (u: 진행도, 0.6 = 타격): 몸을 숙여 달려드는 동안 단검을 허리 뒤로 낮게 빼 두었다가, 오른쪽 옆으로 당겨 1타처럼 벤다.
+// 팔꿈치를 안쪽으로 접으며 가슴 높이 가운데를 감아 주먹을 왼쪽 어깨 앞까지 밀어 넣고, 날은 주먹 뒤로 끌린다.
+// 몸을 숙인 만큼 어깨가 내려가므로 팔은 1타보다 조금 위로 뻗는다 (그대로 두면 발밑을 베는 것처럼 낮다)
+const DAGGER_DASH_KEYS = [{ ...DAGGER_READY, u: 0 }, dkey(0.25, [-0.5, -0.75, -0.45], 0.19, [-0.2, 0.35, -0.9], [-0.3, 0, -1]),
+  dkey(0.45, [-0.6, 0.15, -0.75], 0.215, [0.1, 0.25, -0.97], [-0.3, -1, -0.4]),
+  dkey(0.6, [-0.1, 0.2, 1], 0.13, [-0.9, -0.1, 0.4], [-1, -0.3, 0], 'in'), // 팔꿈치를 안쪽으로 접은 채 감아 벤다
+  dkey(0.69, [0.65, 0.2, 0.72], 0.09, [-0.55, -0.1, 0.8], [-0.9, -0.2, 0.4]),
+  dkey(0.74, [0.95, 0.2, 0.2], 0.085, [-0.15, -0.1, 0.97], [-0.5, -0.2, 0.85]),
+  dkey(0.79, [0.9, 0.22, -0.2], 0.08, [0.25, -0.1, 0.95], [-0.2, -0.2, 0.95]),
+  dkey(0.84, [0.7, 0.22, -0.6], 0.08, [0.55, -0.1, 0.83], [0, -0.2, 1], 'out')]; // 왼쪽 어깨 뒤쪽까지 밀어 넣는다
+// 더블 점프 공격: 누르면 먼저 DIVE.raise 초 동안 공중에서 팔을 오른쪽 위 대각선으로 치켜들고,
+// 이어서 DIVE.time 초 동안 앞 아래로 빠르게 내려가며 같은 대각선을 따라 왼쪽 앞 아래로 내려찍는다. 착지해 버틴다
+// 단검 대시 공격(1·2타) 재생 빠르기: 동작 안의 시각(초)은 그대로 두고 이 배만큼 빠르게 재생한다 (게임 쪽 시점·달려드는 빠르기도 이것으로 맞춘다)
+export const DASH_RATE = 1.2;
+// from: 공중제비가 이만큼(초) 돈 뒤에 시작한다 (더 일찍 누르면 기다렸다가)
+// rate: 치켜든 뒤의 동작(내려가며 찍기·착지 뒤)을 이 배만큼 빠르게 재생한다 (치켜들기는 원래 빠르기: 공중제비를 너무 빨리 마저 돌면 팔이 튄다)
+export const DIVE = { raise: 0.18, time: 0.2, from: 0.3, rate: 1.2 };
 
 // ── 잠자리채 휘두르기: 오른 어깨 뒤로 채를 젖혔다가, 팔을 쭉 뻗은 채 오른쪽 → 앞 → 왼쪽으로 크게 쓸어 담는다 ──
 // level: 0 가슴 높이로 오른쪽 위에서 앞 아래로 덮기, 1 머리 위로 높이 쓸기(나는 곤충), -1 쪼그려 앉으며 발 앞을 위에서 덮기(땅·꽃 곤충)
@@ -1052,6 +1224,11 @@ Object.assign(ACTIONS, {
   swordSlash2: swordSwing('slash2'),
   swordSlash3: swordSwing('slash3'),
   swordSlash4: swordSwing('slash1b'), // 3타에 이어 치는 1타
+  daggerStab1: daggerSwing('stab1'),
+  daggerStab2: daggerSwing('stab2'),
+  daggerStab3: daggerSwing('stab3'),
+  daggerStab4: daggerSwing('stab1b'), // 4타에 이어 치는 1타
+  daggerStab5: daggerSwing('stab4'), // 4타: 올려 베기
   // 공중 공격: 뛰어오른 도중에 누르면 그 높이 그대로 이어받아(재생기의 offset) 공중에서 수평으로 휘두른다.
   // 몸 높이는 점프 동작 그대로이고, 누른 순간(sec0)부터 0.38초 동안 휘두른다
   clubAir: {
@@ -1244,6 +1421,185 @@ Object.assign(ACTIONS, {
         kf(u, [0, -0.5], [0.3, -0.75], [0.48, -1.2, 'in'], [0.66, -0.95]), back);
     },
   },
+  // ── 나무 단검 공중·대시 공격 (역수, 한 손) ──
+  // 점프 공격: 뛰어오른 높이를 그대로 이어받아 공중에서 한 번 크게 대각선으로 벤다 (목검보다 짧고 빠르게)
+  daggerAir: {
+    duration: 0.95, equip: 'dagger', rate: 48, rootRate: 120, hitAfter: 0.15, offset: 0.15,
+    fn(u, P, fx, sec, sec0) {
+      ACTIONS.jump.fn(u, P);
+      fx.carry = true;
+      const v = (sec - (sec0 || 0.15)) / 0.3; // 휘두르기 시작부터 (0.5 = 타격)
+      if (v < 0) return;
+      // 오른팔 바탕 자세는 평소 대기 자세 (점프 동작의 팔 자세 대신): 벤 뒤 여기로 내린다
+      P['shoulderR.rz'] = -ARM_REST;
+      P['shoulderR.rx'] = -0.1;
+      P['elbowR.rx'] = -0.08;
+      if (v < 0.8) swordAim(fx, DAGGER_AIR_KEYS, v);
+      else if (v < 1.45) fx.armSettle = sm(v, 0.8, 1.45); // 벤 끝 자세에서 어깨·팔꿈치·손목을 함께 내린다
+      fx.trail = v > 0.25 && v < 0.8;
+      const tw = kf(v, [0, 0], [0.25, -1.3], [0.5, 0.2, 'in'], [0.8, 1.35, 'out'], [1.6, 0]);
+      P['pelvis.ry'] = tw * 0.45;
+      P['spine.ry'] = tw * 0.6;
+      P['head.ry'] = -tw * 0.75;
+      // 다리: 두 무릎을 끌어올려 몸을 웅크렸다가, 착지가 가까워지면 점프 착지 자세로
+      const k = kf(v, [0, 0], [0.3, 1], [1.2, 1]) * (1 - sm(u, 0.62, 0.76));
+      for (const s of SIDES) { P[`hip${s}.rx`] -= 0.6 * k; P[`knee${s}.rx`] += 0.9 * k; }
+      P['spine.rx'] += 0.25 * k * kf(v, [0, 0], [0.5, 1, 'in']);
+      const pull = kf(v, [0, 0], [0.5, 1, 'in'], [0.75, 0.5], [1.3, 0]);
+      swordLeftArm(P, 0.7 + pull * 0.3, -0.5 + pull * 0.4, -1.2 - pull * 0.2, kf(v, [0.8, 0], [1.3, 1]));
+    },
+  },
+  // 점프 공격 2타: 점프 공격 1타를 벤 자세(왼쪽 옆구리 앞에 접은 팔)를 그대로 붙잡고, 일반 2타처럼 팔꿈치만 펴고 어깨만 살짝 돌리며
+  // 오른쪽으로 되벤다 (equipment.js holdArm). 뛰어오른 높이는 1타에서 그대로 이어받고(길이가 점프와 같다), 벤 뒤에는 어깨·팔꿈치를 함께 내린다
+  daggerAir2: {
+    duration: 0.95, equip: 'dagger', rate: 48, rootRate: 120, hitAfter: 0.12, offset: 0.4,
+    fn(u, P, fx, sec, sec0) {
+      ACTIONS.jump.fn(u, P);
+      fx.carry = true;
+      const t = sec - (sec0 || 0.4); // 2타를 시작한 뒤 흐른 초
+      P['shoulderR.rz'] = -ARM_REST;
+      P['shoulderR.rx'] = -0.1;
+      P['elbowR.rx'] = -0.08;
+      if (t < 0.2) fx.armHold = { ext: kf(t, [0, 0], [0.12, 0.75, 'in'], [0.2, 1, 'out']), yaw: kf(t, [0, 0], [0.12, -0.08, 'in'], [0.2, -0.12, 'out']) };
+      else if (t < 0.6) fx.armSettle = sm(t, 0.2, 0.6);
+      fx.trail = t > 0.02 && t < 0.2;
+      const tw = kf(t, [0, 1.35], [0.12, 0.1, 'in'], [0.2, -0.3, 'out'], [0.7, 0]);
+      P['pelvis.ry'] = tw * 0.45;
+      P['spine.ry'] = tw * 0.6;
+      P['head.ry'] = -tw * 0.75;
+      // 다리: 1타처럼 웅크린 채, 착지가 가까워지면 점프 착지 자세로
+      const k = 1 - sm(u, 0.62, 0.76);
+      for (const s of SIDES) { P[`hip${s}.rx`] -= 0.6 * k; P[`knee${s}.rx`] += 0.9 * k; }
+      P['spine.rx'] += 0.25 * k;
+      swordLeftArm(P, 1.0, -0.1, -1.4, kf(t, [0.25, 0], [0.7, 1]));
+    },
+  },
+  // 더블 점프 공격: 공중제비 도중에 누르면 곧바로 찍지 않고, 남은 공중제비를 마저 돌며 잠깐 떠서 팔을 오른쪽 위 대각선으로 치켜든다.
+  // 이어서 앞으로 기울며 앞 아래로 빠르게 내려가(앞으로 나아가는 것은 게임 쪽) 같은 대각선으로 내려찍으며 지나가는 길을 벤다. 착지하면 낮게 웅크려 버틴다
+  daggerSlam: {
+    duration: 1.2, equip: 'dagger', rate: 48, rootRate: 40, hitAfter: DIVE.raise + (DIVE.time + 0.02) / DIVE.rate, offset: 0.2,
+    fn(u, P, fx, secRaw, sec0) {
+      const F = 0.85; // 공중제비 길이
+      const s0 = sec0 || 0.2;
+      const sec = secRaw < s0 + DIVE.raise ? secRaw : s0 + DIVE.raise + (secRaw - s0 - DIVE.raise) * DIVE.rate; // 치켜든 뒤로는 DIVE.rate 배 빠르게
+      const TD = s0 + DIVE.raise; // 치켜들기를 마치고 내려가기 시작하는 때
+      const TL = TD + DIVE.time; // 발이 땅에 닿는 때 (찍는 순간)
+      ACTIONS.flip.fn(Math.min(1, sec / F), P);
+      fx.carry = true;
+      if (sec < s0) return;
+      // 누른 순간의 공중제비 높이·회전에서 이어 간다
+      const P0 = {};
+      ACTIONS.flip.fn(Math.min(1, s0 / F), P0);
+      const ang0 = P0['root.rx'];
+      for (const k in P) if (!k.startsWith('root.')) P[k] = 0; // 공중제비 자세는 버리고 새로
+      // 몸: 치켜드는 동안 남은 공중제비를 마저 돌아 가슴을 살짝 젖힌 채 잠깐 떠 있다가, 앞으로 기울며 앞 아래로 내려가 착지한다
+      const pitch = kf(sec, [s0, ang0], [s0 + 0.1, PI * 2 - 0.15, 'out'], [TD, PI * 2 - 0.1], [TL - 0.04, PI * 2 + 0.3, 'in'], [TL + 0.08, PI * 2]);
+      P['root.rx'] = pitch;
+      // 공중제비 높이에는 몸 가운데를 축으로 돌리느라 더한 높이(0.45 - 0.45·cos 회전각)가 들어 있다.
+      // 이 몫은 누른 순간 값으로 붙잡지 않고 지금 회전각으로 다시 계산한다 (공중제비와 같이: 몸 가운데가 제자리에서 돈다).
+      // 붙잡아 두면 몸을 세운 뒤에도 그만큼 높이 떠서, 거꾸로 돌던 순간에 누르면 훨씬 위에서 찍는다
+      const comp0 = 0.45 - 0.45 * Math.cos(ang0);
+      const base0 = P0['root.py'] - comp0; // 발 기준으로 떠 있는 높이
+      const top = base0 + 0.04;
+      const w = Math.min(1, Math.max(0, (sec - TD) / DIVE.time));
+      const lift = sec < TD ? base0 + (top - base0) * sm(sec, s0, TD) : sec < TL ? top * (1 - EASE.in(w) * 0.6 - 0.4 * w) : 0;
+      P['root.py'] = lift + 0.45 - 0.45 * Math.cos(pitch);
+      P['root.pz'] = -0.45 * Math.sin(pitch);
+      // 오른팔: 오른쪽 위 대각선으로 치켜들었다가, 같은 대각선을 따라 왼쪽 앞 아래로 내려찍는다 (3타와 같은 길). 찍은 뒤에는 1타처럼 어깨·팔꿈치를 함께 내린다
+      P['shoulderR.rz'] = -ARM_REST;
+      P['shoulderR.rx'] = -0.1;
+      P['elbowR.rx'] = -0.08;
+      // (치켜들 때 팔을 옆으로 들며 날을 위로 세웠다가 앞으로 넘긴다: 평소 자세에서 곧장 가면 날이 150도 가까이 돌며 주먹이 뒤집힌다)
+      const keys = [{ ...DAGGER_READY, u: s0 }, dkey(s0 + DIVE.raise * 0.5, [-0.95, 0.1, 0.2], 0.2, [-0.2, 0.95, 0.1], [-0.3, -1, -0.3]),
+        dkey(TD, [-0.7, 0.6, 0.3], 0.18, [0.3, -0.3, 0.9], [-1, -0.3, -0.2]),
+        dkey(TL, [0.25, -0.3, 1], REACH, [0.4, -0.8, 0.45], [-0.6, -1, 0], 'in'), dkey(TL + 0.12, [0.5, -0.55, 0.7], 0.18, [0.45, -0.85, 0.3], [-0.5, -1, 0.1], 'out')];
+      if (sec < TL + 0.12) {
+        swordAim(fx, keys, sec);
+        fx.oneHand.w = sm(sec, s0, s0 + 0.08); // 공중제비의 웅크린 팔에서 서서히 쥔다 (곧바로 쥐면 첫 장면에 팔이 튄다)
+      } else if (sec < TL + 0.55) fx.armSettle = sm(sec, TL + 0.12, TL + 0.55);
+      fx.trail = sec > TD - 0.03 && sec < TL + 0.12;
+      // 다리: 치켜드는 동안 무릎을 끌어올려 웅크리고, 내려가는 동안 두 다리를 뒤로 굽혀 늘어뜨린다 → 착지하면 오른발을 앞에 두고 낮게 웅크려 버텼다가 일어난다
+      const k = kf(sec, [TL - 0.04, 0], [TL + 0.04, 1], [TL + 0.4, 1], [TL + 0.75, 0]);
+      if (sec < TD) {
+        for (const s of SIDES) { P[`hip${s}.rx`] = -0.7; P[`knee${s}.rx`] = 1.2; P[`foot${s}.rx`] = 0.2; }
+        P['spine.rx'] = -0.1;
+      } else if (sec < TL) {
+        for (const s of SIDES) { P[`hip${s}.rx`] = 0.35; P[`knee${s}.rx`] = 1.1; P[`foot${s}.rx`] = 0.3; }
+        P['hipL.rx'] = -0.4;
+        P['spine.rx'] = 0.35;
+      } else {
+        legs(P, k, [-0.85, 1.2], [0.3, 1.2], 0.3 * k);
+        P['spine.rx'] = 0.4 * k;
+        wideStance(P, 0.8 * k);
+      }
+      P['head.rx'] = -0.6 * (P['spine.rx'] ?? 0);
+      const tw = kf(sec, [s0, 0], [TD, -0.7], [TL, 0.3, 'in'], [TL + 0.12, 0.6, 'out'], [TL + 0.75, 0]);
+      P['pelvis.ry'] = tw * 0.4;
+      P['spine.ry'] = tw * 0.6;
+      P['head.ry'] = -tw * 0.8;
+      swordLeftArm(P, 1.1, 0.55, -0.4, kf(sec, [TL + 0.35, 0], [TL + 0.75, 1])); // 왼팔은 뒤로 벌려 균형을 잡는다
+    },
+  },
+  // 대시 공격: 달리다가 누르면 상체를 앞으로 깊이 숙이고 단검을 허리 뒤로 빼 낮게 달려들었다가, 닿는 순간 오른쪽 → 왼쪽으로 벤다
+  // (앞으로 나아가는 것은 게임 쪽에서 움직여 준다: 벨 때까지 빠르게, 벤 뒤에 멈춘다)
+  // (길이 0.87초: 달려들어 베기까지는 0.6초 동작 그대로이고(u), 벤 뒤 팔을 내리는 데만 시간을 더 준다)
+  daggerDash: {
+    duration: 0.87 / DASH_RATE, hitAt: 0.36 / 0.87, equip: 'dagger', rate: 48, rootRate: 120, trail: [0.288 / 0.87, 0.504 / 0.87],
+    fn(u0, P, fx) {
+      const sec = u0 * 0.87;
+      const u = sec <= 0.504 ? sec / 0.6 : 0.84 + 0.16 * (sec - 0.504) / (0.87 - 0.504);
+      fx.carry = true;
+      P['shoulderR.rz'] = -ARM_REST; // 오른팔 바탕 자세는 평소 대기 자세 (벤 뒤 쥔 손을 놓으면 여기로 녹아든다)
+      P['shoulderR.rx'] = -0.1;
+      P['elbowR.rx'] = -0.08;
+      if (u < 0.84) swordAim(fx, DAGGER_DASH_KEYS, u);
+      else if (u < 0.99) fx.armSettle = sm(u, 0.84, 0.99); // 1타처럼 벤 끝 자세에서 어깨·팔꿈치·손목을 함께 내린다
+      // 다리: 낮게 달려드는 걸음 (오른발로 박차고 왼무릎을 앞으로) → 벨 때 오른발을 크게 내딛고 무릎을 굽혀 멈춘다
+      const step = kf(u, [0, 0], [0.5, 1], [0.6, 1]);
+      const ph = Math.sin(step * PI * 2);
+      const k = kf(u, [0.5, 0], [0.62, 1, 'in'], [0.8, 1], [1, 0]);
+      const run = 1 - k;
+      legs(P, 1, [kf(u, [0, 0.3], [0.5, 0.3 - 0.6 * ph], [0.62, -1.0], [1, 0]), kf(u, [0, 0.6], [0.5, 0.9], [0.62, 1.4], [1, 0.1])],
+        [kf(u, [0, -0.4], [0.5, -0.4 + 0.6 * ph], [0.62, 0.35], [1, -0.05]), kf(u, [0, 0.8], [0.5, 1.1], [0.62, 1.3], [1, 0.1])]);
+      wideStance(P, 0.6 * k);
+      // 앞으로 깊이 숙인 채 달려들고, 벤 뒤 천천히 일어난다
+      P['spine.rx'] = kf(u, [0, 0.2], [0.2, 0.75], [0.45, 0.65], [0.6, 0.45], [0.8, 0.4], [1, 0]); // 벨 때는 상체를 조금 세워 가슴 높이를 벤다
+      P['head.rx'] = -0.7 * P['spine.rx'];
+      P['root.py'] = (P['root.py'] ?? 0) - 0.04 * run * kf(u, [0, 0], [0.2, 1], [1, 1]);
+      const tw = kf(u, [0, 0], [0.25, -0.8], [0.45, -1.3], [0.6, 0.2, 'in'], [0.84, 1.45, 'out'], [1, 0]);
+      P['pelvis.ry'] = tw * 0.4;
+      P['spine.ry'] = tw * 0.6;
+      P['head.ry'] = -tw * 0.75;
+      // 왼팔: 달려드는 동안 앞으로 내밀어 겨누고, 벨 때 뒤로 당긴다
+      swordLeftArm(P, kf(u, [0, 0.6], [0.3, 0.5], [0.6, 0.9], [0.78, 0.8]), kf(u, [0, -0.3], [0.3, -0.9], [0.6, 0.2, 'in'], [0.78, 0.2]),
+        kf(u, [0, -0.5], [0.3, -0.6], [0.6, -1.3], [0.78, -1.1]), kf(u, [0.8, 0], [1, 1]));
+    },
+  },
+  // 대시 공격 2타: 대시로 왼쪽 어깨 뒤까지 감아 벤 자세(대시 0.5초 자세)를 그대로 이어받아, 일반 2타처럼 팔꿈치만 펴고 어깨만 살짝 돌리며
+  // 오른쪽으로 되벤다 (equipment.js holdArm, 손목은 그대로). 숙인 몸은 그 자세에서 천천히 일으키고, 벤 뒤에는 어깨·팔꿈치를 함께 내린다
+  daggerDash2: {
+    duration: 0.65 / DASH_RATE, hitAt: 0.12 / 0.65, equip: 'dagger', rate: 48, rootRate: 120, trail: [0.02 / 0.65, 0.2 / 0.65],
+    fn(u, P, fx) {
+      const t = u * 0.65;
+      // 몸: 대시 1타가 벤 끝 자세(0.5초)를 그대로 받아, 2타를 벤 뒤 서서히 평소 자세로 푼다
+      const f0 = {};
+      ACTIONS.daggerDash.fn(0.5 / 0.87, P, f0);
+      const rest = 1 - sm(t, 0.22, 0.62);
+      for (const k in P) P[k] *= rest;
+      const tw = kf(t, [0, 1.45], [0.12, 0.1, 'in'], [0.2, -0.3, 'out'], [0.62, 0]);
+      P['pelvis.ry'] = tw * 0.4;
+      P['spine.ry'] = tw * 0.6;
+      P['head.ry'] = -tw * 0.75;
+      P['shoulderR.rz'] = -ARM_REST;
+      P['shoulderR.rx'] = -0.1;
+      P['elbowR.rx'] = -0.08;
+      fx.carry = true;
+      if (t < 0.2) {
+        fx.oneHand = f0.oneHand; // 쥔 정도를 이어 둔다 (팔은 아래 붙잡기가 덮어쓴다)
+        fx.armHold = { ext: kf(t, [0, 0], [0.12, 0.75, 'in'], [0.2, 1, 'out']), yaw: kf(t, [0, 0], [0.12, -0.08, 'in'], [0.2, -0.12, 'out']) };
+      } else if (t < 0.6) fx.armSettle = sm(t, 0.2, 0.6);
+    },
+  },
   // 쇼룸에서 비교해 보는 시안 (게임은 clubSmash 만 쓴다)
   clubOverhead: clubSwing(CLUB_STYLES.overhead),
   clubSide: clubSwing(CLUB_STYLES.side),
@@ -1382,22 +1738,41 @@ Object.assign(ACTIONS, {
       fx.glow = kf(u, [0, 0.2], [0.48, 0.6], [0.66, 1.6], [1, 0]);
     },
   },
-  // 일반 공격: 지팡이를 머리 위로 들어 올려 끝에 에너지를 모았다가(끝이 점점 밝아지며 살짝 떨림) 앞으로 찔러 에너지 볼을 날린다
+  // 일반 공격: 지팡이를 머리 오른쪽 위로 대각선으로 들어 끝에 에너지를 모았다가(끝이 점점 밝아지며 살짝 떨림) 몸 가운데 정면으로 찔러 에너지 볼을 날린다
   staffBolt: {
-    duration: 0.95, hitAt: 0.76, equip: 'staff', // 쏘는 때: 관절이 따라와 완드가 앞으로 다 뻗은 뒤 (끝이 손과 같은 높이)
+    duration: 0.95, hitAt: 0.76, equip: 'staff', // 쏘는 때: 관절이 따라와 완드가 앞으로 다 뻗은 뒤 (끝이 몸 가운데 정면)
     fn(u, P, fx) {
       const shake = Math.sin(u * 120) * 0.04 * sm(u, 0.3, 0.45) * (1 - sm(u, 0.58, 0.62)); // 모으는 동안 부르르
-      // 들 때는 손목을 꺾지 않는다: 완드는 아래팔과 직각이라, 팔을 어깨보다 조금 높게 앞으로 들면 끝이 하늘을 향한다
-      P['shoulderR.rx'] = kf(u, [0, 0], [0.28, -1.95], [0.58, -2.0], [0.66, -1.4], [0.85, -1.4], [1, 0]) + shake;
-      P['handR.rx'] = kf(u, [0.58, 0], [0.66, 1.2], [0.85, 1.2], [1, 0]); // 찌를 때만 손목을 꺾어 끝이 앞을 향하게
-      // 어깨 옆 각도는 절대값: 쉴 때(-ARM_REST)에서 시작·끝나고, 내내 바깥쪽(음수)에 머물러야 팔이 몸통 속으로 파고들지 않는다
-      P['shoulderR.rz'] = kf(u, [0, -ARM_REST], [0.28, -0.6], [0.58, -0.6], [0.66, -0.45], [0.85, -0.45], [1, -ARM_REST]);
-      fx.shoulderIn = 0; // 팔을 들고 뻗는 동안 어깨 관절을 몸 안쪽으로 모으지 않는다 (villager.js followShoulders)
+      P['shoulderR.rx'] = kf(u, [0, 0], [0.28, -1.6], [0.58, -1.65], [0.66, -1.4], [0.85, -1.4], [1, 0]) + shake;
+      // 완드는 아래팔과 직각이라 팔을 들면 끝이 하늘을 향한다: 들 때는 손목을 조금 꺾어 대각선으로 들고,
+      // 찌를 때는 손목을 아래로 더 꺾어 끝이 앞(살짝 아래)을 향하게. 손목을 옆으로는 꺾거나 비틀지 않는다
+      P['handR.rx'] = kf(u, [0, 0], [0.28, 0.6], [0.58, 0.6], [0.66, 1.25], [0.85, 1.25], [1, 0]);
+      // 어깨 옆 각도는 절대값: 쉴 때(-ARM_REST)에서 시작·끝난다. 들 때는 팔을 옆으로 벌려 지팡이가 머리 오른쪽 바깥에 서고(머리를 뚫지 않게),
+      // 찌를 때는 앞으로 뻗은 팔을 몸 안쪽으로 밀어 지팡이 끝이 몸 가운데 정면에 오게 한다 (어깨 관절 자리는 그대로: 아래 shoulderIn = 0)
+      P['shoulderR.rz'] = kf(u, [0, -ARM_REST], [0.28, -1.05], [0.58, -1.05], [0.66, 0.24], [0.85, 0.24], [1, -ARM_REST]);
+      fx.shoulderIn = 0; // 팔을 들고 뻗는 동안 어깨 관절을 몸통 안쪽으로 옮기지 않는다 (villager.js followShoulders)
       P['shoulderL.rz'] = kf(u, [0, ARM_REST], [0.28, 0.8], [0.58, 0.8], [0.7, ARM_REST]); // 왼팔은 살짝 벌려 균형
       P['spine.rx'] = kf(u, [0, 0], [0.28, -0.12], [0.58, -0.14], [0.66, 0.2], [0.85, 0.15], [1, 0]); // 젖혔다가 앞으로
       fx.glow = kf(u, [0, 0.2], [0.28, 0.6], [0.58, 2], [0.74, 2], [0.82, 0.6], [1, 0]);
+      fx.charge = kf(u, [0.3, 0], [0.58, 0.5], [0.74, 0.5], [0.76, 0]); // 끝에 모인 작은 기 (쏘는 순간 볼이 되어 날아간다)
     },
   },
+  // 공격키를 꾹 누르고 있으면: 지팡이를 든 자세(staffBolt 의 BOLT_RAISED) 그대로 기를 모은다. 갈수록 끝의 빛 덩이가 커지고 더 세게 떨린다
+  // (길이 BOLT.charge 동안 모으고 그 뒤로는 다 모은 자세 그대로. 공격키를 떼면 main.js 가 staffFire(덜 모음) / staffBig(다 모음) 으로 넘긴다)
+  staffCharge: {
+    duration: BOLT.charge, hold: true, equip: 'staff',
+    fn(u, P, fx, sec) {
+      ACTIONS.staffBolt.fn(BOLT_RAISED, P, fx);
+      const k = 0.4 + 0.6 * u;
+      P['shoulderR.rx'] += Math.sin(sec * 70) * 0.035 * k; // 모을수록 부르르
+      P['spine.rx'] += Math.sin(sec * 53) * 0.015 * k;
+      fx.glow = 2 + 1.2 * u;
+      fx.charge = 0.5 + 0.5 * u * u * (BOLT.big * 2 - 1); // 볼 크기의 절반 → 다 모으면 큰 볼 크기
+    },
+  },
+  // 기를 모으던 자세에서 앞으로 찔러 쏘기: staffBolt 의 찌르기 부분만 (staffFire 보통 볼 · staffBig 다 모은 큰 볼)
+  staffFire: fireFromRaised(1),
+  staffBig: fireFromRaised(BOLT.big),
   hit: {
     duration: 0.65, expression: 'surprised',
     fn(u, P) {

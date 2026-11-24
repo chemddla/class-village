@@ -155,6 +155,7 @@ function catTail(parent, color, pts, r = 0.006) {
 // g > move(이동·방향) > body(바닥 가운데 기준 기울기) > 몸통·다리·머리·꼬리
 const HAAK_LINE = 0.0022;
 const LEG_Y = 0.026; // 다리 회전축 높이 (몸통 속)
+const KNEE_AT = 0.014; // 다리 회전축에서 무릎까지 (아래로)
 // 새끼 고양이 다리: 위는 통통, 아래로 갈수록 가늘어지는 짧은 다리. 뒷다리는 발목이 살짝 뒤로 꺾인다 (회전축이 y=0, 발바닥 쪽이 -y)
 function kittenLeg(hind) {
   // 발바닥부터 몸통 속 끝까지 부드러운 곡선 하나로 굵기를 정한다: 동그란 발 → 가는 발목 → 통통한 윗다리 → 둥근 끝
@@ -220,7 +221,28 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
     l.position.set(x, LEG_Y, z);
     l.userData.y0 = LEG_Y;
     body.add(l);
-    mesh(kittenLeg(hind), fur, l, '다리');
+    // 무릎(앞발은 팔꿈치·손목, 뒷발은 발목): 다리 가운데에 뼈를 하나 더 두고, 그 아래는 무릎 뼈를 따라 휜다
+    const hip = new THREE.Bone(), knee = new THREE.Bone();
+    knee.position.y = -KNEE_AT;
+    hip.add(knee);
+    l.add(hip);
+    const geo = kittenLeg(hind);
+    const p = geo.attributes.position, idx = [], wt = [];
+    for (let i = 0; i < p.count; i++) {
+      const w = THREE.MathUtils.smoothstep(-p.getY(i), KNEE_AT - 0.004, KNEE_AT + 0.004); // 무릎 둘레에서 부드럽게 넘어감
+      idx.push(0, 1, 0, 0);
+      wt.push(1 - w, w, 0, 0);
+    }
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wt, 4));
+    const sk = new THREE.SkinnedMesh(geo, fur);
+    sk.name = '다리';
+    sk.castShadow = true;
+    l.add(sk);
+    g.updateMatrixWorld(true);
+    sk.bind(new THREE.Skeleton([hip, knee]));
+    l.userData.knee = knee;
+    l.userData.hind = hind;
     return l;
   });
   const head = new THREE.Group();
@@ -341,11 +363,23 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
   return {
     // 땅 밑으로 파고든 만큼 통째로 들어 올림 (기울거나 찌부러져도 몸이 땅에 묻히지 않게)
     ground() {
-      move.updateWorldMatrix(true, true);
+      // 부모(자리·방향)까지 새로 계산한 뒤, 아래로는 updateMatrixWorld 로: 휘는 다리(SkinnedMesh)의 묶는 자세 역행렬도
+      // 이번 장면 기준으로 고쳐야 굽힌 발 위치를 바로 읽는다 (안 그러면 지난 장면에 띄운 만큼이 쌓여 몸이 둥둥 떠오름)
+      move.updateWorldMatrix(true, false);
+      move.updateMatrixWorld(true);
       let min = Infinity;
       for (const m of solid) {
         if (!m.visible) continue;
         const p = m.geometry.attributes.position, e = m.matrixWorld.elements;
+        if (m.isSkinnedMesh) { // 굽힌 다리: 무릎 뼈를 따라 옮긴 자리로
+          m.skeleton.update();
+          for (let i = 0; i < p.count; i += 3) {
+            const v = m.applyBoneTransform(i, ws.tmp.fromBufferAttribute(p, i));
+            const wy = e[1] * v.x + e[5] * v.y + e[9] * v.z + e[13];
+            if (wy < min) min = wy;
+          }
+          continue;
+        }
         for (let i = 0; i < p.count; i += 2) {
           const wy = e[1] * p.getX(i) + e[5] * p.getY(i) + e[9] * p.getZ(i) + e[13];
           if (wy < min) min = wy;
@@ -432,6 +466,14 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
         b.rotation.z = (bz * 0.7) / (TAIL_N - 1) + ws.tz * 0.25 * k + Math.sin(t * this.tailWaveF - j * 0.7) * this.tailWave * (0.3 + 0.7 * k);
       }
     },
+    // 다리 굽히기 (k 0 쭉 ~ 1 꽉 접음): 앞발은 손목이 뒤로, 뒷발은 발목이 앞으로 꺾임.
+    // 윗다리는 반대로 조금 틀어서 발이 몸 밑에 그대로 있게 (그 위에 동작이 rotation.x 를 더해도 됨)
+    bend(i, k) {
+      const l = legs[i], sd = l.userData.hind ? -1 : 1;
+      l.userData.knee.rotation.x = sd * 1.6 * k;
+      l.rotation.x -= sd * 0.75 * k;
+      l.scale.y *= 1 - 0.08 * k; // 접으면 무릎이 살짝 몸 쪽으로
+    },
     // 귀 접기: 옆으로 너무 벌리지 않고 뒤로 눕혀서 밑동이 머리에 붙어 있게
     earAt(a) { ears.forEach(([e, s]) => { e.rotation.z = -s * (0.35 + a * 0.55); e.rotation.x = -Math.max(0, a) * 0.6; }); },
     eyeSize(k) { face.eyes.forEach((e) => e.scale.set(k, k * e.scale.y, 1)); },
@@ -463,7 +505,7 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
       body.scale.set(1, 1, 1);
       torso.rotation.set(0, 0, 0);
       this.fluff(0);
-      legs.forEach((l) => { l.rotation.set(0, 0, 0); l.scale.set(1, 1, 1); });
+      legs.forEach((l) => { l.rotation.set(0, 0, 0); l.scale.set(1, 1, 1); l.userData.knee.rotation.set(0, 0, 0); });
       head.position.set(0, 0.058, 0.03);
       head.rotation.set(0, 0, 0);
       head.scale.set(1, 1, 1);
@@ -865,6 +907,127 @@ hmotion('쓰러짐', '비틀비틀 다리 풀려 옆으로 픽, 축 늘어짐 �
   }
 });
 
+// 9. 툭툭: 곤충을 앞발로 툭툭 (H.reach 0 = 땅·꽃에 앉은 곤충, 0 초과 = 나는 곤충: 클수록 높이 뜀)
+export const SWAT_TAPS = [0.5, 0.88]; // 앉은 곤충: 앞발이 닿는 순간 (초)
+export const JUMP_TAPS = [0.6, 0.68]; // 나는 곤충: 공중에서 앞발이 닿는 순간 (초)
+export const swatTaps = (reach) => (reach > 0 ? JUMP_TAPS : SWAT_TAPS);
+
+// 앉은 곤충: 다리를 접어 납작 엎드리고 엉덩이 씰룩 → 앞발을 손목부터 말아 올렸다가 쭉 뻗으며 툭, 툭
+function groundSwat(c, H, t) {
+  const ready = ease(seg(c, 0, 0.25)) * (1 - ease(seg(c, 1.1, 1.45)));
+  const wig = bump(c, 0.05, 0.32); // 치기 직전 엉덩이 씰룩
+  H.body.position.y = -0.012 * ready; // 다리를 접은 만큼 내려앉음 (너무 내려가면 ground()가 받쳐 줌)
+  H.body.rotation.x = 0.1 * ready;
+  H.head.rotation.x = 0.3 * ready; // 눈은 곤충에 딱 고정
+  H.torso.rotation.y = Math.sin(t * 26) * 0.16 * wig;
+  // 뒷다리: 꾹 접어 엉덩이를 낮추고, 씰룩일 때 번갈아 꼼지락
+  [2, 3].forEach((i) => {
+    H.legs[i].rotation.z = (i === 2 ? 1 : -1) * Math.sin(t * 26 + (i - 2)) * 0.12 * wig;
+    H.bend(i, 0.6 * ready + 0.15 * wig * Math.max(0, Math.sin(t * 26 + (i - 2) * PI)));
+  });
+  // 한 번 칠 때: 손목을 말아 발을 들어 올렸다가 → 쭉 뻗으며 탁! → 천천히 거둠
+  [[0, 0.28, SWAT_TAPS[0], 0.7], [1, 0.66, SWAT_TAPS[1], 1.1]].forEach(([i, a, hit, b]) => {
+    const raise = ease(seg(c, a, hit - 0.07)) * (1 - ease(seg(c, hit - 0.07, hit)));
+    const strike = ease(seg(c, hit - 0.07, hit)) * (1 - ease(seg(c, hit + 0.05, b)));
+    const l = H.legs[i], sd = i ? 1 : -1;
+    l.rotation.x = -0.25 * ready - 1.1 * raise - 0.55 * strike;
+    l.rotation.z = sd * 0.25 * raise;
+    H.bend(i, 0.45 * ready * (1 - strike) + 0.6 * raise); // 엎드릴 땐 살짝 접고, 들 땐 말고, 칠 땐 쭉
+    H.body.rotation.y += -sd * 0.12 * strike; // 치는 쪽 어깨가 따라 나감
+    H.move.position.y += 0.004 * bump(c, hit - 0.08, hit + 0.12); // 탁! 칠 때 몸이 살짝 들썩
+  });
+  H.eyeSize(1 + 0.3 * ready); // 집중! 눈 동그랗게
+  H.earAt(-0.25 * ready); // 귀는 앞으로 쫑긋
+  if (c > 0.3 && c < 1.0) H.mouthAs('flat'); else hBlink(H, t);
+  // 꼬리는 낮게 깔고 끝만 파닥파닥 (사냥하는 고양이)
+  H.tail.rotation.x = 0.2 * ready;
+  H.tailCurl = 0.05;
+  H.tailWave = 0.1 + 0.2 * ready;
+  H.tailWaveF = 9;
+}
+
+// 나는 곤충: 네 다리를 꾹 접어 웅크리고 엉덩이 씰룩 → 뒷다리를 쭉 펴 박차고 폴짝 → 공중에서 앞발로 툭, 툭 → 다리를 접으며 착지
+// k: 얼마나 높이 뛰나 (0 ~ 1)
+function jumpSwat(c, H, t, k) {
+  const crouch = ease(seg(c, 0, 0.3)) * (1 - ease(seg(c, 0.36, 0.44))); // 웅크림 (박차오르며 풀림)
+  const wig = bump(c, 0.08, 0.36); // 뛰기 직전 엉덩이 씰룩
+  const push = bump(c, 0.36, 0.52); // 박차기: 뒷다리를 쭉 펴서 땅을 밀어냄
+  const p = seg(c, 0.42, 0.88); // 공중에 떠 있는 동안 0 → 1
+  const air = p > 0 && p < 1 ? Math.sin(PI * p) : 0; // 몸을 쭉 뻗은 정도
+  const tuck = p > 0.55 && p < 1 ? Math.sin(PI * (p - 0.55) / 0.45) : 0; // 내려올 때 뒷다리를 앞으로 당겨 착지 준비
+  const land = bump(c, 0.86, 1.1); // 착지: 다리를 접으며 충격을 받음
+  const after = ease(seg(c, 0.88, 1.0)) * (1 - ease(seg(c, 1.15, 1.45))); // 내려와서 위를 멍하니
+  H.move.position.y = (0.03 + 0.06 * k) * 4 * p * (1 - p);
+  // 웅크림·착지: 다리를 접은 만큼 몸이 내려앉음 (너무 내려가면 ground()가 받쳐 줌)
+  H.body.position.y = -0.016 * crouch - 0.012 * land;
+  H.torso.rotation.y = Math.sin(t * 26) * 0.16 * wig;
+  // 공중: 앞쪽을 번쩍 들어 몸을 세움
+  H.body.rotation.x = 0.08 * crouch - (0.55 + 0.25 * k) * air + 0.12 * land;
+  H.head.rotation.x = -0.3 * crouch + 0.25 * air - 0.25 * after - 0.1 * land; // 몸이 서도 얼굴은 곤충 쪽
+  // 뒷다리: 웅크릴 땐 꾹 접어 엉덩이 밑에 → 박찰 때 쭉 펴서 뒤로 → 내려올 땐 접어 앞으로 → 착지에 다시 접힘
+  [2, 3].forEach((i) => {
+    const l = H.legs[i], sd = i === 2 ? 1 : -1;
+    l.rotation.z = sd * Math.sin(t * 26 + (i - 2)) * 0.12 * wig;
+    l.rotation.x = 0.35 * push + 0.6 * air * (1 - tuck) - 0.5 * tuck;
+    l.scale.y = 1 + 0.08 * push; // 발끝까지 쭉
+    H.bend(i, 0.85 * crouch + 0.12 * wig * Math.max(0, Math.sin(t * 26 + (i - 2) * PI)) + 0.6 * tuck + 0.7 * land);
+  });
+  // 앞발: 웅크릴 땐 접어 가슴 밑에 → 공중에선 머리 위로 뻗고, 칠 땐 손목을 말아 치켜들었다가 쭉 뻗으며 툭
+  [[0, JUMP_TAPS[0]], [1, JUMP_TAPS[1]]].forEach(([i, hit]) => {
+    const sd = i ? 1 : -1;
+    const wind = bump(c, hit - 0.14, hit - 0.01); // 손목을 말아 더 높이 치켜들었다가
+    const strike = bump(c, hit - 0.03, hit + 0.12); // 탁! 내리침
+    const l = H.legs[i];
+    l.rotation.x = -0.2 * crouch - 1.7 * air - 0.5 * wind + 0.8 * strike;
+    l.rotation.z = sd * (0.15 * air + 0.2 * wind);
+    H.bend(i, 0.75 * crouch + 0.3 * air * (1 - strike) + 0.5 * wind + 0.55 * land);
+    H.body.rotation.y += -sd * 0.15 * strike;
+  });
+  H.body.scale.set(1 + 0.08 * land, 1 - 0.1 * land + 0.06 * air, 1 + 0.08 * land);
+  H.eyeSize(1 + 0.35 * Math.max(crouch, air)); // 집중! 눈 동그랗게
+  H.earAt(-0.3 * crouch - 0.15 * air + 0.3 * land);
+  if (crouch > 0.3) H.mouthAs('flat');
+  else if (air > 0.1) H.mouthAs('o', 0.7);
+  else hBlink(H, t);
+  // 꼬리: 웅크릴 땐 낮게 깔고 끝만 파닥, 뛰면 균형 잡느라 뒤로 쭉
+  H.tail.rotation.x = 0.2 * crouch - 0.7 * air;
+  H.tailCurl = 0.05 - 0.2 * air;
+  H.tailWave = 0.1 + 0.25 * crouch;
+  H.tailWaveF = 9;
+}
+hmotion('툭툭', '앉은 곤충 앞에서 엉덩이 씰룩 → 앞발로 툭, 툭', 1.5, (c, H, t) => {
+  if ((H.reach ?? 0) > 0) jumpSwat(c, H, t, H.reach); else groundSwat(c, H, t);
+});
+hmotion('점프 툭', '나는 곤충: 웅크렸다 폴짝 뛰어올라 공중에서 툭, 툭', 1.5, (c, H, t) => jumpSwat(c, H, t, 0.6));
+
+// 10. 실망: 날아간 곤충을 멍하니 올려다보다 → 고개 푹, 귀 축, 꼬리 축, 한숨 푸우
+hmotion('실망', '날아간 곤충을 멍하니 보다가 고개 푹, 한숨', 2.6, (c, H, t) => {
+  const look = ease(seg(c, 0, 0.15)) * (1 - ease(seg(c, 0.55, 0.8))); // 어? 날아갔다…
+  const sad = ease(seg(c, 0.55, 0.9)) * (1 - ease(seg(c, 2.3, 2.6)));
+  const sigh = bump(c, 1.1, 1.7); // 한숨: 몸이 부풀었다가 푹 꺼짐
+  const sit = Math.max(look, sad);
+  // 엉덩이 깔고 털썩 앉음: 뒷다리를 꾹 접어 엉덩이 밑에, 앞다리는 쭉 펴서 몸을 받침
+  H.body.rotation.x = -0.35 * sit;
+  H.body.position.y = -0.012 * sit;
+  [2, 3].forEach((i) => { H.legs[i].rotation.x = 0.2 * sit; H.bend(i, 0.9 * sit); });
+  [0, 1].forEach((i) => (H.legs[i].rotation.x = 0.3 * sit)); // 몸이 젖혀진 만큼 앞발은 몸 앞쪽 땅을 짚음
+  H.head.rotation.x = -0.35 * look + 0.5 * sad + 0.08 * sigh; // 위를 봤다가 고개 푹
+  H.head.rotation.z = 0.12 * sad + Math.sin(t * 1.5) * 0.03 * sad;
+  H.body.scale.set(1 + 0.05 * sigh, 1 + 0.06 * bump(c, 1.1, 1.35) - 0.08 * bump(c, 1.35, 1.8), 1 + 0.05 * sigh);
+  if (look > 0.2) { H.eyeSize(1.25); H.mouthAs('o', 0.7); }
+  else if (sad > 0.05) {
+    H.face.blink(0.45 + 0.1 * sigh); // 눈꺼풀이 반쯤 내려앉음
+    H.eyeSize(0.92);
+    H.mouthAs('frown', 1 + 0.2 * sigh);
+  } else hBlink(H, t);
+  H.earAt(0.75 * sad - 0.2 * look); // 귀가 옆으로 축 처짐
+  // 꼬리도 바닥에 축 늘어져 끝만 힘없이 살랑
+  H.tail.rotation.x = 0.7 * sad;
+  H.tailCurl = 0.15 - 0.35 * sad;
+  H.tailWave = 0.1 - 0.05 * sad;
+  H.tailWaveF = 1.2;
+});
+
 
 // build(e, s, r): e 는 얼굴 표면에 놓인 눈 하나의 자리(깜빡일 땐 e 를 납작하게), s 는 -1 왼눈 / 1 오른눈, r 은 기본 눈 크기
 const HAAK_EYES = {
@@ -932,6 +1095,8 @@ export const HAAKNYANG_MOTIONS = {
   hit: { label: '맞음', dur: 0.9 },
   die: { label: '쓰러짐', dur: 2.3 },
   spawn: { label: '등장', dur: 0.7 },
+  swat: { label: '곤충 툭툭', dur: 1.5 },
+  sulk: { label: '실망 (시무룩)', dur: 2.6 },
 };
 // 여러 구간을 이어 붙인 시간 바꾸기: [[u0, c0], [u1, c1], ...] 사이를 직선으로
 const remap = (u, pts) => {
@@ -1012,6 +1177,10 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
     } else if (state === 'attack') {
       // 덮치기: 엉덩이 씰룩(빠르게) → 0.47초에 덮쳐 닿음 → 코 박고 > < → 부르르 → 제자리
       motion('공격 ② 덮치기').fn(remap(u, [[0, 0.3], [0.25, 1.2], [0.47, 1.6], [1.6, 3.8]]), H, t);
+    } else if (state === 'swat') {
+      motion('툭툭').fn(u, H, t);
+    } else if (state === 'sulk') {
+      motion('실망').fn(u, H, t);
     } else if (state === 'hit') {
       motion('맞음').fn(0.15 + u * 2, H, t);
     } else if (state === 'die') {
@@ -1058,6 +1227,9 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
     update,
     // 기분: 'angry'(화난 채로) | null(보통)
     setMood(m) { if (m !== mood) { mood = m; moodT = 0; } },
+    // 곤충이 얼마나 높이 있나 (0 앉은 곤충 · 0 초과 나는 곤충, 클수록 높이 뜀): 툭툭 칠 때 엎드려 칠지 뛰어올라 칠지
+    setReach(k) { H.reach = k; },
     get state() { return state; },
+    get time() { return u; }, // 지금 동작을 시작한 지 (초)
   };
 }

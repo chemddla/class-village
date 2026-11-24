@@ -17,6 +17,8 @@ export const BANJJOK_MOTIONS = {
   idle: { label: '대기 (두리번)', loop: true },
   walk: { label: '걷기 (뒤뚱)', loop: true },
   rub: { label: '박박 문지르기', dur: 2.7 },
+  scrub: { label: '열심히 지우기 (몽당연필과 합동)', loop: true }, // 엎드려 계속 박박: 몸은 바깥(광장 몬스터)에서 낙서를 따라 움직인다
+  scrubEnd: { label: '다 지움! 뿌듯', dur: 1.2 },
   notice: { label: '발견!', dur: 1.3 },
   angry: { label: '화남!', dur: 1.1 },
   attack: { label: '공격 (몸통박치기)', dur: 1.6 },
@@ -351,6 +353,33 @@ export function createBanjjok({ fxParent = null, onDone = null, outlineScale = 1
         P.mouth = 'smile';
         P.eyes = 'half';
       }
+    } else if (state === 'scrub') {
+      // 앞으로 엎드려 땀 뻘뻘 흘리며 쉬지 않고 박박 (평소 문지르기보다 빠르고 세게)
+      const lean = smooth(seg(u, 0, 0.3));
+      P.rx = 0.45 * lean;
+      P.z = 0.012 * lean;
+      if (u > 0.3) {
+        const rub = Math.sin((u - 0.3) * PI * 2 * 7);
+        P.x = rub * 0.018;
+        P.rz = rub * 0.08;
+        P.y = Math.abs(rub) * 0.002;
+        P.eyes = 'squint';
+        P.mouth = 'grit';
+        P.sweat = true;
+        crumbClock += dt;
+        if (crumbClock > 0.08) { crumbClock = 0; crumbSide = -crumbSide; crumb(crumbSide); }
+      }
+    } else if (state === 'scrubEnd') {
+      // 몸을 일으켜 이마 땀을 털듯 부르르 → 폴짝 뛰며 반짝, 뿌듯
+      P.rx = 0.45 * (1 - smooth(seg(u, 0, 0.3)));
+      P.z = 0.012 * (1 - smooth(seg(u, 0, 0.3)));
+      if (u > 0.3 && u < 0.55) P.rz = Math.sin(u * 60) * 0.05;
+      const j = seg(u, 0.55, 0.9);
+      if (u >= 0.55) { P.y = Math.sin(j * PI) * 0.02; P.sy *= 1 + 0.08 * Math.sin(j * PI); }
+      if (u >= 0.9) { const w = wobble(u - 0.9); P.sy = 1 - 0.12 * w; P.sx = P.sz = 1 + 0.06 * w; }
+      P.eyes = u < 0.3 ? 'squint' : 'half';
+      P.mouth = 'smile';
+      if (once('stars', 0.7)) stars(5);
     } else if (state === 'notice') {
       // 깜짝 폴짝! 혹시 내 반쪽? 눈이 커지고 머리 위에 느낌표
       if (u < 0.12) { P.sy = 1 - 0.15 * (u / 0.12); P.sx = P.sz = 1 + 0.08 * (u / 0.12); }
