@@ -5,7 +5,7 @@ import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { ACTIONS, SHAKE, BOBBER } from './villager/actions.js';
-import { syncToon, mergeOutlines, mergeMeshes } from './villager/toon.js';
+import { syncToon, mergeOutlines, mergeMeshes, mergeSkinned } from './villager/toon.js';
 import { FX } from './fx.js';
 
 const wrapAngle = (d) => Math.atan2(Math.sin(d), Math.cos(d));
@@ -158,6 +158,7 @@ export class Character {
     const held = (o) => o === rightSocket || o === leftSocket || o.userData.back;
     mergeOutlines(this.villager.root, held);
     mergeMeshes(this.villager.root, held);
+    mergeSkinned(this.villager.root, held);
   }
 
   // 손에 든 도구 (평소에도 들고 다님)

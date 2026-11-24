@@ -165,42 +165,44 @@ function paintMaterial(side) {
   if (!paintMats.has(side)) paintMats.set(side, new THREE.MeshToonMaterial({ vertexColors: true, side, gradientMap: toonGradient }));
   return paintMats.get(side);
 }
+// 묶을 수 있는 재질인지, 같은 묶음에 들어갈 열쇠는 무엇인지 (꼭짓점 색으로 옮길 수 있으면 'p…', 아니면 텍스처·색이 같은 것끼리)
+const mergeable = (m) => m.material?.isMeshToonMaterial && !m.material.transparent && !m.material.emissive.getHex() && m.children.every((c) => c.userData.isOutline);
+const paintable = (mat) => !mat.map || !!mat.map.userData.bake;
+const mergeKey = (mat) => (paintable(mat) ? `p${mat.side}` : `${mat.map.uuid}${mat.bumpMap?.uuid}${mat.side}${mat.color.getHex()}`);
+// 묶을 조각 하나: 위치·법선(+ 꼭짓점 색 또는 UV)만 옮겨 담는다
+function mergePart(m, paint) {
+  const src = m.geometry;
+  const n = src.attributes.position.count;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', src.attributes.position.clone());
+  g.setAttribute('normal', src.attributes.normal.clone());
+  g.setIndex(src.index ? src.index.clone() : [...Array(n).keys()]);
+  if (paint) {
+    const col = new Float32Array(n * 3);
+    const { map, color } = m.material;
+    for (let i = 0; i < n; i++) {
+      if (map) sample(map, src.attributes.uv.getX(i), src.attributes.uv.getY(i)).multiply(color);
+      else texel.copy(color);
+      texel.toArray(col, i * 3);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  } else g.setAttribute('uv', src.attributes.uv.clone());
+  return g;
+}
 export function mergeMeshes(root, skip = () => false) {
   const walk = (parent) => {
     if (skip(parent)) return;
     const groups = new Map();
     for (const m of parent.children) {
-      const mat = m.material;
-      if (!m.isMesh || m.isSkinnedMesh || m.userData.isOutline || m.userData.merged || !mat?.isMeshToonMaterial || mat.transparent
-        || mat.emissive.getHex() || !m.children.every((c) => c.userData.isOutline)) continue;
-      const paint = !mat.map || mat.map.userData.bake;
-      const key = paint ? `p${mat.side}` : `${mat.map.uuid}${mat.bumpMap?.uuid}${mat.side}${mat.color.getHex()}`;
+      if (!m.isMesh || m.isSkinnedMesh || m.userData.isOutline || m.userData.merged || !mergeable(m)) continue;
+      const key = mergeKey(m.material);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(m);
     }
     for (const [key, list] of groups) {
       if (list.length < 2) continue;
       const paint = key[0] === 'p';
-      const parts = list.map((m) => {
-        const src = m.geometry;
-        const n = src.attributes.position.count;
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', src.attributes.position.clone());
-        g.setAttribute('normal', src.attributes.normal.clone());
-        g.setIndex(src.index ? src.index.clone() : [...Array(n).keys()]);
-        if (paint) {
-          const col = new Float32Array(n * 3);
-          const { map, color } = m.material;
-          for (let i = 0; i < n; i++) {
-            if (map) sample(map, src.attributes.uv.getX(i), src.attributes.uv.getY(i)).multiply(color);
-            else texel.copy(color);
-            texel.toArray(col, i * 3);
-          }
-          g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-        } else g.setAttribute('uv', src.attributes.uv.clone());
-        m.updateMatrix();
-        return g.applyMatrix4(m.matrix);
-      });
+      const parts = list.map((m) => { m.updateMatrix(); return mergePart(m, paint).applyMatrix4(m.matrix); });
       const merged = new THREE.Mesh(mergeGeometries(parts), paint ? paintMaterial(list[0].material.side) : list[0].material);
       merged.name = '묶음';
       merged.userData.merged = merged.userData.toon = true;
@@ -216,4 +218,75 @@ export function mergeMeshes(root, skip = () => false) {
     for (const c of [...parent.children]) if (!c.userData.isOutline && !c.userData.merged) walk(c);
   };
   walk(root);
+}
+
+// 휘는 부품(팔·다리·옷)도 묶는다: 부품마다 따로이던 뼈대를 하나로 이어 붙여, 재질이 같은 것끼리 한 메시로, 외곽선은 모두 한 메시로 그린다
+// (mergeMeshes 와 같은 규칙. 마을 캐릭터용이고 이미 묶은 것은 건너뛴다)
+// 뼈는 그대로 두고 번호만 새로 매긴다. 부품마다 다른 묶는 자세(bindMatrix)는 꼭짓점에 미리 곱해 두어 묶은 메시는 한 자세만 쓴다
+const IDENTITY = new THREE.Matrix4();
+function skinnedBatch(list, material, part, root) {
+  const bones = [];
+  const inverses = [];
+  const slots = new Map(); // 원래 뼈대 → 새 뼈대에서 시작 번호 (같은 뼈대를 쓰는 부품은 같은 자리를 쓴다)
+  const parts = list.map((m) => {
+    if (!slots.has(m.skeleton)) {
+      slots.set(m.skeleton, bones.length);
+      bones.push(...m.skeleton.bones);
+      inverses.push(...m.skeleton.boneInverses.map((b) => b.clone()));
+    }
+    const off = slots.get(m.skeleton);
+    const g = part(m);
+    const idx = Uint16Array.from(m.geometry.attributes.skinIndex.array, (v) => v + off);
+    g.setAttribute('skinIndex', new THREE.BufferAttribute(idx, 4));
+    g.setAttribute('skinWeight', m.geometry.attributes.skinWeight.clone());
+    return g.applyMatrix4(m.bindMatrix);
+  });
+  const mesh = new THREE.SkinnedMesh(mergeGeometries(parts), material);
+  mesh.frustumCulled = false; // 캐릭터를 통째로 숨기고 보이므로 따로 가리지 않는다
+  mesh.userData.merged = true;
+  root.add(mesh);
+  mesh.bind(new THREE.Skeleton(bones, inverses), IDENTITY);
+  return mesh;
+}
+export function mergeSkinned(root, skip = () => false) {
+  const outlines = [];
+  const groups = new Map();
+  const walk = (m) => {
+    if (skip(m)) return;
+    for (const c of m.children) walk(c);
+    if (!m.isSkinnedMesh || m.userData.merged) return;
+    if (m.userData.isOutline) { if (m.geometry.index && m.userData.thickness) outlines.push(m); return; }
+    if (!mergeable(m)) return;
+    const key = mergeKey(m.material);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  };
+  walk(root);
+  if (outlines.length > 1) {
+    const T = Math.max(...outlines.map((o) => o.userData.thickness));
+    const merged = skinnedBatch(outlines, outlineMaterial(T, outlines[0].userData.color), (o) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', o.geometry.attributes.position.clone());
+      g.setAttribute('normal', o.geometry.attributes.normal.clone());
+      g.setIndex(o.geometry.index.clone());
+      const src = o.geometry.attributes.noLine;
+      const nl = new Float32Array(g.attributes.position.count);
+      for (let i = 0; i < nl.length; i++) nl[i] = 1 - (1 - (src ? src.getX(i) : 0)) * (o.userData.thickness / T);
+      g.setAttribute('noLine', new THREE.BufferAttribute(nl, 1));
+      return g;
+    }, root);
+    merged.name = '외곽선';
+    merged.userData.isOutline = true;
+    merged.raycast = () => {};
+    for (const o of outlines) { if (o.parent.userData.outline === o) o.parent.userData.outline = merged; o.removeFromParent(); o.geometry.dispose(); }
+  }
+  for (const [key, list] of groups) {
+    if (list.length < 2) continue;
+    const paint = key[0] === 'p';
+    const merged = skinnedBatch(list, paint ? paintMaterial(list[0].material.side) : list[0].material, (m) => mergePart(m, paint), root);
+    merged.name = '묶음';
+    merged.userData.toon = true;
+    merged.userData.outline = list.find((m) => m.userData.outline)?.userData.outline;
+    for (const m of list) { m.removeFromParent(); m.geometry.dispose(); m.skeleton.dispose(); }
+  }
 }
