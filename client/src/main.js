@@ -239,7 +239,20 @@ function ouch(fromX, fromZ) {
   local.actLeft = actTime(local.act);
   local.hurt = local.actLeft; // 맞는 동안은 움직여도 끊기지 않음
   me.setPose(me.x, me.z, Math.atan2(fromX - me.x, fromZ - me.z)); // 때린 쪽으로 돌아봄
+  // 머리 위 말풍선으로 외친다 (모두에게 보이게 서버로도 보냄)
+  const line = angry ? ANGRY_LINE : OUCH_LINE;
+  me.say(line, angry ? 2.5 : 1.5);
+  room?.send('say', line);
   return angry;
+}
+const OUCH_LINE = '아야!';
+const ANGRY_LINE = '그만 때려! 😠';
+// 다른 학생이 맞는 것을 내 화면에서 봤다: 그 학생이 보낸 동작이 도착하기 전에 바로 아파하는 얼굴·'아야!'
+// (그 학생 화면에서 자꾸 맞아 화를 내면, 도착한 동작·말풍선이 이것을 바꿔 준다)
+function predictOuch(v) {
+  if (v.anim === ANIM.ANGRY && v.actLeft > 0) return;
+  v.forceAnim(ANIM.HURT, 0.6);
+  v.say(OUCH_LINE, 1.5);
 }
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
@@ -276,6 +289,7 @@ function hitFx(char, action) {
     if (victims.length || monHits.length) {
       for (const v of victims) {
         v.shake();
+        if (v !== me) predictOuch(v);
         burst('star', 9, at(v.x, v.z, 1.35), { spread: Math.PI, power: 0.9 });
         burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
         if (v === me) strong = true;
@@ -1062,9 +1076,10 @@ function netBonk(c, v, p) {
   v.shake();
   FX.burst('star', 9, headPos.x, headPos.y + 0.25, headPos.z, { floor: v.groundY, spread: Math.PI, power: 0.8 });
   if (c === me) netBlocked(p, { kind: 'head' }); // 내가 휘둘렀으면 내 채가 턱 막힌다
+  if (v !== me) predictOuch(v);
   if (v === me && local.dodge <= 0 && local.hurt <= 0) {
     // 내가 맞았다: 휘두른 쪽으로 돌아보며 아파한다 (그물이라 체력은 그대로). 자꾸 맞으면 화낸다
-    toast(ouch(c.x, c.z) ? '😠 자꾸 때리면 화낼 거예요!' : '앗! 잠자리채로 머리를 콩 맞았어요');
+    ouch(c.x, c.z);
   }
 }
 
@@ -1223,6 +1238,37 @@ function clickAction() {
   if (nearDrop(me.x, me.z) || findFruit(me.x, me.z)) return 'pick'; // 할 생활 동작이 없으면 발밑의 것을 줍거나 과일나무 흔들기
   return null;
 }
+
+// ── 말풍선 대화: Enter(또는 💬 버튼)로 칸을 열고, 쓰고 Enter 로 보내면 내 머리 위 말풍선으로 모두에게 보인다. Esc 로 닫기 ──
+const chatForm = $id('chat-form');
+const chatInput = $id('chat-input');
+function openChat() {
+  if (!me || !room) return;
+  chatForm.classList.remove('hidden');
+  input.enable(false); // 쓰는 동안 캐릭터가 움직이지 않게
+  chatInput.focus();
+}
+function closeChat() {
+  chatForm.classList.add('hidden');
+  chatInput.value = '';
+  chatInput.blur();
+  input.enable(true);
+}
+chatForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (text) room?.send('say', text);
+  closeChat();
+});
+chatInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChat(); });
+chatInput.addEventListener('blur', () => { if (!chatForm.classList.contains('hidden')) setTimeout(closeChat, 0); });
+$id('chat-btn').addEventListener('click', openChat);
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing || !chatForm.classList.contains('hidden')) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  e.preventDefault();
+  openChat();
+});
 
 const input = createInput({
   onAction(name) {
@@ -1531,6 +1577,10 @@ function attach(r) {
     announced.add(id);
     toast(`🦋 ${eul(sp.name)} 잡았다! ${stars(sp.rarity)} ${RARITY[sp.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
   });
+  r.onMessage('say', ([sid, text]) => {
+    const char = sid === r.sessionId ? me : others.get(sid)?.char;
+    if (char && typeof text === 'string') char.say(text, Math.min(7, 2.5 + text.length * 0.12));
+  });
   r.onMessage('woodRest', () => toast('이 나무에서는 목재를 다 얻었어요. 잠시 뒤에 다시 찍거나 다른 나무를 찍어 보세요'));
   r.onMessage('netResult', (m) => {
     if (local.netCaught) { village.bugs.hide(local.netCaught, false); local.netCaught = null; } // 그물에 걸린 줄 알았는데 서버는 놓쳤다고
@@ -1658,6 +1708,7 @@ function enterGame() {
   ui.hint.classList.remove('hidden');
   ui.invBtn.classList.remove('hidden');
   $id('dex-btn').classList.remove('hidden');
+  $id('chat-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
   $id('minimap').classList.remove('hidden');
   $id('map-size').classList.remove('hidden');

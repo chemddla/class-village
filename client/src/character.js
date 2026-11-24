@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { ANIM, COLORS, TOOLS, WORLD } from '../../shared/world.js';
 import { blobGeometry, curveDrop } from './materials.js';
-import { makeLabel } from './label.js';
+import { makeLabel, makeBubble } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { ACTIONS, SHAKE, BOBBER } from './villager/actions.js';
 import { syncToon, mergeOutlines, mergeMeshes, mergeSkinned } from './villager/toon.js';
@@ -173,8 +173,35 @@ export class Character {
   // 화살통에 든 화살 개수 (등의 화살통에 그만큼 보인다)
   setArrows(n) { this.villager.state.arrows = n; }
 
+  // 머리 위 말풍선: secs 초 동안 보였다가 흐려지며 사라진다 (새로 말하면 바꿔 끼움)
+  say(text, secs = 4) {
+    this.unsay();
+    this.bubble = makeBubble(text);
+    this.bubble.position.y = LABEL_Y + 0.2 + this.bubble.scale.y / 2;
+    this.bubbleT = secs;
+    this.root.add(this.bubble);
+  }
+  unsay() {
+    if (!this.bubble) return;
+    this.bubble.removeFromParent();
+    this.bubble.material.map.dispose();
+    this.bubble.material.dispose();
+    this.bubble = null;
+  }
+
+  // 남의 화면에서 그 학생의 동작을 미리 틀어 둔다 (맞는 순간 바로 아파하게: 그 학생이 보낸 동작이 도착하기 전까지 secs 초 동안 덮지 않음)
+  forceAnim(a, secs) {
+    this.forced = null;
+    this.setAnim(a);
+    this.forced = { a, until: performance.now() + secs * 1000 };
+  }
+
   // 동작 바꾸기 (잠깐 하는 동작으로 바뀌는 순간 한 번 재생)
   setAnim(a) {
+    if (this.forced) {
+      if (performance.now() < this.forced.until && a !== this.forced.a) return;
+      if (performance.now() >= this.forced.until) this.forced = null;
+    }
     if (a !== this.anim && ACTS[a]) {
       const from = CONTINUES[a];
       this.startAt = from !== undefined && this.anim === from && this.actLeft > 0 ? actTime(from) - this.actLeft : 0;
@@ -186,6 +213,11 @@ export class Character {
 
   update(dt) {
     this.time += dt;
+    if (this.bubble) {
+      this.bubbleT -= dt;
+      this.bubble.material.opacity = Math.min(1, this.bubbleT / 0.4);
+      if (this.bubbleT <= 0) this.unsay();
+    }
     this.root.rotation.y = lerpAngle(this.root.rotation.y, this.targetRot, Math.min(1, dt * 14));
 
     if (this.actLeft > 0) this.actLeft -= dt;
@@ -331,6 +363,7 @@ export class Character {
   }
 
   dispose() {
+    this.unsay();
     for (const k in this.trails) this.trails[k].dispose();
     this.villager.dispose();
     this.label.material.map.dispose();

@@ -305,6 +305,19 @@ class VillageRoom extends Room {
 
     this.onMessage('bye', (client) => this.bye.add(client.sessionId));
 
+    // 말풍선 대화: [글자]. 40자까지, 너무 잦으면(0.7초) 무시. 모두에게 ['say', 학생 번호, 글자] (선생님이 볼 수 있게 서버 기록에도 남김)
+    this.onMessage('say', (client, text) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || typeof text !== 'string') return;
+      const t = text.replace(/[ -]/g, '').trim().slice(0, 40);
+      if (!t) return;
+      const now = Date.now();
+      if (now - (client.userData?.sayAt ?? 0) < 700) return;
+      client.userData = { ...client.userData, sayAt: now };
+      this.broadcast('say', [client.sessionId, t]);
+      console.log(`[대화] ${p.name}: ${t}`);
+    });
+
     // 포탈 타기: [포탈 번호]. 포탈 가까이 있을 때만 이어진 포탈 앞으로 옮기고 'fix'로 알려 준다
     this.onMessage('portal', (client, i) => {
       const p = this.state.players.get(client.sessionId);
