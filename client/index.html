@@ -45,7 +45,13 @@
   <canvas id="minimap" class="hidden"></canvas>
   <div id="map-size" class="hidden" title="끌어서 미니맵 크기 조절"></div>
   <div id="toast"></div>
-  <div id="hint" class="hidden">방향키/WASD 이동(같은 방향 두 번 연타 후 누르고 있으면 달리기) · Shift 회피 구르기(방향키 쪽, 안 누르면 정면) · Space 점프(공중에서 한 번 더: 공중제비) · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구 들기 · G 생활(도구는 알아서) · F 과일 흔들기·줍기 · G 물가에서 낚시(찌가 쏙 들어가면 G) · I 가방 · B 도감 · Z/클릭 공격(몽둥이·목검, 활은 누르고 있으면 조준·떼면 발사), 무기가 없으면 클릭으로 생활(벌목·낚시·곤충·과일) · 마우스 끌기 시점 · 휠 확대</div>
+  <div id="hint" class="hidden">방향키/WASD 이동(같은 방향 두 번 연타 후 누르고 있으면 달리기) · Shift 회피 구르기(방향키 쪽, 안 누르면 정면) · Space 점프(공중에서 한 번 더: 공중제비) · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구 들기 · G 생활(도구는 알아서) · F 과일 흔들기·줍기 · G 물가에서 낚시(찌가 쏙 들어가면 G) · I 가방 · B 도감 · Z/클릭 공격(몽둥이·목검, 활은 누르고 있으면 조준·떼면 발사), 무기가 없으면 클릭으로 생활(벌목·낚시·곤충·과일) · Enter 말풍선 대화 · 마우스 끌기 시점 · 휠 확대</div>
+
+  <!-- 말풍선 대화 (Enter) -->
+  <button id="chat-btn" class="hidden" type="button">💬 대화</button>
+  <form id="chat-form" class="hidden" autocomplete="off">
+    <input id="chat-input" type="text" maxlength="40" placeholder="할 말을 쓰고 Enter (Esc 닫기)" enterkeyhint="send" />
+  </form>
 
   <!-- 인벤토리 (I) -->
   <button id="inv-btn" class="hidden" type="button" data-key="KeyI">🎒 가방</button>

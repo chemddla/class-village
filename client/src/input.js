@@ -39,6 +39,7 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
   let runDir = null;
   addEventListener('keydown', (e) => {
     if (!enabled) return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return; // 대화 칸 등에 글자를 쓰는 중
     const dir = KEYMAP[e.code];
     if (dir) {
       const now = performance.now();
