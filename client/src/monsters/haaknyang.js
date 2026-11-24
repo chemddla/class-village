@@ -478,6 +478,30 @@ hmotion('걷기', '꼬리 바짝 세우고 종종종', (2 * PI) / 0.7, (c, H, t)
   hBlink(H, t);
 });
 
+// 2-1. 달리기: 앞발 모아 쭉, 뒷발 모아 탁! 몸을 폈다 웅크렸다 하며 다다닥 (걷기보다 두 배 빠르게)
+hmotion('달리기', '귀 젖히고 꼬리 휘날리며 다다닥', (2 * PI) / 1.3, (c, H, t) => {
+  const v = Math.cos(t * 1.3);
+  H.move.position.x = Math.sin(t * 1.3) * 0.05;
+  H.move.rotation.y = (PI / 2) * THREE.MathUtils.clamp(v * 5, -1, 1);
+  const p = t * 24;
+  const s = Math.sin(p); // + 몸 쭉 폄(앞발 앞, 뒷발 뒤, 공중) · - 웅크림(뒷발이 앞발 밑까지)
+  H.legs.forEach((l, i) => {
+    const hind = i >= 2;
+    const ph = p - (hind ? 0.7 : 0) - (i % 2) * 0.25; // 뒷발은 한 박자 늦게, 좌우는 살짝 어긋나게
+    l.rotation.x = (hind ? 1 : -1) * Math.sin(ph) * 0.95;
+  });
+  H.move.position.y = Math.max(0, s) * 0.009;
+  H.body.rotation.x = -s * 0.12; // 펼 땐 코가 들리고, 웅크릴 땐 숙여짐
+  H.torso.scale.set(1 - s * 0.03, 1 - s * 0.05, 1 + s * 0.09); // 늘었다 줄었다
+  H.head.rotation.x = s * 0.1; // 머리는 몸과 반대로 까딱해서 거의 수평
+  H.earAt(0.55);
+  H.eyeSize(1.2);
+  H.mouthAs('o', 0.55);
+  H.tail.rotation.x = -1.0 + s * 0.15; // 뒤로 휘날림
+  H.tail.rotation.z = Math.sin(p * 0.5) * 0.1;
+  hBlink(H, t);
+});
+
 // 3. 발견: 깜짝 제자리 점프, 털이 펑
 hmotion('발견', '깜짝! 제자리에서 폴짝, 털이 펑', 2.6, (c, H, t) => {
   const jump = bump(c, 0.25, 0.7);
@@ -728,7 +752,9 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
     u = 0;
   }
 
-  function update(dt) {
+  function update(dt, legs = 1) {
+    const run = state === 'walk' && legs > 1; // 도망·쫓기: 걷기 대신 달리기 (다리 빠르기는 모션에 들어 있으니 시간은 원래대로)
+    if (run) dt /= legs;
     t += dt;
     u += dt;
     moodT += dt;
@@ -737,7 +763,7 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
     if (state === 'idle') {
       motion('대기').fn(t % 1.5, H, t); // 할짝 구간 앞까지만: 꼬리 살랑, 숨쉬기, 깜빡
     } else if (state === 'walk') {
-      motion('걷기').fn(0, H, t);
+      motion(run ? '달리기' : '걷기').fn(0, H, t);
       H.move.position.x = 0; // 자리·방향은 게임이 정함
       H.move.rotation.y = 0;
       H.head.rotation.y = 0;

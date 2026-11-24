@@ -167,6 +167,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   let targeting = false; // 나를 공격 대상으로 삼고 있는지 (처음 알아챌 때만 '화남!' 하고, 그동안은 화난 얼굴)
   let rageLeft = 0; // '화남!' 동작이 끝나기까지 남은 시간 (초)
   let attackCool = 0;
+  let wary = 0; // 도망을 마친 뒤 이 시간(초) 동안은 다시 '발견!' 하지 않고, 가까이 있으면 멈춰서 경계만 함 (제 길로 돌아오다 또 놀라고 또 도망치는 되풀이를 막음)
   let attackT = -1; // 공격 동작을 시작한 지 (초), 공격 중이 아니면 -1
 
   const target = () => {
@@ -218,6 +219,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
 
       if (mon.state === 'die' || mon.state === 'gone') angry = targeting = false;
       attackCool -= dt;
+      wary -= dt;
       const near = me ? Math.hypot(me.x - px, me.z - pz) : Infinity;
       const busy = BUSY.has(mon.state);
 
@@ -258,8 +260,8 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           spotLeft -= dt;
           if (spotLeft <= 0) mode = 'flee';
         } else if (mode === 'flee') {
-          if (near >= FLEE_TO || fleeT >= FLEE_TIME || fleeRun >= FLEE_RUN) mode = 'route';
-        } else if (sees) {
+          if (near >= FLEE_TO || fleeT >= FLEE_TIME || fleeRun >= FLEE_RUN) { mode = 'route'; wary = NOTICE_COOL; }
+        } else if (sees && wary <= 0) {
           mode = 'spot';
           spotLeft = SPOT_TIME;
           fleeT = 0;
@@ -344,7 +346,12 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         lastKey = s.key;
       } else if (!busy) {
         const gap = Math.hypot(tx - px, tz - pz);
-        if (gap > 0.05) {
+        if (wary > 0 && near < SIGHT) {
+          // 도망친 직후: 다가가지 않고 멈춰서 나를 경계함
+          if (mon.state === 'walk') mon.play('idle');
+          heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 6);
+          lastKey = s.key;
+        } else if (gap > 0.05) {
           // 밀려나거나 도망쳤으면 제 길로 종종걸음으로 돌아감 (분수·벤치 등은 돌아서)
           const step = Math.min(gap, CATCH_UP * dt);
           const toward = Math.atan2(tx - px, tz - pz);
@@ -407,7 +414,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
 
       mon.root.position.set(px, groundY(px, pz) - curveDrop(px, pz), pz);
       mon.root.rotation.y = heading;
-      mon.update(mon.state === 'walk' ? dt * legs : dt);
+      mon.update(mon.state === 'walk' ? dt * legs : dt, legs); // legs: 달리기 모션이 있는 몬스터(하악냥)는 빨리 갈 때 달림
       // 그림자: 몸이 작아지면(펑 사라짐·등장) 같이 작아지고, 뛰어오르면 작아져 높이가 읽힌다
       const b = mon.root.children[0];
       const k = Math.min(1.2, Math.max(0, b.scale.x)) / (1 + b.position.y * S * 0.9);
