@@ -63,12 +63,14 @@ const css = (hex) => (typeof hex === 'number' ? `#${hex.toString(16).padStart(6,
 // 세로 방향 그라데이션 (v=0 위쪽 → v=1 아래쪽). stops: [[위치, 밝기배율], ...]
 // 파츠가 맞닿는 곳을 어둡게 해서 가짜 그림자(AO)를 만든다.
 export function aoGradient(key, base, stops) {
-  return canvasTexture(`ao:${key}:${base}`, 8, 256, (g, w, h) => {
+  const t = canvasTexture(`ao:${key}:${base}`, 8, 256, (g, w, h) => {
     const grad = g.createLinearGradient(0, 0, 0, h);
     for (const [pos, k] of stops) grad.addColorStop(pos, shade(css(base), k));
     g.fillStyle = grad;
     g.fillRect(0, 0, w, h);
   });
+  t.userData.bake = true; // 부드러운 세로 그라데이션뿐이라 꼭짓점 색으로 옮겨도 같다 (toon.js mergeMeshes)
+  return t;
 }
 
 // ── 실시간으로 다시 그리는 텍스처 (표정 변화용). 캐시하지 않고 주민마다 따로 가진다 ──

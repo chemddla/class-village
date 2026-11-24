@@ -5,7 +5,7 @@ import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { ACTIONS, SHAKE, BOBBER } from './villager/actions.js';
-import { syncToon, mergeOutlines } from './villager/toon.js';
+import { syncToon, mergeOutlines, mergeMeshes } from './villager/toon.js';
 import { FX } from './fx.js';
 
 const wrapAngle = (d) => Math.atan2(Math.sin(d), Math.cos(d));
@@ -151,11 +151,13 @@ export class Character {
     this.toon(); // 다시 만든 몸에도 툰·외곽선
   }
 
-  // 툰 명암·외곽선을 입히고, 같은 관절에 붙은 몸 부품의 외곽선은 하나로 합친다 (손에 든 도구·등에 멘 화살통은 부품이 따로 움직여서 뺀다)
+  // 툰 명암·외곽선을 입히고, 같은 관절에 붙은 몸 부품과 그 외곽선은 하나로 합친다 (손에 든 도구·등에 멘 화살통은 부품이 따로 움직여서 뺀다)
   toon() {
     syncToon(this.villager.root, true, OUTLINE_SCALE);
     const { rightSocket, leftSocket } = this.villager.rig;
-    mergeOutlines(this.villager.root, (o) => o === rightSocket || o === leftSocket || o.userData.back);
+    const held = (o) => o === rightSocket || o === leftSocket || o.userData.back;
+    mergeOutlines(this.villager.root, held);
+    mergeMeshes(this.villager.root, held);
   }
 
   // 손에 든 도구 (평소에도 들고 다님)

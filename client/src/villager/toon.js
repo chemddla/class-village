@@ -140,3 +140,80 @@ export function mergeOutlines(root, skip = () => false) {
   };
   walk(root);
 }
+
+// 같은 관절에 붙은 굳은 부품들을 재질이 같은 것끼리 한 메시로 묶는다 (마을 캐릭터용, syncToon·mergeOutlines 뒤에 부른다. 이미 묶은 것은 건너뛴다).
+// 단색이거나 부드러운 그라데이션 텍스처(userData.bake)만 쓰는 부품은 색을 꼭짓점 색으로 옮겨 모두 한 메시가 되고,
+// 그 밖의 텍스처(얼굴·옷감·밑창)를 쓰는 부품은 텍스처·색이 똑같은 것끼리만 묶는다
+// shortcut: 꼭짓점 색으로 옮긴 부품은 범프(오돌토돌한 결)가 빠진다 (신발 앞코), 가까이서 보는 쇼룸은 묶지 않아 그대로다
+// shortcut: 부품을 개별로 숨기거나 움직이는 연출은 묶인 뒤에는 할 수 없다, 필요해지면 그 부품을 skip 으로 뺀다
+const pixels = new WeakMap();
+const texel = new THREE.Color();
+function sample(tex, u, v) {
+  let d = pixels.get(tex);
+  if (!d) {
+    const c = tex.image;
+    d = { w: c.width, h: c.height, data: c.getContext('2d').getImageData(0, 0, c.width, c.height).data };
+    pixels.set(tex, d);
+  }
+  const x = Math.min(d.w - 1, Math.floor((u - Math.floor(u)) * d.w));
+  const y = Math.min(d.h - 1, Math.max(0, Math.floor((1 - v) * d.h)));
+  const i = (y * d.w + x) * 4;
+  return texel.setRGB(d.data[i] / 255, d.data[i + 1] / 255, d.data[i + 2] / 255, THREE.SRGBColorSpace);
+}
+const paintMats = new Map(); // 꼭짓점 색 재질: 면 방향(side)마다 하나를 모든 캐릭터가 같이 쓴다
+function paintMaterial(side) {
+  if (!paintMats.has(side)) paintMats.set(side, new THREE.MeshToonMaterial({ vertexColors: true, side, gradientMap: toonGradient }));
+  return paintMats.get(side);
+}
+export function mergeMeshes(root, skip = () => false) {
+  const walk = (parent) => {
+    if (skip(parent)) return;
+    const groups = new Map();
+    for (const m of parent.children) {
+      const mat = m.material;
+      if (!m.isMesh || m.isSkinnedMesh || m.userData.isOutline || m.userData.merged || !mat?.isMeshToonMaterial || mat.transparent
+        || mat.emissive.getHex() || !m.children.every((c) => c.userData.isOutline)) continue;
+      const paint = !mat.map || mat.map.userData.bake;
+      const key = paint ? `p${mat.side}` : `${mat.map.uuid}${mat.bumpMap?.uuid}${mat.side}${mat.color.getHex()}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    }
+    for (const [key, list] of groups) {
+      if (list.length < 2) continue;
+      const paint = key[0] === 'p';
+      const parts = list.map((m) => {
+        const src = m.geometry;
+        const n = src.attributes.position.count;
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', src.attributes.position.clone());
+        g.setAttribute('normal', src.attributes.normal.clone());
+        g.setIndex(src.index ? src.index.clone() : [...Array(n).keys()]);
+        if (paint) {
+          const col = new Float32Array(n * 3);
+          const { map, color } = m.material;
+          for (let i = 0; i < n; i++) {
+            if (map) sample(map, src.attributes.uv.getX(i), src.attributes.uv.getY(i)).multiply(color);
+            else texel.copy(color);
+            texel.toArray(col, i * 3);
+          }
+          g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        } else g.setAttribute('uv', src.attributes.uv.clone());
+        m.updateMatrix();
+        return g.applyMatrix4(m.matrix);
+      });
+      const merged = new THREE.Mesh(mergeGeometries(parts), paint ? paintMaterial(list[0].material.side) : list[0].material);
+      merged.name = '묶음';
+      merged.userData.merged = merged.userData.toon = true;
+      merged.userData.outline = list.find((m) => m.userData.outline)?.userData.outline;
+      parent.add(merged);
+      for (const m of list) {
+        // 혼자 외곽선을 가진 부품이면 그 외곽선은 관절로 옮겨 남긴다 (여럿이 합친 외곽선은 이미 관절에 붙어 있다)
+        for (const o of [...m.children]) { o.position.copy(m.position); o.quaternion.copy(m.quaternion); o.scale.copy(m.scale); parent.add(o); }
+        parent.remove(m);
+        m.geometry.dispose();
+      }
+    }
+    for (const c of [...parent.children]) if (!c.userData.isOutline && !c.userData.merged) walk(c);
+  };
+  walk(root);
+}
