@@ -2,7 +2,7 @@
 // 잠자리채에 잡힌다. 위치는 상태(state.bugs)로 모두에게 같게 보이고, 잡혔는지·도망갔는지는 서버가 정한다.
 import {
   BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX,
-  WORLD, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
+  WORLD, PLAZA, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
 } from '../shared/world.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -282,8 +282,26 @@ export function setupBugs(room, Bug, speedOf) {
       if (s && Math.hypot(s.x - x, s.z - z) < SPOOK_REACH) remove(String(id), 'fled');
     }
   });
+
+  // 하악냥이 곤충을 툭툭 침 (테스트 서버 광장 몬스터, 움직임은 각자 화면에서): [곤충 번호, 하악냥 x, z (cm)]
+  // 하악냥 바로 앞에 있는 곤충이면 잠자리채 헛손질 때처럼 놀라 날아간다 (여러 화면이 같이 보내도 한 번만)
+  room.onMessage('catSwat', (client, msg) => {
+    if (!room.state.freeLook || !Array.isArray(msg)) return;
+    const now = Date.now();
+    if (now - (client.userData?.catSwatAt ?? 0) < 1000) return;
+    const [id, cx, cz] = msg;
+    const s = sims.get(String(id));
+    const x = fromCm(Number(cx));
+    const z = fromCm(Number(cz));
+    if (!s || !Number.isFinite(x) || !Number.isFinite(z)) return;
+    if (Math.hypot(x - PLAZA.fountain.x, z - PLAZA.fountain.z) > CAT_ROAM || Math.hypot(s.x - x, s.z - z) > CAT_REACH) return;
+    client.userData = { ...client.userData, catSwatAt: now };
+    remove(String(id), 'fled');
+  });
 }
 
+const CAT_ROAM = 14; // 하악냥은 광장 분수에서 이만큼 안에서만 돌아다님 (m)
+const CAT_REACH = 1.5; // 하악냥에서 이만큼 안의 곤충만 칠 수 있음 (m)
 const SPOOK_REACH = 24; // 무기로 친 곤충은 내 캐릭터에서 이만큼 안이어야 믿음 (화살이 날아가는 거리 20m + 여유)
 
 // 꺾은선(그물 테가 지나간 길)과 점 사이의 가장 가까운 거리

@@ -1,11 +1,11 @@
-// 조작: 화면 조이스틱(태블릿) + 방향키/WASD(컴퓨터, 같은 방향 두 번 연타 후 누르고 있으면 달리기)
-// Shift 회피 구르기(방향키 쪽으로, 안 누르면 정면으로) · Space 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z/왼쪽 클릭 공격(꾹 누르면 연속, 활은 누르면 조준·떼면 발사) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
+// 조작: 화면 조이스틱(태블릿) + 방향키(컴퓨터, 같은 방향 두 번 연타 후 누르고 있으면 달리기)
+// Space 회피 구르기(방향키 쪽으로, 안 누르면 정면으로) · C 점프 · Ctrl+1~4 감정 표현 · Q 무기 바꾸기 · R 생활 도구(도끼·낚싯대) 들기 · G 생활 행동(필요한 도구는 알아서 듦) · F 과일나무 흔들기·떨어진 과일 줍기 · I 인벤토리 · B 도감 · Z 공격(꾹 누르면 연속, 활은 누르면 조준·떼면 발사) · 마우스 왼쪽 끌기 시점 돌리기 · 휠 확대/축소
 const JOY_RADIUS = 58; // 손잡이가 움직일 수 있는 최대 거리(px)
 const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
 // 키 → 행동 이름 (화면 버튼은 data-key 로 같은 키를 누른 것처럼 동작)
 const ACTION_KEYS = {
-  Space: 'jump', ShiftLeft: 'dodge', ShiftRight: 'dodge', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyZ: 'attack',
+  KeyC: 'jump', Space: 'dodge', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyZ: 'attack',
   Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
   Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
 };
@@ -18,8 +18,7 @@ const keyAction = (e) => {
   return isEmote(name) === e.ctrlKey ? name : null;
 };
 
-// aimsWhileHeld(): 꾹 눌러 공격하는 중에 마우스를 움직이면 시점 대신 겨누는 쪽을 바꾸는지 (활 조준)
-export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => false }) {
+export function createInput({ onAction, onOrbit, onZoom }) {
   const keys = new Set();
   const held = new Set(); // 누르고 있는 행동 키·화면 버튼 (꾹 누르면 연속 공격)
   const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
@@ -29,8 +28,8 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
 
   // ── 키보드 ──
   const KEYMAP = {
-    ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
-    ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+    ArrowUp: 'up', ArrowDown: 'down',
+    ArrowLeft: 'left', ArrowRight: 'right',
   };
   // 같은 방향키를 빠르게 두 번 누르면 달리기 시작, 방향키를 하나라도 누르고 있는 동안 계속 달린다
   // 한 번이라도 멈추면(방향키를 다 떼거나, 맞선 키가 서로 지워 제자리) 바로 달리기가 풀린다
@@ -61,14 +60,8 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
 
   // ── 마우스: 왼쪽 버튼으로 끌면 시점 회전, 휠로 확대/축소 ──
   const canvas = document.getElementById('game');
-  // 끌지 않고 누르기만 하면 공격: 짧게 눌렀다 떼면 한 번, 끌지 않은 채 꾹 누르고 있으면 뗄 때까지 연속 공격
-  // (누르자마자 휘두르면 시점을 돌리려고 끄는 것과 구별할 수 없으므로, 잠깐 지켜본 뒤 꾹 누름으로 친다)
-  const HOLD_MS = 200;
-  const drag = { id: null, x: 0, y: 0, moved: 0, timer: 0, attacking: false };
-  // 마우스가 마지막으로 가리킨 화면 자리 (공격할 때 그쪽을 바라보는 데 쓴다). 터치·펜은 없음
-  let pointer = null;
-  addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') pointer = { x: e.clientX, y: e.clientY }; });
-  addEventListener('pointerdown', (e) => { pointer = e.pointerType === 'mouse' ? { x: e.clientX, y: e.clientY } : null; }, true);
+  // 마우스 왼쪽 버튼은 시점 돌리기만 한다 (공격은 Z 키로만)
+  const drag = { id: null, x: 0, y: 0 };
   canvas.addEventListener('wheel', (e) => { e.preventDefault(); onZoom(e.deltaY); }, { passive: false });
 
   // ── 떠 있는 조이스틱: 화면 왼쪽 아무 곳이나 누르면 그 자리에 생김 (터치·펜) ──
@@ -78,15 +71,6 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
       drag.id = e.pointerId;
       drag.x = e.clientX;
       drag.y = e.clientY;
-      drag.moved = 0;
-      drag.attacking = false;
-      clearTimeout(drag.timer);
-      drag.timer = setTimeout(() => {
-        if (!enabled || drag.id !== e.pointerId || drag.moved >= 6) return;
-        drag.attacking = true;
-        held.add('attack');
-        onAction('attack');
-      }, HOLD_MS);
       canvas.setPointerCapture(e.pointerId);
       return;
     }
@@ -104,9 +88,7 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
   });
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerId === drag.id) {
-      if (drag.attacking && aimsWhileHeld()) { drag.x = e.clientX; drag.y = e.clientY; return; } // 겨누는 중: 마우스 자리(pointer)만 따라간다
       onOrbit(e.clientX - drag.x, e.clientY - drag.y);
-      drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
       drag.x = e.clientX;
       drag.y = e.clientY;
       return;
@@ -121,13 +103,7 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
   });
   const end = (e) => {
-    if (e.pointerId === drag.id) {
-      drag.id = null;
-      clearTimeout(drag.timer);
-      if (drag.attacking) held.delete('attack'); // 꾹 눌러 연속 공격하던 것을 멈춘다 (이미 휘둘렀으니 뗄 때 또 치지 않는다)
-      else if (enabled && e.type === 'pointerup' && drag.moved < 6) onAction('attack'); // 짧게 눌렀다 떼면 한 번
-      drag.attacking = false;
-    }
+    if (e.pointerId === drag.id) drag.id = null;
     if (e.pointerId !== joy.id) return;
     joy.id = null;
     joy.x = joy.y = 0;
@@ -150,7 +126,6 @@ export function createInput({ onAction, onOrbit, onZoom, aimsWhileHeld = () => f
   document.addEventListener('contextmenu', (e) => e.preventDefault());
 
   return {
-    get pointer() { return pointer; },
     holding(name) { return enabled && held.has(name); },
     stopRun() { runDir = null; joy.noRun = joy.id !== null; }, // 대시 공격 뒤 걷기로: 스틱은 한 번 덜 밀었다가 다시 끝까지 밀어야 달린다
     enable(v) { enabled = v; if (!v) { keys.clear(); held.clear(); runDir = null; joy.id = null; joy.x = joy.y = 0; base.classList.add('hidden'); } },

@@ -243,6 +243,29 @@ function woodSword() {
   return grip(g);
 }
 
+// 나무 단검: 역수로 쥔다 (날이 새끼손가락 쪽으로 나온다). 그래서 날은 도구 -Y 쪽으로 뻗고, 엄지 쪽(+Y)에는 짧은 자루 끝만 나온다.
+// 동작(actions.js)이 정하는 도구 방향(dir)은 도구 +Y = 자루 끝 쪽이다
+function dagger() {
+  const g = new THREE.Group();
+  g.name = '나무단검';
+  part(new THREE.CylinderGeometry(0.0115, 0.0105, 0.075, 8), DARK_WOOD(), g, '단검손잡이');
+  for (let i = 0; i < 3; i++) {
+    const r = part(new THREE.TorusGeometry(0.012, 0.0026, 5, 12).rotateX(PI / 2), mat('#7a4a2a', { roughness: 0.7 }), g, '손잡이끈', [0, -0.022 + i * 0.022, 0]);
+    r.rotation.z = (i % 2 ? 0.25 : -0.25);
+  }
+  part(new THREE.SphereGeometry(0.0145, 10, 8), OAK(), g, '자루끝', [0, 0.044, 0]);
+  part(new THREE.BoxGeometry(0.014, 0.012, 0.06), DARK_WOOD(), g, '코등이', [0, -0.043, 0]);
+  // 날: 뿌리에서 살짝 부풀었다가 끝으로 뾰족하게 모이는 나뭇잎 모양 (아래쪽 -Y로)
+  const s = new THREE.Shape();
+  s.moveTo(-0.011, -0.048);
+  s.quadraticCurveTo(-0.016, -0.12, -0.002, -0.2);
+  s.lineTo(0.002, -0.2);
+  s.quadraticCurveTo(0.016, -0.12, 0.011, -0.048);
+  s.closePath();
+  smoothOutline(part(flatBlade(s, 0.007, 0.0022), OAK(), g, '단검날'));
+  return grip(g);
+}
+
 function shield() {
   // 왼쪽 아래팔 바깥에 차는 둥근 방패 (면이 손의 +X = 바깥쪽을 향함)
   const g = new THREE.Group();
@@ -399,7 +422,15 @@ function staff() {
   const light = new THREE.PointLight('#ffcf7a', 0, 0.6);
   light.position.copy(crystal.position);
   g.add(light);
-  g.userData.staff = { crystal, light };
+  // 끝에 모인 기: 날아가는 에너지 볼(arrows.js makeBolt)과 같은 하얀 심 + 파란 겉껍질. 크기 1 = 날아가는 볼 크기 (주민 크기 배율 1.7 로 나눔)
+  // 투명 재질이라 툰·외곽선을 입히지 않는다. 평소엔 숨겨 둔다
+  const orb = new THREE.Group();
+  orb.position.copy(crystal.position);
+  orb.add(new THREE.Mesh(new THREE.SphereGeometry(0.08 / 1.7, 12, 8), new THREE.MeshBasicMaterial({ color: '#f4fdff', transparent: true })));
+  orb.add(new THREE.Mesh(new THREE.SphereGeometry(0.13 / 1.7, 12, 8), new THREE.MeshBasicMaterial({ color: '#7dd6ff', transparent: true, opacity: 0.5, depthWrite: false })));
+  orb.visible = false;
+  g.add(orb);
+  g.userData.staff = { crystal, light, orb };
   return grip(g);
 }
 
@@ -414,6 +445,7 @@ export const EQUIPMENT = {
   net: { label: '잠자리채', right: bugNet, left: bugCase, carry: [-1.0, 0] }, // 오른손 잠자리채 + 왼손 채집통
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
   woodSword: { label: '목검', right: woodSword, carry: [-0.5, 0] },
+  dagger: { label: '나무 단검', right: dagger, carry: [0.5, 0] }, // 역수: 날이 아래팔을 따라 뒤 위로 눕는다
   // 활은 시위가 팔 뒤쪽(몸 뒤 안쪽)으로 가게 세워 든다 (carryL: 왼손 소켓 회전을 직접 정함)
   bow: { label: '활', left: bow, back: quiver, carry: [0, 0], carryL: [-0.75, 0.75, 0.2] },
   staff: { label: '마법 지팡이', right: staff, carry: [-0.3, 0] }, // 끝이 앞을 향하게 (살짝 위로)
@@ -865,6 +897,34 @@ function elbowPole(rig, grip, hq, poleW) {
   return best;
 }
 
+// ── 팔 붙잡기: 동작이 시작될 때의 오른팔 자세(앞 장면의 최종 자세)를 그대로 붙잡고, 팔꿈치만 펴고(ext 0 → 1) 어깨만 몸통 위 방향 둘레로 돌린다(yaw).
+// 손목·주먹은 손대지 않는다 → 칼은 아래팔을 따라 돌 뿐 손 안에서 꺾이지 않는다 (단검 2타: 1타를 벤 자세에서 팔꿈치를 펴며 되베기)
+const IDENT = new THREE.Quaternion();
+function holdArm(rig, hold) {
+  if (!rig.armBase) rig.armBase = rig.armPrev ? rig.armPrev.map((q) => q.clone()) : null;
+  const b = rig.armBase;
+  if (!b) return;
+  rig.shoulderR.quaternion.copy(b[0]).premultiply(qR.setFromAxisAngle(V(0, 1, 0), hold.yaw ?? 0));
+  rig.elbowR.quaternion.copy(b[1]).slerp(IDENT, hold.ext ?? 0);
+  rig.handR.quaternion.copy(b[2]);
+  rig.shoulderR.updateMatrixWorld(true);
+  rig.oneFist = rig.handR.getWorldQuaternion(new THREE.Quaternion()); // 손목 펴기(straightenWrists)가 이 주먹 방향을 지키게
+}
+
+// ── 팔 풀기: 시작할 때의 오른팔 자세(앞 장면의 최종 자세)에서 동작이 정한 팔 자세(평소 자세)까지 어깨·팔꿈치·손목을
+// 같은 비율(w 0 → 1)로 함께 옮긴다 → 팔꿈치가 펴지는 동안 어깨도 함께 내려가 자연스럽게 팔을 내린다.
+// 한 손 쥐기는 곧바로 끈다 (이 동안 IK 가 섞이면 관절이 따로 움직인다)
+function settleArm(rig, w) {
+  if (!rig.settleBase) rig.settleBase = rig.armPrev ? rig.armPrev.map((q) => q.clone()) : null;
+  const b = rig.settleBase;
+  rig.oneAim = null;
+  rig.oneHandW = 0;
+  if (!b || !rig.armAnim) return;
+  [rig.shoulderR, rig.elbowR, rig.handR].forEach((o, i) => o.quaternion.copy(b[i]).slerp(rig.armAnim[i], w));
+  rig.shoulderR.updateMatrixWorld(true);
+  rig.oneFist = rig.handR.getWorldQuaternion(new THREE.Quaternion()); // 손목 펴기(straightenWrists)가 이 주먹 방향을 지키게
+}
+
 // 몸 충돌 보정(collision.js)이 팔꿈치를 비튼 뒤에 한 번 더 손목을 편다: 팔꿈치만 옮겨지면 손은 그대로라 손목이 다시 꺾인다.
 // 오른손은 돌린 만큼 소켓을 반대로 돌려 도구 방향을 지킨다
 export function straightenWrists(rig) {
@@ -975,6 +1035,9 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
     const n = Math.min(QUIVER_SHOW, Math.max(0, (arrows ?? QUIVER_SHOW) - (fx.arrow ? 1 : 0)));
     rig.quiver.arrows.forEach((a, i) => { a.visible = i < n; });
   }
+  // 동작이 정한 오른팔 관절 자세 (IK·팔 붙잡기로 덮어쓰기 전): 팔 풀기(settleArm)가 여기로 녹아든다
+  const ARM_R = [rig.shoulderR, rig.elbowR, rig.handR];
+  if (fx.armSettle != null) rig.armAnim = ARM_R.map((o) => o.quaternion.clone());
   // 들고 다니는 자세: 소켓 자체를 부드럽게 기울임 (액션 관절값과 따로 움직임)
   // 두 손으로 쥔 손이 다 풀린 뒤에 손목을 세운다 (풀리는 도중에 세우면 도구가 휙 돌아 손이 튄다)
   const carry = (CARRY_ACTIONS.has(action) || fx.carry) && !((rig.twoHandW ?? 0) > 0.4) ? EQUIPMENT[equipment]?.carry ?? [0, 0] : [0, 0];
@@ -1015,6 +1078,12 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
   rig.oneHandW = (rig.oneHandW ?? 0) + (w1 - (rig.oneHandW ?? 0)) * (1 - Math.exp(-rate * dt));
   if (rig.oneAim && rig.oneHandW > 0.001) oneHandGrip(rig, rig.oneHandW, rig.oneAim);
   else { rig.oneAim = null; rig.elbowPrev = null; rig.oneFist = null; }
+  // 팔 붙잡기 (단검 2타) · 팔 풀기 (단검 1타 뒤): 한 손 쥐기가 정한 자세 위에 덮어쓴다
+  // (기준 자세는 따로 둔다: 붙잡기 → 내리기로 이어질 때 내리기는 붙잡아 움직인 마지막 자세에서 시작해야 한다)
+  if (fx.armHold) holdArm(rig, fx.armHold);
+  else rig.armBase = null;
+  if (fx.armSettle != null && !fx.armHold) settleArm(rig, fx.armSettle);
+  else rig.settleBase = null;
   // 활 당기기: 두 팔을 조준선 위에 놓는다 (시위·화살은 아래에서 오른손을 따라간다)
   if ((fx.bowL ?? 0) > 0.001 || (fx.bowR ?? 0) > 0.001) bowDraw(rig, root, fx.bowL ?? 0, fx.bowR ?? 0, fx.draw ?? 0, fx.bowPitch ?? 0, fx.drop ?? 0);
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
@@ -1059,6 +1128,10 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
         st.crystal.material.emissiveIntensity = 0.5 + glow * 2.2;
         st.light.intensity = glow * 0.08; // 얼굴 가까이 오므로 아주 약하게
         st.crystal.rotation.y = t * 1.5;
+        const c = fx.charge ?? 0;
+        st.orb.visible = c > 0.01;
+        if (st.orb.visible) st.orb.scale.setScalar(c * (1 + Math.sin(t * 24) * 0.06)); // 살짝 일렁인다
+        st.light.intensity += c * 0.15;
       }
     });
   }

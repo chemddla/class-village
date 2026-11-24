@@ -18,6 +18,8 @@ export const MONGDANG_MOTIONS = {
   idle: { label: '대기', loop: true },
   walk: { label: '걷기 (콩콩)', loop: true },
   scribble: { label: '물구나무 낙서', dur: 2.6 },
+  doodle: { label: '끄적끄적 (반쪽이와 합동)', loop: true }, // 물구나무 선 채로 계속 낙서: 몸은 바깥(광장 몬스터)에서 움직이고 낙서 자국도 바깥에서 남긴다
+  doodleEnd: { label: '낙서 끝', dur: 1.0 },
   notice: { label: '발견!', dur: 1.3 },
   angry: { label: '화남!', dur: 1.1 },
   attack: { label: '공격 (콕! 심 부러짐)', dur: 1.7 },
@@ -332,6 +334,30 @@ export function createMongdang({ fxParent = null, onDone = null, outlineScale = 
         P.eyes = 'dizzy';
         P.mouth = 'wavy';
         P.rz = Math.sin(u * 9) * 0.08;
+      }
+    } else if (state === 'doodle') {
+      // 폴짝 물구나무 → 심 끝으로 서서 신나게 끄적끄적 (몸을 마구 흔들며, 눈은 신나서 질끈)
+      if (u < 0.15) { P.sy = 1 - 0.12 * smooth(u / 0.15); P.sxz = 1 + 0.06 * smooth(u / 0.15); }
+      const up = seg(u, 0.15, 0.55);
+      P.rx = PI * smooth(up);
+      P.y = TIP * (1 - Math.cos(P.rx)) / 2 + Math.sin(up * PI) * 0.035;
+      if (u >= 0.55) {
+        P.rx += Math.sin(u * 13) * 0.08;
+        P.rz = Math.sin(u * 21) * 0.12;
+        P.eyes = 'closed';
+        P.mouth = Math.sin(u * 5) > 0 ? 'o' : 'smile';
+      }
+    } else if (state === 'doodleEnd') {
+      // 앞으로 한 바퀴 돌아 착지 → 통통 흔들리며 뿌듯
+      const down = seg(u, 0, 0.4);
+      P.rx = PI * (1 + smooth(down));
+      P.y = TIP * (1 - Math.cos(P.rx)) / 2 + Math.sin(down * PI) * 0.035;
+      if (u >= 0.4) {
+        const w = wobble(u - 0.4, 8, 26);
+        P.sy = 1 - 0.18 * w;
+        P.sxz = 1 + 0.1 * w;
+        P.eyes = 'closed';
+        P.mouth = 'smile';
       }
     } else if (state === 'notice') {
       // 깜짝! 폴짝 뛰고 눈이 동그래짐, 머리 위에 느낌표
