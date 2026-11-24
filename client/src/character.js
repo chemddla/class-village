@@ -4,7 +4,7 @@ import { ANIM, COLORS, TOOLS, WORLD } from '../../shared/world.js';
 import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
-import { ACTIONS, SHAKE, BOBBER } from './villager/actions.js';
+import { ACTIONS, SHAKE, BOBBER, bowDrawn } from './villager/actions.js';
 import { syncToon, mergeOutlines, mergeMeshes, mergeSkinned } from './villager/toon.js';
 import { FX } from './fx.js';
 
@@ -179,6 +179,9 @@ export class Character {
       this.startAt = from !== undefined && this.anim === from && this.actLeft > 0 ? actTime(from) - this.actLeft : 0;
       this.actLeft = actTime(a) - this.startAt;
       if (a === ANIM.TREE_SHAKE) this.shakeStep = shakeStep(this.x, this.z);
+      // 활: 조준을 시작한 때를 적어 두었다가, 쏘는 순간 시위를 얼마나 당겼는지(0~1) 정한다 (화살 사거리·정확도, main.js hitFx)
+      if (a === ANIM.BOW_AIM) this.aimAt = this.time;
+      if (a === ANIM.BOW_SHOT) this.bowPower = this.anim === ANIM.BOW_AIM && this.aimAt != null ? bowDrawn(this.time - this.aimAt) : 1;
     }
     this.anim = a;
   }

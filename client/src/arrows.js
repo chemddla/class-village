@@ -9,6 +9,15 @@ import { ARROW, BOLT, WORLD, inField, isBlocked } from '../../shared/world.js';
 const SCALE = 1.7; // 캐릭터 크기 배율 (character.js 와 같게)
 const OUTLINE_SCALE = 0.65;
 const GRAVITY = 1.2; // 아주 살짝만 떨어진다 (m/초²): 사거리(20m) 끝까지 거의 땅과 나란히 날아간다
+// 시위를 덜 당겨 쏜 화살 (power: 당긴 정도 0~1, 끝까지 당기면 1)
+//  느리게 나가고 빨리 떨어져 사거리 안에서 땅에 꽂힌다: 거의 안 당기면 3m 쯤, 반쯤 당기면 6m 쯤, 80% 당기면 13m 쯤
+//  쏘는 방향도 덜 당길수록 좌우·위아래로 흔들린다 (끝까지 당기면 겨눈 곳 그대로)
+const WEAK = {
+  speed: 0.4, // 거의 안 당겼을 때 속도 비율 (끝까지 당기면 1)
+  gravity: 9, // 덜 당긴 만큼 더 세게 떨어진다 (m/초², power 0 일 때 더하는 값)
+  yaw: 0.2, // 좌우로 흔들리는 최대 각 (라디안, 약 11°)
+  pitch: 0.06, // 위아래로 흔들리는 최대 각
+};
 const STEP = 0.12; // 한 번에 검사하는 거리 (m): 빠른 화살이 작은 몬스터를 건너뛰지 않게
 const STUCK_TIME = 3; // 땅·나무에 박힌 채 남아 있는 시간 (초)
 const MAX = 40; // 한꺼번에 있을 수 있는 화살 수 (넘으면 오래된 것부터 치운다)
@@ -105,13 +114,17 @@ export function createArrows(scene, hit, onBurst) {
   return {
     // char: 쏜 캐릭터 (Character), mine: 내 캐릭터가 쐈는지, pitch: 아래로 기울여 쏘는 각 (점프 공격)
     // bolt: 화살 대신 지팡이 끝에서 마법 에너지 볼 (떨어지지 않고 곧게 날아가며, 막히면 꽂히지 않고 사라진다)
-    shoot(char, mine, pitch = 0, bolt = false) {
+    // power: 화살 시위를 당긴 정도 0~1 (WEAK 참고)
+    shoot(char, mine, pitch = 0, bolt = false, power = 1) {
       const mesh = bolt ? makeBolt() : makeArrow();
       if (!bolt) {
         mesh.scale.setScalar(SCALE);
         syncToon(mesh, true, OUTLINE_SCALE);
       }
-      const dir = new THREE.Vector3(Math.sin(char.targetRot) * Math.cos(pitch), -Math.sin(pitch), Math.cos(char.targetRot) * Math.cos(pitch));
+      const weak = bolt ? 0 : 1 - Math.min(1, Math.max(0, power));
+      const rot = char.targetRot + (Math.random() * 2 - 1) * WEAK.yaw * weak;
+      pitch += (Math.random() * 2 - 1) * WEAK.pitch * weak;
+      const dir = new THREE.Vector3(Math.sin(rot) * Math.cos(pitch), -Math.sin(pitch), Math.cos(rot) * Math.cos(pitch));
       // 활 손잡이 자리에서 출발 (화살 꼬리가 원점이므로 반 길이만큼 뒤에서)
       const socket = char.villager.rig[bolt ? 'rightSocket' : 'leftSocket'];
       let tipMesh = null; // 볼은 손에 든 완드 끝마개 자리에서 (equipment.js staff 의 userData.staff.crystal)
@@ -122,7 +135,8 @@ export function createArrows(scene, hit, onBurst) {
       // 그릴 때만 그 자리만큼 내린다 → 곧게 쏘아도 땅에서 떠오르지 않고 땅을 따라 날아간다
       const pos = at.clone().addScaledVector(dir, bolt ? (tipMesh ? 0 : WAND_TOP * SCALE) : -0.15); // 완드를 못 찾으면 손에서 완드 길이만큼 앞
       pos.y += curveDrop(at.x, at.z);
-      const a = { mesh, pos, vel: dir.clone().multiplyScalar(bolt ? BOLT.speed : ARROW.speed), dir: dir.clone().setY(0).normalize(), from: char, mine, flown: 0, stuck: -1, bolt };
+      const a = { mesh, pos, vel: dir.clone().multiplyScalar(bolt ? BOLT.speed : ARROW.speed * (1 - (1 - WEAK.speed) * weak)), dir: dir.clone().setY(0).normalize(), from: char, mine, flown: 0, stuck: -1, bolt,
+        gravity: GRAVITY + WEAK.gravity * weak ** 1.5 }; // 거의 다 당겼으면 조금만 더 떨어진다
       place(a);
       scene.add(mesh);
       list.push(a);
@@ -138,7 +152,7 @@ export function createArrows(scene, hit, onBurst) {
           else place(a); // 화면이 움직이면 땅이 내려가는 정도도 바뀌므로 꽂힌 화살도 매번 다시 놓는다
           continue;
         }
-        if (!a.bolt) a.vel.y -= GRAVITY * dt;
+        if (!a.bolt) a.vel.y -= a.gravity * dt;
         const move = a.vel.length() * dt;
         const n = Math.max(1, Math.ceil(move / STEP));
         let done = false;

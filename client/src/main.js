@@ -231,7 +231,8 @@ function getHit(fromX, fromZ) {
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
 function hitFx(char, action) {
   // 활: 시위를 놓는 순간 화살이 날아간다 (맞는 건 arrowHit). 점프·더블 점프 공격은 대각선 아래로
-  if (action === 'bowRelease' || action === 'bowAir' || action === 'bowSlam' || action === 'bowBack') { arrows.shoot(char, char === me, BOW_PITCH[action] ?? 0); return; }
+  // 조준했다 쏘는 화살(bowRelease)만 시위를 당긴 정도를 따른다: 덜 당기면 가다가 떨어지고 덜 정확하다 (점프·달리기 공격은 늘 끝까지 당겨 쏜다)
+  if (action === 'bowRelease' || action === 'bowAir' || action === 'bowSlam' || action === 'bowBack') { arrows.shoot(char, char === me, BOW_PITCH[action] ?? 0, false, action === 'bowRelease' ? char.bowPower ?? 1 : 1); return; }
   if (action === 'staffBolt') { arrows.shoot(char, char === me, 0, true); return; } // 지팡이 끝에서 에너지 볼
   const slam = action === 'clubSlam' || action === 'swordSlam';
   const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다

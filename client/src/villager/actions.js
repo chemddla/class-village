@@ -304,12 +304,14 @@ function bowPose(u, P, fx, { legs = true } = {}) {
   P['head.ry'] = kf(u, [0, 0], [0.22, 1.3], [0.85, 1.3], [1, 0]);
   P['head.rx'] = kf(u, [0, 0], [0.22, 0.12], [0.85, 0.12], [1, 0]); // 살짝 숙여 화살 줄을 내려다본다
   P['shoulderL.rx'] = kf(u, [0, 0], [0.22, -1.5], [0.85, -1.5], [1, 0]);
-  P['shoulderR.rx'] = kf(u, [0, 0], [0.25, -1.45], [0.66, -1.3], [0.8, -1.0], [1, 0]);
-  P['elbowR.rx'] = kf(u, [0.25, 0], [0.66, -1.2], [0.8, -0.8], [1, 0]);
+  // 놓은 뒤 오른팔은 앞으로 다시 들지 않고 곧장 내려간다 (조준선 자세에서 풀릴 때 팔이 위로 튀어 오르지 않게)
+  P['shoulderR.rx'] = kf(u, [0, 0], [0.25, -1.45], [0.66, -1.3], [1, 0]);
+  P['elbowR.rx'] = kf(u, [0.25, 0], [0.66, -1.2], [1, 0]);
   if (legs) P['hipL.rx'] = kf(u, [0, 0], [0.2, -0.2], [0.85, -0.2], [1, 0]);
   fx.bowL = kf(u, [0, 0], [0.22, 1], [0.85, 1], [1, 0]);
-  fx.bowR = kf(u, [0.05, 0], [0.25, 1], [0.7, 1], [0.82, 0]);
+  fx.bowR = kf(u, [0.05, 0], [0.25, 1], [0.76, 1], [0.97, 0]);
   fx.draw = kf(u, [0.28, 0], [0.6, 1], [0.66, 1], [0.7, 1.3]);
+  fx.drop = kf(u, [0.69, 0], [0.9, 1]); // 놓은 뒤 뒤로 빠진 손이 아래로 떨어지는 정도 (equipment.js bowDraw)
   fx.nock = u > 0.28 && u < 0.66;
   fx.arrow = u > 0.25 && u < 0.66;
 }
@@ -329,7 +331,12 @@ function bowDown(t, P, fx, pitch, draw, rel, back) {
   P['spine.rx'] = (P['spine.rx'] ?? 0) + pitch * 0.35 * w;
   P['head.rx'] = (P['head.rx'] ?? 0) + pitch * 0.45 * w;
 }
-export const BOW_PITCH = { bowAir: 0.3, bowSlam: 0.5 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 17°·29°: 발밑이 아니라 앞쪽 멀리 꽂히게)
+// 조준(bowAim)을 sec 초 동안 했을 때 시위를 당긴 정도 0~1 (그림에서 시위가 당겨진 정도 fx.draw 와 같다)
+export function bowDrawn(sec) {
+  const u = Math.min(1, Math.max(0, sec) / ACTIONS.bowAim.duration);
+  return Math.min(1, kf(u * 0.6, [0.28, 0], [0.6, 1]));
+}
+export const BOW_PITCH ={ bowAir: 0.3, bowSlam: 0.5 }; // 점프 공격·더블 점프 공격이 화살을 아래로 기울이는 각 (약 17°·29°: 발밑이 아니라 앞쪽 멀리 꽂히게)
 
 // 두 점 사이 섞기 / 두 방향 사이를 원호로 섞기 (방향은 길이 1)
 const mix = (a, b, t) => a.map((x, i) => x + (b[i] - x) * t);
