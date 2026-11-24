@@ -12,23 +12,35 @@ toonGradient.minFilter = toonGradient.magFilter = THREE.NearestFilter;
 toonGradient.needsUpdate = true;
 
 // 두께별로 공유하는 외곽선 재질: 정점을 법선 방향으로 밀어낸 뒤 뒷면만 그림
+// seam: 캐릭터마다 하나인 Vector2(오른팔, 왼팔) — 어깨 이음새(armSeam)의 외곽선을 지울 정도. 있으면 그 캐릭터 전용 재질을 만든다
+// (재질을 나눠 쓰면 같은 재질을 잇달아 그릴 때 uniform 을 다시 올리지 않아 캐릭터마다 다른 값을 줄 수 없다)
 const outlineMats = new Map();
-function outlineMaterial(thickness, color) {
+const seamMats = new WeakMap();
+const NO_SEAM = new THREE.Vector2(1, 1);
+export function outlineMaterial(thickness, color, seam = null) {
   const key = `${thickness.toFixed(4)}:${color}`;
-  if (!outlineMats.has(key)) {
+  const cache = seam ? (seamMats.get(seam) ?? seamMats.set(seam, new Map()).get(seam)) : outlineMats;
+  if (!cache.has(key)) {
     const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
+    m.userData.seam = seam;
     m.onBeforeCompile = (sh) => {
       // noLine: 정점마다 외곽선을 줄이는 정도(0~1). 이 속성이 없는 메시는 0으로 읽혀 평소 두께 그대로다
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float noLine;')
+      // armSeam: 어깨 관절 둘레 몸통 쪽 이음새 (오른쪽 음수, 왼쪽 양수). 팔을 내리고 있을 때만(seamHide) 외곽선을 지운다
+      sh.uniforms.seamHide = { value: seam ?? NO_SEAM };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float noLine;\nattribute float armSeam;\nuniform vec2 seamHide;')
         .replace('#include <begin_vertex>',
           `#include <begin_vertex>
-  if (dot(normal, normal) > 1e-12) transformed += normalize(normal) * ${thickness.toFixed(4)} * (1.0 - noLine);`); // 앞뒤 면이 맞붙어 법선이 0이 된 꼭짓점은 그대로
+  float seamCut = abs(armSeam) * (armSeam < 0.0 ? seamHide.x : seamHide.y);
+  if (dot(normal, normal) > 1e-12) transformed += normalize(normal) * ${thickness.toFixed(4)} * (1.0 - noLine) * (1.0 - seamCut);`); // 앞뒤 면이 맞붙어 법선이 0이 된 꼭짓점은 그대로
     };
     m.customProgramCacheKey = () => `outline:${key}`;
-    outlineMats.set(key, m);
+    cache.set(key, m);
   }
-  return outlineMats.get(key);
+  return cache.get(key);
 }
+// 외곽선 묶음에 넣을 조각마다 armSeam 을 맞춰 둔다 (mergeGeometries 는 모든 조각이 같은 속성을 가져야 한다)
+const copySeam = (g, src) => g.setAttribute('armSeam', src.attributes.armSeam?.clone() ?? new THREE.BufferAttribute(new Float32Array(g.attributes.position.count), 1));
+const seamOf = (list) => list.map((m) => m.material.userData.seam).find(Boolean) ?? null;
 
 // 각진 모서리·UV 이음새는 같은 자리 꼭짓점의 법선이 갈라져 있어 껍질을 밀면 틈이 벌어진다(시점 따라 뚫리거나 떠 보임):
 // 같은 자리 꼭짓점을 합쳐 매끈한 법선으로 다시 계산한 껍질을 쓴다 (뼈 가중치·noLine 은 그대로 남김)
@@ -37,7 +49,7 @@ function hullGeometry(geo) {
   let h = hullCache.get(geo);
   if (!h) {
     const g = new THREE.BufferGeometry();
-    for (const k of ['position', 'skinIndex', 'skinWeight', 'noLine']) if (geo.attributes[k]) g.setAttribute(k, geo.attributes[k]);
+    for (const k of ['position', 'skinIndex', 'skinWeight', 'noLine', 'armSeam']) if (geo.attributes[k]) g.setAttribute(k, geo.attributes[k]);
     if (geo.index) g.setIndex(geo.index);
     h = mergeVertices(g, 1e-4);
     h.computeVertexNormals();
@@ -51,7 +63,8 @@ function hullGeometry(geo) {
 export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
   const geo = mesh.userData.outlineGeometry ?? hullGeometry(mesh.geometry);
   // 휘는 메시(스키닝)는 외곽선 껍질도 같은 뼈를 따라 휘어야 한다
-  const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(geo, outlineMaterial(thickness, color)) : new THREE.Mesh(geo, outlineMaterial(thickness, color));
+  const mat = outlineMaterial(thickness, color, geo.attributes.armSeam ? mesh.userData.seamHide ?? null : null);
+  const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(geo, mat) : new THREE.Mesh(geo, mat);
   if (mesh.isSkinnedMesh) o.bind(mesh.skeleton, mesh.bindMatrix);
   o.name = '외곽선';
   o.userData.isOutline = true;
@@ -127,9 +140,10 @@ export function mergeOutlines(root, skip = () => false) {
         const nl = new Float32Array(g.attributes.position.count);
         for (let i = 0; i < nl.length; i++) nl[i] = 1 - (1 - (src ? src.getX(i) : 0)) * k;
         g.setAttribute('noLine', new THREE.BufferAttribute(nl, 1));
+        copySeam(g, o.geometry);
         return g;
       });
-      const merged = new THREE.Mesh(mergeGeometries(parts), outlineMaterial(T, own[0].userData.outline.userData.color));
+      const merged = new THREE.Mesh(mergeGeometries(parts), outlineMaterial(T, own[0].userData.outline.userData.color, seamOf(own.map((m) => m.userData.outline))));
       merged.name = '외곽선';
       merged.userData.isOutline = true;
       merged.raycast = () => {};
@@ -264,7 +278,7 @@ export function mergeSkinned(root, skip = () => false) {
   walk(root);
   if (outlines.length > 1) {
     const T = Math.max(...outlines.map((o) => o.userData.thickness));
-    const merged = skinnedBatch(outlines, outlineMaterial(T, outlines[0].userData.color), (o) => {
+    const merged = skinnedBatch(outlines, outlineMaterial(T, outlines[0].userData.color, seamOf(outlines)), (o) => {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', o.geometry.attributes.position.clone());
       g.setAttribute('normal', o.geometry.attributes.normal.clone());
@@ -273,6 +287,7 @@ export function mergeSkinned(root, skip = () => false) {
       const nl = new Float32Array(g.attributes.position.count);
       for (let i = 0; i < nl.length; i++) nl[i] = 1 - (1 - (src ? src.getX(i) : 0)) * (o.userData.thickness / T);
       g.setAttribute('noLine', new THREE.BufferAttribute(nl, 1));
+      copySeam(g, o.geometry);
       return g;
     }, root);
     merged.name = '외곽선';

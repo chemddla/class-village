@@ -49,7 +49,7 @@ export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', '
 // 활: 화살통에 넣고 다니는 화살 최대 개수 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
 export const ARROW = { max: 30, speed: 24, range: 20 };
 // 마법 지팡이: 에너지 볼 한 발에 드는 마나 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
-export const BOLT = { cost: 12, speed: 14, range: 16 };
+export const BOLT = { cost: 12, speed: 8, range: 16, splash: 1 }; // speed: m/초 (눈으로 따라갈 수 있게 화살보다 느리게), splash: 터질 때 맞는 반지름(m)
 export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이·목검)는 인벤토리에서 꺼냄
 // 테스트 서버에서 광장에 놓는 생활 체험용 나무
 export const LIFE_SPOTS = [

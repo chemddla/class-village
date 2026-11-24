@@ -838,9 +838,14 @@ function buildBody(root, o, live, detail) {
   const jx = SHOULDER.x / BODY_K;
   // 아래로는 차렷 자세에서 소매가 덮는 높이(관절 아래 약 8cm)까지
   const armSeam = (x, y, z) => smooth(0.085, 0.055, Math.hypot(Math.abs(x) - jx, y - SHOULDER.y, z)) * smooth(jx - 0.012, jx + 0.004, Math.abs(x));
-  fadeLine(shirtMesh, style.bare
-    ? (x, y, z) => Math.max(smooth(HEAD_Y - 0.186, HEAD_Y - 0.174, y), armSeam(x, y, z)) // 맨몸 목 윗끝도 머리 속에서 외곽선 없이
-    : armSeam);
+  // 이음새는 팔을 내리고 있을 때만 지운다: 팔을 들면 소매가 덮던 옆구리가 드러나므로 외곽선을 되살린다 (toon.js armSeam, followShoulders 의 seamHide)
+  // 오른쪽(x<0)은 음수, 왼쪽은 양수로 담아 팔마다 따로 정한다
+  fadeLine(shirtMesh, style.bare ? (x, y) => smooth(HEAD_Y - 0.186, HEAD_Y - 0.174, y) : () => 0); // 맨몸 목 윗끝은 머리 속에서 외곽선 없이
+  const sp = shirtMesh.geometry.attributes.position;
+  const seam = new Float32Array(sp.count);
+  for (let i = 0; i < sp.count; i++) seam[i] = Math.sign(sp.getX(i)) * armSeam(sp.getX(i), sp.getY(i), sp.getZ(i));
+  shirtMesh.geometry.setAttribute('armSeam', new THREE.Float32BufferAttribute(seam, 1));
+  P.seamHide = shirtMesh.userData.seamHide = new THREE.Vector2(1, 1);
   P.colliders = bodyColliders(o, hips, torso);
   const ribMat = (key, color) => clothMat(clothTexture(key, color, { ao: [[0, 0.9], [0.5, 1], [1, 0.9]] }), clothBump(key), { bumpScale: 1.6 });
   const trim = ribMat('trim', shade(top, 0.9));
@@ -1198,7 +1203,8 @@ function shoulderBone(arm, torso, spin, name) {
 // 관절이 몸통 옆 끝에 그대로 있으면 앞으로 뻗은 팔이 몸통 옆에서 튀어나와, 뒤에서 볼 때 어깨에 공이 붙은 것처럼 보인다.
 // 두 손으로 쥐는 동작은 팔 각도가 IK로 정해지므로 바로 앞 장의 팔 방향(rig.armDir)으로 정하고, 부드럽게 따라가게 한다
 const SHOULDER_IN = 0.024; // 안쪽으로 옮기는 최대 거리
-function followShoulders(rig, dt) {
+// amount: 동작이 정하는 배율 (fx.shoulderIn, 기본 1). 팔을 머리 위로 드는 동작은 0 으로 해 어깨가 몸통 속으로 들어가 보이지 않게
+function followShoulders(rig, dt, amount = 1) {
   const a = 1 - Math.exp(-14 * dt);
   for (const s of ['R', 'L']) {
     const arm = rig[`shoulder${s}`];
@@ -1207,7 +1213,8 @@ function followShoulders(rig, dt) {
     const d = rig.armDir?.[s] ?? new THREE.Vector3(0, -1, 0).applyQuaternion(arm.quaternion);
     const lift = Math.min(1, Math.max(0, 1 + d.y)); // 0: 내림 → 1: 수평 이상
     const fwd = Math.min(1, Math.max(0, d.z * 1.2)); // 앞을 향한 정도
-    const k = lift * lift * (3 - 2 * lift) * fwd;
+    if (rig.seamHide) rig.seamHide[s === 'R' ? 'x' : 'y'] = 1 - smooth(0.3, 0.65, lift); // 팔을 들수록 어깨 이음새 외곽선을 되살린다
+    const k = lift * lift * (3 - 2 * lift) * fwd * amount;
     const st = (rig.shoulderShift ??= { R: 0, L: 0 });
     st[s] += (k - st[s]) * a;
     const side = s === 'R' ? -1 : 1;
@@ -1612,7 +1619,7 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720, seg
     if (state.action !== player.action) setAction(state.action); // state.action 을 직접 바꾼 경우도 받아 줌
     const fx = player.update(rig, t, dt);
     trailOn = !!fx.trail;
-    followShoulders(rig, dt); // 팔을 앞으로 뻗은 만큼 어깨를 안쪽으로 (두 손 쥐기 계산보다 먼저: 손은 옮긴 어깨에서 다시 뻗는다)
+    followShoulders(rig, dt, fx.shoulderIn ?? 1); // 팔을 앞으로 뻗은 만큼 어깨를 안쪽으로 (두 손 쥐기 계산보다 먼저: 손은 옮긴 어깨에서 다시 뻗는다)
     updateEquipment(rig, root, fx, t, dt, state);
     resolveArmCollision(rig); // 팔이 몸·옷 속으로 들어가지 않게 (장비 IK까지 끝난 뒤)
     straightenWrists(rig); // 팔꿈치가 옮겨진 뒤에도 손목은 아래팔과 한 줄로

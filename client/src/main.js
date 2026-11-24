@@ -178,7 +178,7 @@ const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, 
 const SWING_STEP = 0.3;
 // 체력·마나·기력 (내 화면에서만 셈)
 // 마나: 대시 공격·더블 점프 내리찍기에 쓰고 천천히 찬다 · 기력: 구르기에 쓰고, 안 쓰고 잠깐 있으면 빠르게 찬다
-const STAT = { max: 100, hit: 10, hpRegen: 2, mpRegen: 6, roll: 25, skill: 20, spWait: 0.6, spRegen: 70 };
+const STAT = { max: 100, hit: 10, hpRegen: 2, mpRegen: 3, roll: 25, skill: 20, spWait: 0.6, spRegen: 70 };
 const stats = { hp: STAT.max, mp: STAT.max, sp: STAT.max, spIdle: 0 };
 const ghost = { hp: { v: STAT.max, hold: 0 }, mp: { v: STAT.max, hold: 0 }, sp: { v: STAT.max, hold: 0 } };
 // 모자라서 못 썼을 때 그 줄을 떨어 보인다
@@ -326,6 +326,7 @@ Character.onHit = (char, action) => hitFx(char, action);
 const ARROW_HIT_R = 0.4; // 화살촉이 이만큼(m) 안으로 들어오면 맞음 (사람·몬스터 몸 둘레)
 function arrowHit(a, from, mine) {
   const { x, y, z } = a.tip;
+  if (a.bolt) return boltTouches(a, from); // 마법 볼은 닿기만 보고, 맞히는 것은 터질 때 둘레 모두 (boltBurst)
   const bx = x - a.dir.x; // 날아온 쪽 (맞은 쪽이 그 반대로 밀리고, 그쪽을 돌아본다)
   const bz = z - a.dir.z;
   const burst = (kind, n, px, py, pz, opts = {}) => FX.burst(kind, n, px, py, pz, { floor: py - 1, dir: [a.dir.x, a.dir.z], spread: Math.PI, ...opts });
@@ -342,7 +343,35 @@ function arrowHit(a, from, mine) {
   if (mine) FX.hitstop(0.04);
   return true;
 }
-const arrows = createArrows(scene, arrowHit);
+// 마법 볼이 사람·몬스터에 닿았는지만 본다 (몬스터는 맞는지 묻기만 하고 맞히지는 않는다: hits 가 늘 false)
+function boltTouches(a, from) {
+  const { x, y, z } = a.tip;
+  for (const c of [me, ...[...others.values()].map((o) => o.char)]) {
+    if (c && c !== from && Math.hypot(c.x - x, c.z - z) <= ARROW_HIT_R && y <= c.groundY + 1.7) return true;
+  }
+  let touched = false;
+  for (const mon of hereMonsters()) mon.tryHit(x, z, (mx, mz) => { touched ||= Math.hypot(mx - x, mz - z) < ARROW_HIT_R; return false; });
+  return touched;
+}
+// 마법 볼이 터진 자리 둘레(BOLT.splash) 안의 사람·몬스터가 모두 맞는다 (쏜 사람 빼고). 터진 자리에서 바깥으로 밀린다
+function boltBurst(a, at) {
+  const { from, mine } = a;
+  const R = BOLT.splash;
+  const star = (px, py, pz, dx, dz) => FX.burst('star', 8, px, py, pz, { floor: py - 1, dir: [dx, dz], spread: Math.PI, power: 0.8 });
+  for (const c of [me, ...[...others.values()].map((o) => o.char)]) {
+    if (!c || c === from || Math.hypot(c.x - at.x, c.z - at.z) > R || at.y > c.groundY + 1.7 + R) continue;
+    c.shake();
+    star(c.x, c.groundY + 1.3, c.z, c.x - at.x, c.z - at.z);
+    if (c === me && local.dodge <= 0 && local.hurt <= 0) { getHit(at.x, at.z); FX.hitstop(0.05); } // 구르는 중에는 피한다
+  }
+  let any = false;
+  for (const mon of hereMonsters()) {
+    const m = mon.tryHit(at.x, at.z, (mx, mz) => Math.hypot(mx - at.x, mz - at.z) < R, mine);
+    if (m) { any = true; star(m.x, from.groundY + m.y, m.z, m.x - at.x, m.z - at.z); }
+  }
+  if (any && mine) FX.hitstop(0.04);
+}
+const arrows = createArrows(scene, arrowHit, boltBurst);
 
 const EMOTES = { emote1: ANIM.WAVE, emote2: ANIM.CHEER, emote3: ANIM.SURPRISE, emote4: ANIM.FAINT };
 // 잠자리채 + 채집통 아이콘 (그림 문자에 없어서 직접 그림)

@@ -377,22 +377,26 @@ function bow() {
   return grip(g);
 }
 
+// 연습용 짧은 나무 완드 (장식 없음, 시안: staff-samples.js). 손잡이는 고른 굵기, 손잡이 위부터 끝으로 갈수록 가늘어져 날카롭다
+export const WAND_TOP = 0.255; // 쥐는 곳에서 끝까지 길이 (에너지 볼 출발 자리, arrows.js)
 function staff() {
   const g = new THREE.Group();
   g.name = '마법지팡이';
-  part(new THREE.CylinderGeometry(0.009, 0.012, 0.5, 8), DARK_WOOD(), g, '지팡이대', [0, 0.11, 0]);
-  const gold = mat('#e7b74a', { roughness: 0.35, metalness: 0.5 });
-  part(new THREE.TorusGeometry(0.013, 0.004, 6, 16).rotateX(PI / 2), gold, g, '고리', [0, 0.34, 0]);
-  // 수정을 감싸는 갈퀴 세 개
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * PI * 2;
-    const c = part(new THREE.ConeGeometry(0.006, 0.06, 5), gold, g, '갈퀴', [Math.cos(a) * 0.02, 0.38, Math.sin(a) * 0.02]);
-    c.rotation.set(Math.sin(a) * 0.5, 0, -Math.cos(a) * 0.5);
-  }
-  const crystal = part(new THREE.OctahedronGeometry(0.035, 0).scale(1, 1.4, 1), new THREE.MeshStandardMaterial({
-    color: '#a8ecff', emissive: '#4fc3ff', emissiveIntensity: 0.5, roughness: 0.15, flatShading: true,
-  }), g, '수정', [0, 0.43, 0]);
-  const light = new THREE.PointLight('#7fd8ff', 0, 0.6);
+  const R = 0.0075, BOTTOM = -0.035, TIP = 0.26;
+  const end = (d) => 0.55 + 0.45 * Math.sin(Math.min(1, d / 0.08) * PI / 2); // 밑동만 살짝 가늘게
+  const rf = (t) => R * Math.min(end(t), t < 0.3 ? 1 : 1 - (1 - TIP) * ((t - 0.3) / 0.7) ** 1.3);
+  // 옆모습(반지름, 높이)을 돌려 만든다: 밑동은 둥글게 막고, 끝은 작은 끝마개 공이 막는다
+  const prof = [];
+  const rb = rf(0);
+  for (let i = 0; i <= 4; i++) { const a = (i / 4) * PI / 2; prof.push(new THREE.Vector2(Math.sin(a) * rb, BOTTOM - Math.cos(a) * rb)); }
+  for (let i = 1; i <= 40; i++) prof.push(new THREE.Vector2(rf(i / 40), BOTTOM + (WAND_TOP - BOTTOM) * (i / 40)));
+  const WOOD = '#8a5530';
+  part(new THREE.LatheGeometry(prof, 10), mat(WOOD, { roughness: 0.85 }), g, '지팡이대');
+  // 끝마개도 같은 색: 평소엔 거의 티 안 나고, 마법을 쓸 때만 따뜻하게 빛난다 (아래 staff 갱신이 emissiveIntensity 를 올림)
+  const crystal = part(new THREE.SphereGeometry(R * TIP, 10, 6), mat(WOOD, { roughness: 0.85, emissive: '#2a1808', emissiveIntensity: 0.5 }), g, '끝마개', [0, WAND_TOP, 0]);
+  // 외곽선 두께를 부품 크기 대신 하나로 (대는 길어서 두껍고 끝마개는 작아서 얇아, 끝에 대 외곽선 입구가 뚫려 보였다)
+  g.traverse((m) => { if (m.isMesh) m.userData.outlineWidth = 0.003; });
+  const light = new THREE.PointLight('#ffcf7a', 0, 0.6);
   light.position.copy(crystal.position);
   g.add(light);
   g.userData.staff = { crystal, light };
