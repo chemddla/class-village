@@ -337,7 +337,7 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
   g.traverse((o) => { if (o.isMesh) o.userData.outlineWidth = HAAK_LINE; });
   const ws = { u: 0, uv: 0, b: 0, bv: 0, e: 0, ev: 0, tx: 0, txv: 0, tz: 0, tzv: 0, trx: 0, trz: 0, tprev: null, tp: new THREE.Vector3(), tv: new THREE.Vector3(), t: null, prev: null, tmp: new THREE.Vector3(), vel: new THREE.Vector3(), q: new THREE.Quaternion() };
   const solid = [];
-  move.traverse((o) => { if (o.isMesh && ['몸', '머리', '다리', '꼬리'].includes(o.name)) solid.push(o); });
+  move.traverse((o) => { if (o.isMesh && ['몸', '머리', '다리'].includes(o.name)) solid.push(o); }); // 꼬리는 빼서 늘어진 꼬리가 몸을 들어 올리지 않게
   return {
     // 땅 밑으로 파고든 만큼 통째로 들어 올림 (기울거나 찌부러져도 몸이 땅에 묻히지 않게)
     ground() {
@@ -572,6 +572,54 @@ hmotion('달리기', '귀 젖히고 꼬리 휘날리며 다다닥', (2 * PI) / 1
   hBlink(H, t);
 });
 
+// 2-2. 낮잠: 식빵 자세로 웅크리고 꼬리로 몸을 감싼 채 새근새근, 머리 위로 z 가 몽글몽글
+hmotion('낮잠', '식빵 굽듯 웅크리고 꼬리로 몸 감싸고 새근새근', 8, (c, H, t) => {
+  const k = ease(seg(c, 0, 0.8)); // 자리에 앉아 웅크리기
+  H.body.position.y = -0.011 * k;
+  H.legs.forEach((l, i) => {
+    if (i < 2) { l.rotation.x = -1.25 * k; l.scale.y = 1 - 0.45 * k; } // 앞발은 가슴 밑에 접어 넣고 발끝만 빼꼼
+    else { l.rotation.x = -0.6 * k; l.scale.y = 1 - 0.6 * k; } // 뒷다리는 엉덩이 밑에 접음
+  });
+  H.torso.scale.y = 1 + Math.sin(t * 1.6) * 0.03 * k; // 새근새근 숨쉬기
+  H.head.position.y -= 0.01 * k;
+  H.head.position.z -= 0.002 * k;
+  H.head.rotation.x = 0.28 * k + Math.sin(t * 1.6) * 0.02 * k;
+  H.head.rotation.z = 0.28 * k; // 고개를 살짝 갸웃 기대고
+  if (k > 0.5) H.face.sleep(true); else hBlink(H, t);
+  H.earAt(0.15 * k);
+  // 꼬리는 바닥에 내려 옆으로 돌려서 몸을 둥글게 감쌈, 끝만 가끔 톡
+  H.tail.rotation.x = -0.3 * k;
+  H.tail.rotation.z = 1.5 * k; // 옆으로 눕혀 바닥에 내리고
+  H.tailCurl = 0.15 + 1.5 * k; // 눕힌 채 앞으로 말아 몸을 감쌈
+  H.tailWave = 0.03 + 0.12 * bump(t % 6.1, 5.4, 6.1);
+  H.tailWaveF = 3;
+  const zz = H.zzz ?? [];
+  zz.forEach((z, i) => { // z 세 개가 차례로 떠오르며 커졌다 사라짐
+    const r = ((t * 0.45 + i / 3) % 1);
+    z.visible = k > 0.9;
+    z.position.set(0.035 + r * 0.02, 0.085 + r * 0.05, 0.02);
+    z.scale.setScalar(Math.max(0.0001, (0.012 + r * 0.012) * Math.sin(r * PI)));
+  });
+}, (H) => {
+  H.zzz = [0, 1, 2].map(() => {
+    const z = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: canvasTexture('haakZzz', 64, 64, (g, w, h) => {
+        g.font = '900 52px sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.lineWidth = 8;
+        g.strokeStyle = '#ffffff';
+        g.strokeText('z', w / 2, h / 2);
+        g.fillStyle = '#5a6fb0';
+        g.fillText('z', w / 2, h / 2);
+      }),
+      transparent: true,
+    }));
+    H.g.add(z);
+    return z;
+  });
+});
+
 // 3. 발견: 깜짝 제자리 점프, 털이 펑
 hmotion('발견', '깜짝! 제자리에서 폴짝, 털이 펑', 2.6, (c, H, t) => {
   const jump = bump(c, 0.25, 0.7);
@@ -751,19 +799,46 @@ hmotion('맞음', '찌부! 털 폭발하고 뒤로 콩', 2.2, (c, H, t) => {
   }
 });
 
-// 8. 쓰러짐: 발라당 뒤집혀 발 버둥, 펑 사라짐
-hmotion('쓰러짐', '발라당 항복, 발 버둥 → 펑', 4.4, (c, H, t) => {
-  const wob = bump(c, 0, 0.5);
-  H.body.rotation.z = Math.sin(t * 18) * 0.12 * wob;
-  if (wob > 0.05) H.mouthAs('wavy'); // 휘청휘청
-  const roll = ease(seg(c, 0.5, 0.85));
-  H.body.rotation.z += PI * 0.97 * roll;
-  H.move.position.y = 0.06 * roll;
-  if (roll > 0) {
-    H.legs.forEach((l, i) => (l.rotation.x = Math.sin(t * 22 + i * 1.7) * 0.5 * (1 - seg(c, 2.2, 2.6)))); // 발 버둥
-    H.tail.rotation.z = Math.sin(t * 9) * 0.4;
-    H.crossEyes(true); // X 눈
-    H.lick(0.75 + Math.sin(t * 6) * 0.08); // 기절해서 혀가 입 밖으로 축 (발 버둥에 맞춰 살짝 흔들)
+// 8. 쓰러짐: 비틀비틀 → 다리가 풀려 주저앉고 → 옆으로 픽 쓰러져 축 늘어짐 → 펑 사라짐
+hmotion('쓰러짐', '비틀비틀 다리 풀려 옆으로 픽, 축 늘어짐 → 펑', 4.4, (c, H, t) => {
+  if (c < 3.8) {
+    const wob = bump(c, 0, 0.6); // 휘청휘청: 몸이 좌우로, 머리는 빙글
+    H.body.rotation.z = Math.sin(t * 9) * 0.14 * wob;
+    H.head.rotation.z = Math.sin(t * 9 + 1) * 0.2 * wob;
+    if (c < 0.9) { H.mouthAs('wavy'); H.face.blink(0.55 * seg(c, 0, 0.4)); } // 눈이 스르르 감김
+    const buckle = ease(seg(c, 0.35, 0.6)); // 다리가 풀려 털썩 주저앉음
+    H.legs.forEach((l, i) => (l.scale.y = 1 - 0.4 * buckle * (i < 2 ? 1 : 0.8)));
+    H.head.rotation.x = 0.35 * buckle; // 고개가 툭 떨어짐
+    // 옆으로 픽 쓰러져 바닥에 한 번 통 튀고 멈춤 (몸이 땅에 묻히지 않게 ground()가 받쳐줌)
+    const fall = ease(seg(c, 0.55, 0.85));
+    const thud = bump(c, 0.85, 1.05);
+    H.body.rotation.z += (PI / 2) * fall - 0.14 * thud;
+    if (fall > 0) {
+      // 쓰러진 뒤엔 다리에 힘이 빠짐: 바닥 쪽 다리는 바닥에 놓이고, 위쪽 다리는 무게에 처져 바닥 쪽 다리 위로 툭 늘어짐
+      // (옆으로 누워서 몸 기준 -x 가 땅 쪽) · 앞발·뒷발이 제각각 조금씩 다르게 벌어지고, 위쪽 뒷다리가 가끔 움찔
+      const limp = ease(seg(c, 0.7, 1.0));
+      const drop = outBack(seg(c, 0.75, 1.05), 1.6); // 위쪽 다리가 툭 떨어지며 살짝 출렁
+      H.legs.forEach((l, i) => {
+        const top = i % 2 === 1;
+        l.scale.y = THREE.MathUtils.lerp(l.scale.y, i < 2 ? 0.92 : 0.95, limp); // 살짝 굽힘
+        l.rotation.x = [-0.25, -0.5, 0.2, 0.45][i] * limp + (i === 3 ? 0.25 * bump(c % 0.9, 0.0, 0.15) * seg(c, 1.2, 1.3) : 0);
+        l.rotation.z = top ? -0.55 * drop : 0.08 * limp;
+      });
+      // 머리가 몸통보다 굵어서 그대로 누우면 머리가 몸을 받쳐 몸이 둥 뜸: 머리를 위쪽으로 살짝 옮기고 귀가 위로 가게 기울여 몸통이 바닥에 닿게
+      H.head.rotation.x = 0.35 * buckle - 0.25 * limp;
+      H.head.position.x += 0.013 * limp;
+      H.head.rotation.z -= 0.3 * limp;
+      // 꼬리도 힘이 빠져 바닥 쪽으로 처지고 살짝 휘어 바닥에 놓임
+      H.tail.rotation.x = -1.0 * limp;
+      H.tail.rotation.z = 1.0 * drop;
+      H.tailCurl = 0.15 - 0.45 * limp;
+      H.tailWave = 0.1 * (1 - limp);
+    }
+    if (c > 0.85) {
+      H.crossEyes(true); // X 눈
+      H.lick(0.75 * seg(c, 0.85, 1.1)); // 기절해서 혀가 입 밖으로 쏙
+      H.earAt(0.5);
+    }
   }
   const gone = seg(c, 2.6, 2.8);
   if (c > 2.6 && c < 3.8) H.move.scale.setScalar(Math.max(0.0001, (1 + 0.2 * Math.sin(gone * PI)) * (1 - gone)));
@@ -850,6 +925,7 @@ export const HAAKNYANG_MOTIONS = {
   idle: { label: '대기', loop: true },
   walk: { label: '걷기 (종종종)', loop: true },
   groom: { label: '앞발 할짝할짝', dur: 2.7 },
+  sleep: { label: '낮잠 (새근새근)', loop: true },
   notice: { label: '발견! (깜짝 폴짝)', dur: 1.3 },
   angry: { label: '화남! (하악)', dur: 1.1 },
   attack: { label: '공격 (덮치기)', dur: 1.6 },
@@ -872,6 +948,7 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
   root.name = '하악냥';
   const DIE = motion('쓰러짐');
   DIE.extra(H); // 펑 연기
+  motion('낮잠').extra(H); // 낮잠 z
   const anger = angerMark();
   root.add(anger);
   // 놀랐을 때 머리 위에 뜨는 느낌표 (다른 몬스터와 같은 모양)
@@ -916,6 +993,8 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
       H.move.position.x = 0; // 자리·방향은 게임이 정함
       H.move.rotation.y = 0;
       H.head.rotation.y = 0;
+    } else if (state === 'sleep') {
+      motion('낮잠').fn(u, H, t);
     } else if (state === 'groom') {
       motion('대기').fn(1.5 + u * (2.4 / 2.7), H, t);
     } else if (state === 'notice') {
@@ -944,6 +1023,7 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
       H.move.scale.setScalar(0.0001);
     }
     if (state !== 'die') H.puffs.forEach(([p]) => (p.visible = false));
+    if (state !== 'sleep') H.zzz.forEach((z) => (z.visible = false));
 
     // 화가 난 채로 있을 때: 귀를 뒤로 젖히고 털을 살짝 세움, 머리 위 화남 표시가 콩닥콩닥
     if (mood === 'angry' && (state === 'idle' || state === 'walk')) {

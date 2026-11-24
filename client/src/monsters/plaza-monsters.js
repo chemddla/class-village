@@ -19,7 +19,9 @@ const KINDS = {
   nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter', temper: 'flee' },
   mongdang: { create: createMongdang, r: 0.042, special: 'scribble', temper: 'flee' },
   banjjok: { create: createBanjjok, r: 0.04, special: 'rub', temper: 'flee', size: 1.35, shadow: [1, 0.62] }, // 납작해서 조금 크게 · 그림자는 길쭉하게 · 몸통박치기도 0.47초에 닿음
-  haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', run: 1.5, size: 1.15, shadow: [0.75, 1.15] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
+  haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', run: 1.5, size: 1.15, shadow: [0.75, 1.15],
+    // 고양이답게: 돌아다니기보다 한 자리에서 오래 낮잠 자고 그루밍하다가, 가끔 조금 걸어 자리를 옮김
+    plan: [['walk', 2.5], ['idle', 2], ['special', 2.7], ['special', 2.7], ['sleep', 20], ['idle', 2.5], ['special', 2.7], ['walk', 2], ['idle', 4], ['sleep', 14], ['idle', 2]] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -35,6 +37,7 @@ const KNOCK = 1.1; // 맞았을 때 밀려나는 첫 빠르기 (m/s)
 const PAVE = 0.05; // 광장 돌바닥 두께 (village.js buildPlaza): 광장 안에서는 이 위에 서야 발이 묻히지 않는다
 // 성격별 움직임 (모두 내 화면에서만: 내 캐릭터를 보고 움직인다)
 const SIGHT = 3.5; // 이만큼 가까이 오면 발견 (m)
+const WAKE_NEAR = 1.6; // 자는 몬스터는 이만큼 가까이 와야 깸 (m)
 const VIEW = 1.2; // 바라보는 쪽에서 좌우 이만큼(라디안, 약 70°) 안에 있어야 알아챔: 뒤로 몰래 다가가면 모른다
 const SPOT_TIME = 1.1; // '발견!' 동작을 하고 이만큼 뒤에 도망치기 시작 (초)
 const FLEE_LOOK = [0.3, 0.6, 1.0]; // 도망갈 쪽이 막혔는지 미리 살펴보는 거리들 (m)
@@ -64,16 +67,15 @@ const groundY = (x, z) => (Math.hypot(x - PLAZA.fountain.x, z - PLAZA.fountain.z
 
 // 한 바퀴 일정 (동작 이름, 초)
 const PLAN = [['walk', 6], ['idle', 3], ['special', 2.7], ['walk', 5], ['idle', 2.5], ['notice', 1.3], ['idle', 1.5]];
-const CYCLE = PLAN.reduce((a, [, d]) => a + d, 0);
-const WALK_PER_CYCLE = PLAN.reduce((a, [n, d]) => a + (n === 'walk' ? d : 0), 0);
 
-// t초일 때 일정의 몇 번째 구간인지, 지금까지 걸은 시간은 얼마인지
-function scheduleAt(t) {
-  const cycle = Math.floor(t / CYCLE);
-  let r = t - cycle * CYCLE;
-  let walked = cycle * WALK_PER_CYCLE;
-  for (let i = 0; i < PLAN.length; i++) {
-    const [name, d] = PLAN[i];
+// t초일 때 일정(plan)의 몇 번째 구간인지, 지금까지 걸은 시간은 얼마인지
+function scheduleAt(t, plan = PLAN) {
+  const len = plan.reduce((a, [, d]) => a + d, 0);
+  const cycle = Math.floor(t / len);
+  let r = t - cycle * len;
+  let walked = cycle * plan.reduce((a, [n, d]) => a + (n === 'walk' ? d : 0), 0);
+  for (let i = 0; i < plan.length; i++) {
+    const [name, d] = plan[i];
     if (r < d) return { name, key: `${cycle}:${i}`, into: r, walked: walked + (name === 'walk' ? r : 0) };
     if (name === 'walk') walked += d;
     r -= d;
@@ -171,7 +173,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   let attackT = -1; // 공격 동작을 시작한 지 (초), 공격 중이 아니면 -1
 
   const target = () => {
-    const s = scheduleAt(Date.now() / 1000 + phase);
+    const s = scheduleAt(Date.now() / 1000 + phase, K.plan);
     const th = (s.walked * SPEED) / R;
     return { s, th, x: f.x + Math.sin(th) * R, z: f.z + Math.cos(th) * R };
   };
@@ -234,7 +236,8 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       // 성격에 따라 할 일 정하기
       const hostile = TEMPER === 'aggro' || angry;
       // 나를 볼 수 있는지: 가까이 있고, 바라보는 쪽 앞에 있음 (뒤에서 다가가면 모른다)
-      const sees = me && near < SIGHT && Math.abs(wrap(Math.atan2(me.x - px, me.z - pz) - heading)) < VIEW;
+      // 자는 중엔 눈을 감고 있어서 아주 가까이 와야(발소리) 깸
+      const sees = me && (mon.state === 'sleep' ? near < WAKE_NEAR : near < SIGHT && Math.abs(wrap(Math.atan2(me.x - px, me.z - pz) - heading)) < VIEW);
       if (busy || !me) mode = 'route';
       else if (hostile && (mode === 'chase' || mode === 'rage' || angry ? near < CHASE_LOSE : near < AGGRO_SIGHT)) {
         if (!targeting) {
@@ -368,13 +371,15 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           pz = tz;
           if (s.key !== lastKey) {
             // 새 구간: 한 번짜리 동작은 처음부터 볼 때만 틀고, 중간에 들어왔으면 쉬기로 둔다
-            const oneShot = s.name !== 'walk' && s.name !== 'idle';
+            const oneShot = s.name !== 'walk' && s.name !== 'idle' && s.name !== 'sleep'; // 낮잠은 중간에 들어와도 바로 잠
             mon.play(oneShot && (lastKey === '' || s.into > 0.4) ? 'idle' : s.name === 'special' ? K.special : s.name);
             lastKey = s.key;
           } else if (s.name === 'walk' && mon.state !== 'walk') {
             mon.play('walk');
           } else if (s.name !== 'walk' && mon.state === 'walk') {
-            mon.play('idle');
+            mon.play(s.name === 'sleep' ? 'sleep' : 'idle');
+          } else if (s.name === 'sleep' && mon.state === 'idle') {
+            mon.play('sleep'); // 맞거나 놀랐다 돌아와서도 낮잠 시간이면 다시 웅크려 잠
           }
 
           // 쉬는 중에 내가 가까이 오면 깜짝 놀라 나를 쳐다봄 (내 화면에서만)
