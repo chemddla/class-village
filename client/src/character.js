@@ -5,7 +5,7 @@ import { blobGeometry, curveDrop } from './materials.js';
 import { makeLabel } from './label.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { ACTIONS, SHAKE, BOBBER } from './villager/actions.js';
-import { syncToon } from './villager/toon.js';
+import { syncToon, mergeOutlines } from './villager/toon.js';
 import { FX } from './fx.js';
 
 const wrapAngle = (d) => Math.atan2(Math.sin(d), Math.cos(d));
@@ -100,9 +100,9 @@ export class Character {
     this.villager = createVillager(lookFor(colorIndex, look), { texScale: 0.25, hairSegs: 320, segScale: 0.5 });
     this.villager.root.scale.setScalar(SCALE);
     // 마을 그림체에 맞춘 툰 명암 + 쇼룸보다 35% 얇은 외곽선 (멀리서 내려다봐도 뭉개지지 않게)
-    syncToon(this.villager.root, true, OUTLINE_SCALE);
+    this.toon();
     // 도구를 바꿔 쥐면 새로 생긴 도구에도 툰 명암·외곽선을 입힌다 (몸은 처음 한 번이면 되지만 도구는 쥘 때마다 새로 만들어진다)
-    this.villager.onChange = () => syncToon(this.villager.root, true, OUTLINE_SCALE);
+    this.villager.onChange = () => this.toon();
     // body: 주민 모델을 한 겹 감싸 탄성(늘어남·눌림)·기울기·흔들림을 애니메이션과 따로 얹는다 (발바닥이 축)
     this.body = new THREE.Group();
     this.body.add(this.villager.root);
@@ -148,7 +148,14 @@ export class Character {
 
   setLook(look) {
     this.villager.set(lookFor(this.colorIndex, look));
-    syncToon(this.villager.root, true, OUTLINE_SCALE); // 다시 만든 몸에도 툰·외곽선
+    this.toon(); // 다시 만든 몸에도 툰·외곽선
+  }
+
+  // 툰 명암·외곽선을 입히고, 같은 관절에 붙은 몸 부품의 외곽선은 하나로 합친다 (손에 든 도구·등에 멘 화살통은 부품이 따로 움직여서 뺀다)
+  toon() {
+    syncToon(this.villager.root, true, OUTLINE_SCALE);
+    const { rightSocket, leftSocket } = this.villager.rig;
+    mergeOutlines(this.villager.root, (o) => o === rightSocket || o === leftSocket || o.userData.back);
   }
 
   // 손에 든 도구 (평소에도 들고 다님)

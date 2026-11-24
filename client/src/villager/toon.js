@@ -1,6 +1,6 @@
 // 카툰 모드 (쇼룸·마을 공용): 역법선(Inverted Hull) 외곽선 + 반-툰 명암
 import * as THREE from 'three';
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeVertices, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const OUTLINE_COLOR = 0x4a3525; // 검정 대신 따뜻한 짙은 갈색
 // 눈·렌즈 같은 평면 데칼과 그물·발목 입구처럼 얇은 면에는 외곽선을 두르지 않음
@@ -55,6 +55,8 @@ export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
   if (mesh.isSkinnedMesh) o.bind(mesh.skeleton, mesh.bindMatrix);
   o.name = '외곽선';
   o.userData.isOutline = true;
+  o.userData.thickness = thickness;
+  o.userData.color = color;
   o.raycast = () => {};
   mesh.add(o);
   mesh.userData.outline = o;
@@ -98,4 +100,43 @@ export function syncToon(root, on, widthScale = 1) {
       if (m.userData.outline) m.userData.outline.visible = false;
     }
   });
+}
+
+// 같은 관절에 붙은 굳은(휘지 않는) 부품들의 외곽선을 하나로 합친다: 신발 한 짝만 해도 부품 8개 × 외곽선 8개를 따로 그리던 것을 외곽선 1개로.
+// 여럿이 모이면 그리기 횟수가 곧 프레임이라 마을 캐릭터에만 쓴다 (syncToon 뒤에 부른다. 이미 합친 것은 건너뛴다)
+// skip(o): 합치지 않을 가지 (손에 든 도구·화살통처럼 부품이 따로 움직이거나 숨는 것)
+// shortcut: 부품을 개별로 숨기거나 움직이면 합친 외곽선이 따라가지 않는다, 몸 부품에 그런 연출이 생기면 그 부품은 skip 으로 뺀다
+export function mergeOutlines(root, skip = () => false) {
+  const walk = (parent) => {
+    if (skip(parent)) return;
+    const own = parent.children.filter((m) => m.isMesh && !m.isSkinnedMesh && m.userData.outline?.parent === m
+      && m.userData.outline.geometry.index && m.userData.outline.geometry.attributes.normal);
+    if (own.length > 1) {
+      const T = Math.max(...own.map((m) => m.userData.outline.userData.thickness * m.scale.x));
+      const parts = own.map((m) => {
+        const o = m.userData.outline;
+        m.updateMatrix();
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', o.geometry.attributes.position.clone());
+        g.setAttribute('normal', o.geometry.attributes.normal.clone());
+        g.setIndex(o.geometry.index.clone());
+        g.applyMatrix4(m.matrix);
+        // 부품마다 다른 두께는 꼭짓점 값(noLine)으로 옮긴다: 가장 두꺼운 두께 T 를 기준으로 줄이는 정도
+        const k = (o.userData.thickness * m.scale.x) / T;
+        const src = o.geometry.attributes.noLine;
+        const nl = new Float32Array(g.attributes.position.count);
+        for (let i = 0; i < nl.length; i++) nl[i] = 1 - (1 - (src ? src.getX(i) : 0)) * k;
+        g.setAttribute('noLine', new THREE.BufferAttribute(nl, 1));
+        return g;
+      });
+      const merged = new THREE.Mesh(mergeGeometries(parts), outlineMaterial(T, own[0].userData.outline.userData.color));
+      merged.name = '외곽선';
+      merged.userData.isOutline = true;
+      merged.raycast = () => {};
+      parent.add(merged);
+      for (const m of own) { m.remove(m.userData.outline); m.userData.outline = merged; }
+    }
+    for (const c of parent.children) if (!c.userData.isOutline) walk(c);
+  };
+  walk(root);
 }

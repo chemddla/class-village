@@ -485,7 +485,7 @@ export function trunkGeometry() {
   // 뿌리는 뾰족하지 않게, 길쭉한 공을 바깥으로 갈수록 낮게 눕혀 끝이 뭉툭하게 땅에 묻히도록
   const parts = [new THREE.CylinderGeometry(0.16, 0.25, 1.45, 10).translate(0, 0.72, 0)];
   for (let i = 0; i < 5; i++) {
-    parts.push(new THREE.SphereGeometry(0.1, 8, 6)
+    parts.push(new THREE.SphereGeometry(0.1, 6, 4) // 들판에는 나무가 수백 그루라 뿌리 칸 수를 낮게 둔다
       .scale(2.1, 1.0, 1.15)
       .rotateZ(-0.38)
       .translate(0.25, 0.07, 0)

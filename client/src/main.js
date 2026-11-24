@@ -1591,11 +1591,18 @@ function setMapSize(px) {
 const viewFrustum = new THREE.Frustum();
 const viewMatrix = new THREE.Matrix4();
 const viewSphere = new THREE.Sphere(new THREE.Vector3(), 3); // 캐릭터 + 머리 위 이름·든 물건·휘두른 궤적
+const FAR_ANIM = 9;
+let frameNo = 0;
+let slowFrames = 0;
+let slowTime = 0;
+let slowFor = 0;
 let fpsFrames = 0;
 let fpsTime = 0;
 
-renderer.setAnimationLoop(() => {
-  const realDt = Math.min(clock.getDelta(), 0.05);
+function frame() {
+  const rawDt = clock.getDelta();
+  const realDt = Math.min(rawDt, 0.05);
+  if (rawDt < 0.12) { slowFrames++; slowTime += rawDt; } // 창이 가려져 장면이 드문드문 오는 때는 세지 않는다
   const now = performance.now();
   // 히트스톱: 맞는 순간 아주 잠깐 캐릭터·파티클을 멈춰 '퍽' 하는 손맛을 준다 (카메라·풍경은 계속)
   const dt = FX.simDt(realDt);
@@ -1622,10 +1629,17 @@ renderer.setAnimationLoop(() => {
   // 동작 중이면 화면 밖이어도 움직인다: 화면 밖에서 쏜 화살·휘두른 타격이 그 동작의 '맞는 순간'에 나온다
   camera.updateMatrixWorld();
   viewFrustum.setFromProjectionMatrix(viewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+  // 내게서 FAR_ANIM(m)보다 먼 학생은 두 장면에 한 번만 움직인다 (그동안 흐른 시간을 모아서): 팔·도구 자세 계산이 한 명당 0.2ms 라 여럿이면 크다
+  frameNo++;
+  let nth = 0;
   for (const { char } of others.values()) {
     viewSphere.center.set(char.x, 1, char.z);
     char.root.visible = viewFrustum.intersectsSphere(viewSphere);
-    if (char.root.visible || char.actLeft > 0) char.update(dt);
+    char.lag = (char.lag ?? 0) + dt;
+    if (!char.root.visible && char.actLeft <= 0) continue;
+    if ((frameNo + nth++) % 2 && Math.hypot(char.x - camTarget.x, char.z - camTarget.z) > FAR_ANIM) continue;
+    char.update(Math.min(char.lag, 0.1)); // 화면 밖에 오래 있다 돌아왔으면 한꺼번에 넘기지 않는다
+    char.lag = 0;
   }
   for (const m of hereMonsters()) m.update(dt, me);
   arrows.update(dt);
@@ -1644,7 +1658,17 @@ renderer.setAnimationLoop(() => {
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
     ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS`;
+    // 자동 화질: 2초 넘게 30fps 에 못 미치면 해상도를 한 단계(20%) 낮춘다 (화면 배율 0.75까지). 태블릿처럼 화면 칠하기가 벅찬 기기를 위한 것
+    // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
+    slowFor = slowFrames > 5 && slowTime / slowFrames > 1 / 30 ? slowFor + 1 : 0;
+    slowFrames = slowTime = 0;
+    if (slowFor >= 4 && renderer.getPixelRatio() > 0.75) {
+      renderer.setPixelRatio(Math.max(0.75, renderer.getPixelRatio() * 0.8));
+      slowFor = -4; // 낮춘 효과가 보일 때까지 잠깐 기다린다
+    }
     fpsFrames = 0;
     fpsTime = 0;
   }
-});
+}
+renderer.setAnimationLoop(frame);
+if (import.meta.env.DEV) window.__game.frame = frame; // 점검용: 창이 가려져 있어도 한 장면에 드는 시간을 잴 수 있게
