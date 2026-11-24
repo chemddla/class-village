@@ -19,7 +19,7 @@ const KINDS = {
   nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter', temper: 'flee' },
   mongdang: { create: createMongdang, r: 0.042, special: 'scribble', temper: 'flee' },
   banjjok: { create: createBanjjok, r: 0.04, special: 'rub', temper: 'flee', size: 1.35, shadow: [1, 0.62] }, // 납작해서 조금 크게 · 그림자는 길쭉하게 · 몸통박치기도 0.47초에 닿음
-  haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', size: 1.15, shadow: [0.75, 1.15] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
+  haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', run: 1.5, size: 1.15, shadow: [0.75, 1.15] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -40,15 +40,15 @@ const SPOT_TIME = 1.1; // '발견!' 동작을 하고 이만큼 뒤에 도망치�
 const FLEE_LOOK = [0.3, 0.6, 1.0]; // 도망갈 쪽이 막혔는지 미리 살펴보는 거리들 (m)
 const FLEE_TURNS = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4]; // 막혔을 때 바로 반대쪽에서 이만큼씩(라디안) 틀어 보며 빈 길을 찾음
 const FLEE_SPEED = 2.4; // 도망가는 빠르기 (m/s): 걷는 캐릭터(3.2)보다 조금 느려 쫓아가면 잡힌다
-const FLEE_TO = 6.5; // 이만큼 떨어지면 도망을 멈추고 제 길로 돌아감 (m)
-const FLEE_TIME = 3; // 이만큼 도망치면 멈춤 (초)
-const FLEE_RUN = 4; // 이만큼 달아나면 멈춤 (m)
+const FLEE_TO = 10; // 이만큼 떨어지면 도망을 멈추고 제 길로 돌아감 (m)
+const FLEE_TIME = 5; // 이만큼 도망치면 멈춤 (초)
+const FLEE_RUN = 8; // 이만큼 달아나면 멈춤 (m)
 // 도망을 멈추면 나를 잊는다: 다시 눈에 띄면 또 '발견!' 하고 도망
 const AGGRO_SIGHT = 5; // 공격형이 알아채는 거리 (m)
 const CHASE_LOSE = 9; // 이만큼 멀어지면 쫓기를 그만둠 (m): 화난 도망형도 이만큼 멀어지면 나를 잊는다
 const CHASE_SPEED = 1.6; // 쫓아오는 빠르기 (m/s)
 const LEASH = 7; // 제 길에서 이보다 멀리는 가지 않음 (m)
-const ANGRY_LEASH = 25; // 화나서 쫓을 때는 이만큼까지 따라감 (m): 맵 끝까지 끝없이 따라오지는 않게
+const ANGRY_LEASH = 25; // 화나서 쫓거나 도망칠 때는 이만큼까지 따라감 (m): 맵 끝까지 끝없이 따라오지는 않게
 const ATTACK_REACH = 0.55; // 몸 가장자리에서 이만큼 안이면 공격 (m)
 const ATTACK_COOL = 1.6; // 공격 사이 쉬는 시간 (초)
 const STRIKE_AT = 0.47; // 공격 동작에서 부리·심·몸통이 닿는 순간 (초)
@@ -93,6 +93,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   const f = { x, z };
   const K = KINDS[kind];
   const TEMPER = temper ?? K.temper;
+  const RUN = K.run ?? 1; // 도망·쫓을 때 빠르기 배수 (하악냥은 더 빨리 달림)
   const S = SCALE * (K.size ?? 1); // 이 몬스터의 크기
   const BODY_R = K.r * S; // 몸 반지름 (m): 캐릭터가 이 안으로 지나가지 못한다
   // 다른 몬스터 몸과 겹치는 자리인지 (몬스터끼리도 서로 통과하지 못한다)
@@ -167,7 +168,6 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   let targeting = false; // 나를 공격 대상으로 삼고 있는지 (처음 알아챌 때만 '화남!' 하고, 그동안은 화난 얼굴)
   let rageLeft = 0; // '화남!' 동작이 끝나기까지 남은 시간 (초)
   let attackCool = 0;
-  let wary = 0; // 도망을 마친 뒤 이 시간(초) 동안은 다시 '발견!' 하지 않고, 가까이 있으면 멈춰서 경계만 함 (제 길로 돌아오다 또 놀라고 또 도망치는 되풀이를 막음)
   let attackT = -1; // 공격 동작을 시작한 지 (초), 공격 중이 아니면 -1
 
   const target = () => {
@@ -219,7 +219,6 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
 
       if (mon.state === 'die' || mon.state === 'gone') angry = targeting = false;
       attackCool -= dt;
-      wary -= dt;
       const near = me ? Math.hypot(me.x - px, me.z - pz) : Infinity;
       const busy = BUSY.has(mon.state);
 
@@ -260,18 +259,21 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           spotLeft -= dt;
           if (spotLeft <= 0) mode = 'flee';
         } else if (mode === 'flee') {
-          if (near >= FLEE_TO || fleeT >= FLEE_TIME || fleeRun >= FLEE_RUN) { mode = 'route'; wary = NOTICE_COOL; }
-        } else if (sees && wary <= 0) {
+          // 도망을 마치면 주변을 다시 살핌: 내가 아직 가까이 있으면(뒤에 있어도) 또 '발견!' 하고 도망
+          if (near >= FLEE_TO || fleeT >= FLEE_TIME || fleeRun >= FLEE_RUN) mode = near < SIGHT ? 'spotAgain' : 'route';
+        }
+        const calm = mode !== 'spot' && mode !== 'flee' && mode !== 'spotAgain';
+        if (mode === 'spotAgain' || (calm && sees)) {
           mode = 'spot';
           spotLeft = SPOT_TIME;
           fleeT = 0;
           fleeRun = 0;
           fleeSide = Math.random() < 0.5 ? 1 : -1;
           mon.play('notice');
-        } else mode = 'route';
+        } else if (calm) mode = 'route';
       } else mode = 'route';
       // 제 길에서 너무 멀어지면 그만두고 돌아감
-      if ((mode === 'flee' || mode === 'chase' || mode === 'rage') && Math.hypot(tx - px, tz - pz) > (angry ? ANGRY_LEASH : LEASH)) {
+      if ((mode === 'flee' || mode === 'chase' || mode === 'rage') && Math.hypot(tx - px, tz - pz) > (angry || mode === 'flee' ? ANGRY_LEASH : LEASH)) {
         mode = 'route';
         angry = false;
       }
@@ -308,13 +310,13 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         let dir = steer(away);
         if (dir === null && blocked(px, pz)) dir = away; // 이미 끼어 있으면 그냥 빠져나감
         if (dir !== null) {
-          const [nx, nz] = move(px, pz, px + Math.sin(dir) * FLEE_SPEED * dt, pz + Math.cos(dir) * FLEE_SPEED * dt);
+          const [nx, nz] = move(px, pz, px + Math.sin(dir) * FLEE_SPEED * RUN * dt, pz + Math.cos(dir) * FLEE_SPEED * RUN * dt);
           fleeRun += Math.hypot(nx - px, nz - pz);
           px = nx;
           pz = nz;
           if (mon.state !== 'walk') mon.play('walk');
           heading += wrap(dir - heading) * Math.min(1, dt * 10);
-          legs = 2.2; // 다리를 빨리 놀림
+          legs = 2.2 * RUN; // 다리를 빨리 놀림
         } else {
           // 사방이 막혀 구석에 몰림: 몸을 박지 않고 멈춰서 나를 쳐다봄
           if (mon.state === 'walk') mon.play('idle');
@@ -328,12 +330,12 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         const stop = BODY_R + ATTACK_REACH;
         if (near > stop + 0.05) { // 조금 여유를 둬서 닿을 듯 말 듯한 거리에서 계속 걷기만 하지 않게
           // 앞이 막혔으면 옆으로 틀어 돌아서 쫓아옴 (벽·벤치에 몸을 박고 서 있지 않게)
-          const step = Math.min(near - stop, CHASE_SPEED * dt);
+          const step = Math.min(near - stop, CHASE_SPEED * RUN * dt);
           const dir = steer(want, near - stop) ?? want;
           [px, pz] = move(px, pz, px + Math.sin(dir) * step, pz + Math.cos(dir) * step);
           heading += wrap(dir - heading) * Math.min(1, dt * 8);
           if (mon.state !== 'walk') mon.play('walk');
-          legs = 1.6;
+          legs = 1.6 * RUN;
         } else {
           heading += wrap(want - heading) * Math.min(1, dt * 8);
           if (mon.state === 'walk') mon.play('idle');
@@ -346,12 +348,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         lastKey = s.key;
       } else if (!busy) {
         const gap = Math.hypot(tx - px, tz - pz);
-        if (wary > 0 && near < SIGHT) {
-          // 도망친 직후: 다가가지 않고 멈춰서 나를 경계함
-          if (mon.state === 'walk') mon.play('idle');
-          heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 6);
-          lastKey = s.key;
-        } else if (gap > 0.05) {
+        if (gap > 0.05) {
           // 밀려나거나 도망쳤으면 제 길로 종종걸음으로 돌아감 (분수·벤치 등은 돌아서)
           const step = Math.min(gap, CATCH_UP * dt);
           const toward = Math.atan2(tx - px, tz - pz);

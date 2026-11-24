@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { syncToon } from '../villager/toon.js';
 import { angerMark, angerPulse } from './anger.js';
+import { canvasTexture } from '../villager/textures.js';
 
 const PI = Math.PI;
 const mat = (color, rough = 0.6) => new THREE.MeshStandardMaterial({ color, roughness: rough });
@@ -294,15 +295,37 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
   });
   shape('flat', (gr) => mesh(new THREE.CapsuleGeometry(0.0007, 0.006, 4, 6).rotateZ(PI / 2), BLACK, gr, '입').position.set(0, -0.0025, 0)); // 힘준 ㅡ
   shape('tongue', (gr) => mesh(ball(0.0024, 14).scale(1, 1.35, 0.35), mat('#ff8fa5', 0.5), gr, '혀').position.set(0.0012, -0.0032, 0)); // ω 밑으로 혀 빼꼼
-  const tail = new THREE.Group(); // 꼬리 뿌리
+  // 꼬리는 두 마디(뼈): 뿌리 쪽은 동작이 직접 움직이고, 끝 마디는 한 박자 늦게 따라와 휘청 휘어짐
+  // 꼬리 전체를 관 하나로 만들고 두 뼈에 나눠 붙여서, 휘어도 이음매 없이 부드럽게 이어짐
+  const tail = new THREE.Bone(); // 꼬리 뿌리
   tail.position.set(0, 0.036, -0.03);
   body.add(tail);
-  // 꼬리는 두 마디: 뿌리 쪽은 동작이 직접 움직이고, 끝 마디는 한 박자 늦게 따라와 휘청 휘어짐
-  catTail(tail, C, [[0, 0, 0], [0, 0.014, -0.012], [0.002, 0.026, -0.015]], 0.005);
-  const tailTip = new THREE.Group();
+  const tailTip = new THREE.Bone();
   tailTip.position.set(0.002, 0.026, -0.015);
   tail.add(tailTip);
-  catTail(tailTip, C, [[0, 0, 0], [0.002, 0.009, 0.0005], [0.008, 0.019, 0.006]], 0.005);
+  {
+    const TR = 0.005, SEG = 40, RAD = 12;
+    const pts = [[0, 0, 0], [0, 0.014, -0.012], [0.002, 0.026, -0.015], [0.004, 0.035, -0.0145], [0.010, 0.045, -0.009]]; // 뿌리 기준
+    const curve = new THREE.CatmullRomCurve3(pts.map((q) => new THREE.Vector3(...q).add(tail.position)), false, 'centripetal');
+    const geo = new THREE.TubeGeometry(curve, SEG, TR, RAD);
+    const lens = curve.getLengths(200);
+    const joint = lens[100] / lens[200]; // 가운데 점(이음매)이 꼬리 길이의 어디쯤인지
+    const n = geo.attributes.position.count, idx = [], wt = [];
+    for (let i = 0; i < n; i++) {
+      const w = THREE.MathUtils.smoothstep(Math.floor(i / (RAD + 1)) / SEG, joint - 0.15, joint + 0.15); // 이음매 둘레는 두 뼈가 나눠 가짐
+      idx.push(0, 1, 0, 0);
+      wt.push(1 - w, w, 0, 0);
+    }
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(idx, 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(wt, 4));
+    const tailFur = mat(C, 0.8);
+    const sk = new THREE.SkinnedMesh(geo, tailFur);
+    sk.name = '꼬리';
+    body.add(sk);
+    body.updateMatrixWorld(true);
+    sk.bind(new THREE.Skeleton([tail, tailTip]));
+    mesh(ball(TR, 12), tailFur, tailTip, '꼬리').position.set(0.008, 0.019, 0.006); // 꼬리 끝 동글
+  }
   // 윤곽선 굵기를 부품 크기와 상관없이 모두 같게
   g.traverse((o) => { if (o.isMesh) o.userData.outlineWidth = HAAK_LINE; });
   const ws = { u: 0, uv: 0, b: 0, bv: 0, e: 0, ev: 0, tx: 0, txv: 0, tz: 0, tzv: 0, trx: 0, trz: 0, tprev: null, tp: new THREE.Vector3(), tv: new THREE.Vector3(), t: null, prev: null, tmp: new THREE.Vector3(), vel: new THREE.Vector3(), q: new THREE.Quaternion() };
@@ -448,6 +471,22 @@ export const HAAK_MOTIONS = [];
 function hmotion(name, desc, period, fn, extra) { HAAK_MOTIONS.push({ name, desc, period, fn, extra }); }
 const motion = (name) => HAAK_MOTIONS.find((m) => m.name === name);
 const hBlink = (H, t) => H.face.blink(bump(t % 2.9, 2.75, 2.9));
+// 고양이 걸음새: 발마다 한 주기(0~1) 중 앞쪽 duty 만큼은 땅을 딛고 몸 밑으로 쭉 밀고(앞 → 뒤, 일정하게),
+// 나머지는 다리를 살짝 접어(짧게) 발을 들고 앞으로 휙 가져간다. offs: 다리마다 주기 어긋남 [앞왼, 앞오, 뒤왼, 뒤오]
+// amp: [앞발, 뒷발] 흔드는 폭 · lift: 발 들 때 다리를 얼마나 접나 (rotation.x + 는 발이 뒤로)
+function gait(H, c, offs, duty, amp, lift) {
+  H.legs.forEach((l, i) => {
+    const ph = (((c + offs[i]) % 1) + 1) % 1;
+    const a = amp[i < 2 ? 0 : 1];
+    if (ph < duty) { // 딛고 밀기
+      l.rotation.x = a * (-1 + (2 * ph) / duty);
+    } else { // 들고 앞으로: 처음엔 뒤에서 발을 톡 떼고, 끝에선 앞으로 뻗어 내려놓음
+      const sw = (ph - duty) / (1 - duty);
+      l.rotation.x = a * Math.cos(PI * sw);
+      l.scale.y = 1 - lift * Math.sin(PI * sw);
+    }
+  });
+}
 const walkLegs = (H, p, amp) => H.legs.forEach((l, i) => (l.rotation.x = (i === 0 || i === 3 ? 1 : -1) * Math.sin(p) * amp)); // 대각선 다리끼리 같이
 
 // 1. 대기: 꼬리 살랑, 앞발 핥기
@@ -470,7 +509,10 @@ hmotion('걷기', '꼬리 바짝 세우고 종종종', (2 * PI) / 0.7, (c, H, t)
   H.move.position.x = Math.sin(t * 0.7) * 0.045;
   H.move.rotation.y = (PI / 2) * THREE.MathUtils.clamp(v * 5, -1, 1);
   const p = t * 16;
-  walkLegs(H, p, 0.6);
+  // 옆걸음 순서 (뒤왼 → 앞왼 → 뒤오 → 앞오): 늘 세 발이 땅에 닿은 채 차분히
+  gait(H, p / (2 * PI), [0.75, 0.25, 0, 0.5], 0.62, [0.5, 0.6], 0.32);
+  H.body.rotation.z = Math.sin(p) * 0.035; // 딛는 쪽으로 엉덩이가 살짝 실룩
+  H.head.rotation.z = -H.body.rotation.z * 0.8;
   H.move.position.y = Math.abs(Math.sin(p)) * 0.0025;
   H.head.rotation.y = -H.move.rotation.y * 0.35; // 걸으면서 힐끔 이쪽
   H.tail.rotation.x = -0.25;
@@ -485,12 +527,11 @@ hmotion('달리기', '귀 젖히고 꼬리 휘날리며 다다닥', (2 * PI) / 1
   H.move.rotation.y = (PI / 2) * THREE.MathUtils.clamp(v * 5, -1, 1);
   const p = t * 24;
   const s = Math.sin(p); // + 몸 쭉 폄(앞발 앞, 뒷발 뒤, 공중) · - 웅크림(뒷발이 앞발 밑까지)
-  H.legs.forEach((l, i) => {
-    const hind = i >= 2;
-    const ph = p - (hind ? 0.7 : 0) - (i % 2) * 0.25; // 뒷발은 한 박자 늦게, 좌우는 살짝 어긋나게
-    l.rotation.x = (hind ? 1 : -1) * Math.sin(ph) * 0.95;
-  });
-  H.move.position.y = Math.max(0, s) * 0.009;
+  // 갤럽: 뒷발 둘이 탁탁 차고(몸이 쭉 펴짐) → 앞발 둘이 탁탁 받고 → 네 발을 몸 밑에 모은 채 공중으로
+  // (s = 1 일 때 앞발은 막 땅에 닿아 앞으로 뻗고, 뒷발은 막 차고 뒤로 뻗음)
+  const cc = p / (2 * PI);
+  gait(H, cc, [-0.25, -0.31, 0.1, 0.04], 0.35, [0.85, 0.95], 0.45);
+  H.move.position.y = Math.max(0, -s) * 0.01; // 네 발을 모았을 때 붕 뜸
   H.body.rotation.x = -s * 0.12; // 펼 땐 코가 들리고, 웅크릴 땐 숙여짐
   H.torso.scale.set(1 - s * 0.03, 1 - s * 0.05, 1 + s * 0.09); // 늘었다 줄었다
   H.head.rotation.x = s * 0.1; // 머리는 몸과 반대로 까딱해서 거의 수평
@@ -740,6 +781,21 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
   DIE.extra(H); // 펑 연기
   const anger = angerMark();
   root.add(anger);
+  // 놀랐을 때 머리 위에 뜨는 느낌표 (다른 몬스터와 같은 모양)
+  const bang = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: canvasTexture('haakBang', 64, 128, (g, w, h) => {
+      g.font = '900 110px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.lineWidth = 14;
+      g.strokeStyle = '#4a3525';
+      g.strokeText('!', w / 2, h / 2 + 6);
+      g.fillStyle = '#ff6b5a';
+      g.fillText('!', w / 2, h / 2 + 6);
+    }),
+    transparent: true,
+  }));
+  root.add(bang);
 
   let state = 'idle';
   let u = 0;
@@ -753,8 +809,8 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
   }
 
   function update(dt, legs = 1) {
-    const run = state === 'walk' && legs > 1; // 도망·쫓기: 걷기 대신 달리기 (다리 빠르기는 모션에 들어 있으니 시간은 원래대로)
-    if (run) dt /= legs;
+    const run = state === 'walk' && legs > 1; // 도망·쫓기: 걷기 대신 달리기
+    if (run) dt /= 2.2; // 달리기 모션은 도망 배수(2.2)일 때가 제 빠르기: 더 빨리 달리면 다리도 그만큼 빨리 놀림
     t += dt;
     u += dt;
     moodT += dt;
@@ -804,6 +860,10 @@ export function createHaaknyang({ onDone = null, outlineScale = 1 } = {}) {
     anger.visible = angerK > 0.001;
     anger.scale.setScalar(0.04 * angerK);
     anger.position.set(0.03, 0.11 + H.move.position.y, 0);
+    const bk = state === 'notice' ? (u < 0.12 ? 0 : u < 1.0 ? outBack(seg(u, 0.12, 0.3)) : 1 - seg(u, 1.0, 1.3)) : 0;
+    bang.visible = bk > 0.001;
+    bang.scale.set(0.028 * bk, 0.056 * bk, 1);
+    bang.position.set(0.02, 0.135 + H.move.position.y, 0);
 
     const M = HAAKNYANG_MOTIONS[state];
     if (M && !M.loop && u >= M.dur) {
