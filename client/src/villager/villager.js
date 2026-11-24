@@ -47,8 +47,13 @@ function surfNormal(phi, th, scale = 1) {
   return b.cross(a).normalize();
 }
 
+// 곡면 칸 수 배율: 마을처럼 멀리서 여럿이 보일 때는 낮춰 삼각형을 줄인다 (몸을 만들 때마다 createVillager 가 정한다)
+let SEG = 1;
+
 // 방위각·극각 격자로 곡면 만들기 (가장자리가 계단 없이 매끈함)
 function shellGrid(nPhi, nT, thetaMax, point, { phiMin = -PI, phiMax = PI } = {}) {
+  nPhi = Math.round(nPhi * SEG);
+  nT = Math.max(2, Math.round(nT * SEG));
   const pos = [];
   const uv = [];
   const idx = [];
@@ -114,15 +119,15 @@ function lathe(points, segs = 40, zScale = 1) {
   // 입력은 위→아래 순서. 바깥을 향하도록 아래→위로 뒤집는다 (텍스처 v도 위=위가 됨)
   const pts = [...points].reverse().map(([r, y]) => new THREE.Vector2(r, y));
   // 둘레는 최소 48칸: 소매·바짓단 같은 둥근 테두리에 각진 면이 보이지 않게
-  const g = new THREE.LatheGeometry(pts, Math.max(segs, 48), PI, PI * 2);
+  const g = new THREE.LatheGeometry(pts, Math.round(Math.max(segs, 48) * SEG), PI, PI * 2);
   if (zScale !== 1) g.scale(1, 1, zScale);
   g.computeVertexNormals();
   return g;
 }
 
 function ellipsoid(rx, ry, rz, segs = 32) {
-  const n = Math.max(segs, 32);
-  return new THREE.SphereGeometry(1, n, Math.max(24, Math.round(n * 0.7))).scale(rx, ry, rz);
+  const n = Math.round(Math.max(segs, 32) * SEG);
+  return new THREE.SphereGeometry(1, n, Math.round(Math.max(24, n * 0.7 / SEG) * SEG)).scale(rx, ry, rz);
 }
 
 // ───────────── 재질 ─────────────
@@ -1519,8 +1524,8 @@ export const EXPRESSIONS = {
 const FACE_KEYS = ['skin', 'nose', 'iris', 'lash', 'eyeStyle', 'noseStyle', 'mouthStyle'];
 
 // texScale: 표정 텍스처 해상도 배율 (마을처럼 여러 명이 동시에 보일 때는 낮춰 메모리를 아낀다)
-// hairSegs: 머리 곡면 해상도 (기본 720, 마을은 낮춤)
-export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = {}) {
+// hairSegs: 머리 곡면 해상도 (기본 720, 마을은 낮춤) · segScale: 몸 곡면 칸 수 배율 (마을은 0.5)
+export function createVillager(options = {}, { texScale = 1, hairSegs = 720, segScale = 1 } = {}) {
   const detail = { hairSegs };
   const o = { ...PRESETS.boy, ...options };
   const root = new THREE.Group();
@@ -1550,7 +1555,9 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720 } = 
 
   function rebuild() {
     clear();
+    SEG = segScale;
     rig = buildBody(root, o, live, detail);
+    SEG = 1;
     rig.root = root;
     attachEquipment(rig, state.equipment);
   }

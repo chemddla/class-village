@@ -96,8 +96,8 @@ export class Character {
   constructor(name, colorIndex, look = {}) {
     this.root = new THREE.Group();
     this.colorIndex = colorIndex;
-    // 여러 명이 함께 보이므로 표정 텍스처는 1/4 해상도, 머리 곡면도 가볍게
-    this.villager = createVillager(lookFor(colorIndex, look), { texScale: 0.25, hairSegs: 240 });
+    // 여러 명이 함께 보이므로 표정 텍스처는 1/4 해상도, 머리·몸 곡면도 가볍게 (hairSegs 는 segScale 이 한 번 더 줄인다)
+    this.villager = createVillager(lookFor(colorIndex, look), { texScale: 0.25, hairSegs: 320, segScale: 0.5 });
     this.villager.root.scale.setScalar(SCALE);
     // 마을 그림체에 맞춘 툰 명암 + 쇼룸보다 35% 얇은 외곽선 (멀리서 내려다봐도 뭉개지지 않게)
     syncToon(this.villager.root, true, OUTLINE_SCALE);

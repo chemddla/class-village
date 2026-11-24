@@ -1039,6 +1039,16 @@ function attach(r) {
       me.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
       me.root.rotation.y = me.targetRot;
       scene.add(me.root);
+      // 도구마다 한 번씩 쥐고 화면 한 점에만 미리 그려 둔다 (들어올 때 한 번): 셰이더 컴파일·텍스처 올리기를 여기서 끝내지 않으면
+      // 누가 그 도구를 처음 쥐는 순간마다 화면이 0.1초쯤 멈춘다 (카메라는 매 장면 다시 놓으므로 여기서 옮겨도 된다.
+      // 따로 만든 그림판에 그리면 색 공간이 달라 다른 셰이더가 컴파일되므로 화면에 직접 그린다)
+      camera.position.set(me.x, 3, me.z + 5);
+      camera.lookAt(me.x, 1, me.z);
+      renderer.setScissorTest(true);
+      renderer.setScissor(0, 0, 1, 1);
+      for (let t = 1; t < TOOLS.length; t++) { me.villager.equip(TOOLS[t]); renderer.render(scene, camera); }
+      renderer.setScissorTest(false);
+      me.villager.equip(TOOLS[local.tool]);
       camTarget.set(me.x, 0, me.z);
       local.last = null;
       // 내 가방: 과일이 늘면 알려 주고 가방 창을 새로 그린다
@@ -1578,6 +1588,9 @@ function setMapSize(px) {
   grip.addEventListener('pointercancel', end);
   addEventListener('resize', () => { if (store.get(localStorage, 'mapPx') !== null) setMapSize(mapNow()); });
 }
+const viewFrustum = new THREE.Frustum();
+const viewMatrix = new THREE.Matrix4();
+const viewSphere = new THREE.Sphere(new THREE.Vector3(), 3); // 캐릭터 + 머리 위 이름·든 물건·휘두른 궤적
 let fpsFrames = 0;
 let fpsTime = 0;
 
@@ -1605,7 +1618,15 @@ renderer.setAnimationLoop(() => {
   setCurveCenter(camTarget.x, camTarget.z, cam.yaw);
   // 둥근 지평선의 중심을 정한 뒤에 캐릭터를 내린다 (한 프레임 늦으면 걸을 때 발이 땅과 어긋남)
   if (me) me.update(dt);
-  for (const { char } of others.values()) char.update(dt);
+  // 화면 밖 학생은 숨기고 움직이지도 않는다 (숨기지 않으면 보이지 않아도 매 장면 뼈대를 계산한다).
+  // 동작 중이면 화면 밖이어도 움직인다: 화면 밖에서 쏜 화살·휘두른 타격이 그 동작의 '맞는 순간'에 나온다
+  camera.updateMatrixWorld();
+  viewFrustum.setFromProjectionMatrix(viewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+  for (const { char } of others.values()) {
+    viewSphere.center.set(char.x, 1, char.z);
+    char.root.visible = viewFrustum.intersectsSphere(viewSphere);
+    if (char.root.visible || char.actLeft > 0) char.update(dt);
+  }
   for (const m of hereMonsters()) m.update(dt, me);
   arrows.update(dt);
   FX.update(dt);

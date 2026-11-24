@@ -344,7 +344,7 @@ const ROUND_BLOBS = [
 // 위는 햇빛을 받아 밝고 아래는 그늘지게 꼭짓점 색을 칠함
 export function roundCanopy(seed = 7, BLOBS = ROUND_BLOBS, top = 3.1) {
   const parts = BLOBS.map(([x, y, z, r]) => {
-    const g = new THREE.SphereGeometry(r, 20, 14).toNonIndexed().translate(x, y, z);
+    const g = new THREE.SphereGeometry(r, 14, 10).toNonIndexed().translate(x, y, z); // 잎 덩어리 7개 × 나무 수십 그루 × 외곽선: 칸 수가 곧 장면 무게
     g.deleteAttribute('uv');
     g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count * 3).fill(1), 3));
     return g;
@@ -651,16 +651,17 @@ function buildMeadow(group, { low = false } = {}) {
   // 줄기 + 동그란 잎 두 장
   const stemGeo = mergeGeometries([
     new THREE.CylinderGeometry(0.02, 0.026, 0.3, 6).translate(0, 0.15, 0),
-    new THREE.SphereGeometry(0.05, 8, 6).scale(1.5, 0.35, 0.9).rotateZ(0.5).translate(0.06, 0.1, 0),
-    new THREE.SphereGeometry(0.045, 8, 6).scale(1.5, 0.35, 0.9).rotateZ(-0.5).translate(-0.055, 0.16, 0),
+    new THREE.SphereGeometry(0.05, 6, 4).scale(1.5, 0.35, 0.9).rotateZ(0.5).translate(0.06, 0.1, 0),
+    new THREE.SphereGeometry(0.045, 6, 4).scale(1.5, 0.35, 0.9).rotateZ(-0.5).translate(-0.055, 0.16, 0),
   ]);
+  // (꽃은 수백 송이라 꽃잎·잎의 칸 수를 낮게 둔다: 손톱만 해서 티가 나지 않는다)
   // 꽃송이: 통통하고 동그란 꽃잎 5장(하양 → 인스턴스 색으로 물듦) + 볼록한 노란 가운데, 하늘을 보도록 살짝 기울임
   const parts = [];
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
-    parts.push(paint(new THREE.SphereGeometry(0.06, 10, 6).scale(1, 0.42, 1).translate(Math.cos(a) * 0.075, 0, Math.sin(a) * 0.075), 0xffffff));
+    parts.push(paint(new THREE.SphereGeometry(0.06, 6, 4).scale(1, 0.42, 1).translate(Math.cos(a) * 0.075, 0, Math.sin(a) * 0.075), 0xffffff));
   }
-  parts.push(paint(new THREE.SphereGeometry(0.05, 12, 8).scale(1, 0.75, 1).translate(0, 0.02, 0), 0xffd84a));
+  parts.push(paint(new THREE.SphereGeometry(0.05, 8, 5).scale(1, 0.75, 1).translate(0, 0.02, 0), 0xffd84a));
   const headGeo = mergeGeometries(parts).rotateX(0.3).translate(0, 0.31, 0);
   const stems = new THREE.InstancedMesh(stemGeo, windToon(0x6aa84f), flowers.length);
   const heads = new THREE.InstancedMesh(headGeo, windToon(0xffffff, { vertexColors: true }), flowers.length);
