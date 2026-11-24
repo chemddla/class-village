@@ -269,7 +269,22 @@ export function setupBugs(room, Bug, speedOf) {
     }
     client.send('netResult', { near, scared });
   });
+
+  // 무기로 곤충을 쳤음 (휘두르기·화살·마법 볼): [곤충 번호, ...]. 맞은 곤충은 희귀도와 상관없이 놀라 날아간다
+  // (내 캐릭터에서 화살이 닿는 거리 안의 곤충만 믿는다)
+  room.onMessage('spook', (client, ids) => {
+    const p = room.state.players.get(client.sessionId);
+    if (!p || !Array.isArray(ids)) return;
+    const x = fromCm(p.x);
+    const z = fromCm(p.z);
+    for (const id of ids.slice(0, 12)) {
+      const s = sims.get(String(id));
+      if (s && Math.hypot(s.x - x, s.z - z) < SPOOK_REACH) remove(String(id), 'fled');
+    }
+  });
 }
+
+const SPOOK_REACH = 24; // 무기로 친 곤충은 내 캐릭터에서 이만큼 안이어야 믿음 (화살이 날아가는 거리 20m + 여유)
 
 // 꺾은선(그물 테가 지나간 길)과 점 사이의 가장 가까운 거리
 function pathDist(pts, x, y, z) {

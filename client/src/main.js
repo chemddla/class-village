@@ -260,6 +260,8 @@ function hitFx(char, action) {
     const spot = spotIdx('tree', hx, hz, 1.3);
     // 몬스터: 휘두른 범위 안에 있는 것은 모두 맞는다 (한 번 휘둘러 여럿)
     const monHits = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me)).filter(Boolean) : [];
+    // 곤충: 휘두른 범위 안에 있으면 놀라 날아간다 (내가 휘둘렀을 때만 서버에 알림)
+    if (action === 'clubSmash' && char === me) spookBugs((b) => b.y - gy < 2.2 && hits(char.x, char.z, char.targetRot, b.x, b.z));
     if (victims.length || monHits.length) {
       for (const v of victims) {
         v.shake();
@@ -320,10 +322,22 @@ function hitFx(char, action) {
 }
 Character.onHit = (char, action) => hitFx(char, action);
 
+// 내 공격에 맞은 곤충을 서버에 알려 놀라 날아가게 한다. test(곤충 자리 {x, y, z}) 가 true 인 것 모두
+// (화살은 날아가는 동안 매 순간 묻으므로, 한 번 알린 곤충은 다시 보내지 않는다)
+const spookedBugs = new Set();
+function spookBugs(test) {
+  const ids = [...bugSpots].filter(([id, b]) => !spookedBugs.has(id) && test(b)).map(([id]) => id);
+  if (!ids.length || !room) return;
+  for (const id of ids) spookedBugs.add(id);
+  room.send('spook', ids);
+}
+
 // 날아가는 화살이 무언가에 맞았는지: 사람(쏜 사람 빼고) → 몬스터 순서. 맞았으면 true (화살은 사라진다)
 const ARROW_HIT_R = 0.4; // 화살촉이 이만큼(m) 안으로 들어오면 맞음 (사람·몬스터 몸 둘레)
 function arrowHit(a, from, mine) {
   const { x, y, z } = a.tip;
+  // 화살·마법 볼이 곤충 곁을 스치면 놀라 날아간다 (곤충은 작아서 화살을 멈추지는 않는다)
+  if (mine) spookBugs((b) => Math.hypot(b.x - x, b.y - y, b.z - z) < (a.bolt ? 0.6 : 0.5));
   if (a.bolt) return boltTouches(a, from); // 마법 볼은 닿기만 보고, 맞히는 것은 터질 때 둘레 모두 (boltBurst)
   const bx = x - a.dir.x; // 날아온 쪽 (맞은 쪽이 그 반대로 밀리고, 그쪽을 돌아본다)
   const bz = z - a.dir.z;
@@ -355,6 +369,7 @@ function boltTouches(a, from) {
 function boltBurst(a, at) {
   const { from, mine } = a;
   const R = BOLT.splash;
+  if (mine) spookBugs((b) => Math.hypot(b.x - at.x, b.y - at.y, b.z - at.z) < R + 0.3); // 터진 둘레의 곤충도 놀라 날아감
   const star = (px, py, pz, dx, dz) => FX.burst('star', 8, px, py, pz, { floor: py - 1, dir: [dx, dz], spread: Math.PI, power: 0.8 });
   for (const c of [me, ...[...others.values()].map((o) => o.char)]) {
     if (!c || c === from || Math.hypot(c.x - at.x, c.z - at.z) > R || at.y > c.groundY + 1.7 + R) continue;
