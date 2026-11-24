@@ -11,6 +11,7 @@ const SERVER = process.argv[3] || 'ws://localhost:2567';
 const TICK = 100; // 초당 10회 (실제 학생 화면과 같음)
 
 const client = new Client(SERVER);
+const stamp = () => Math.round(performance.now() / 10) % 65535 + 1; // 보낸 때 (실제 화면과 같은 꼴)
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
 function pickTarget(x, z) {
@@ -50,7 +51,7 @@ async function runBot(i) {
     if (d < 0.3 || stuck > 15) {
       pause = 1 + Math.random() * 4;
       stuck = 0;
-      room.send('m', [toCm(x), toCm(z), angleToByte(rot), ANIM.IDLE]);
+      room.send('m', [toCm(x), toCm(z), angleToByte(rot), ANIM.IDLE, 0, 0, stamp()]);
       return;
     }
     const speed = (run ? RUN_SPEED : WALK_SPEED) * dt;
@@ -60,7 +61,7 @@ async function runBot(i) {
     x = nx;
     z = nz;
     rot = Math.atan2(dx, dz);
-    room.send('m', [toCm(x), toCm(z), angleToByte(rot), run ? ANIM.RUN : ANIM.WALK]);
+    room.send('m', [toCm(x), toCm(z), angleToByte(rot), run ? ANIM.RUN : ANIM.WALK, 0, 0, stamp()]);
   }, TICK);
 
   room.onLeave(() => clearInterval(timer));

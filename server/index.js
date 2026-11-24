@@ -33,6 +33,7 @@ const Player = schema({
   look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
   bag: { map: 'uint8' }, // 가방: 과일 이름(FRUITS)·물고기 id(FISH) → 개수. 나중에 상점에 판다
   dex: { map: 'uint16' }, // 도감: 잡아 본 물고기 id → 지금까지 잡은 마릿수
+  s: 'uint16', // 이 자리를 보낸 때 (보낸 쪽 시계, 10ms 단위로 1~65535 를 돈다. 0 = 모름): 받는 쪽이 자리 사이 간격을 고르게 잡는 데 쓴다
 }, 'Player');
 
 // 땅에 떨어진 과일 (누구나 주울 수 있음)
@@ -335,7 +336,7 @@ class VillageRoom extends Room {
     this.onMessage('m', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || !Array.isArray(msg) || msg.length < 4) return;
-      const [cx, cz, r, a, tool = 0, arrows = 0] = msg.map((v) => Number(v) | 0);
+      const [cx, cz, r, a, tool = 0, arrows = 0, stamp = 0] = msg.map((v) => Number(v) | 0);
       const now = Date.now();
       const prev = this.last.get(client.sessionId);
       const dt = Math.min((now - prev.t) / 1000, 1.5);
@@ -358,6 +359,7 @@ class VillageRoom extends Room {
       p.a = a >= 0 && a <= ANIM_MAX ? a : 0;
       p.t = tool >= 0 && tool < TOOLS.length ? tool : 0;
       p.q = Math.max(0, Math.min(ARROW.max, arrows));
+      p.s = stamp & 65535;
     });
 
     // 외형 바꾸기 (테스트 서버에서만)

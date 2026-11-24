@@ -1476,11 +1476,23 @@ function attach(r) {
       const push = () => {
         const t = performance.now();
         const last = o.buf[o.buf.length - 1];
-        // 오래 멈춰 있다가 다시 움직이면, 직전 위치를 "방금 전"으로 다시 찍어 순간이동을 막음
-        if (last && Math.hypot(fromCm(p.x) - last.x, fromCm(p.z) - last.z) > 8) o.buf.length = 0; // 포탈을 탔으면 미끄러지지 않고 바로 그 자리에
-        else if (last && t - last.t > 300) o.buf.push({ ...last, t: t - 100 });
-        o.buf.push({ t, x: fromCm(p.x), z: fromCm(p.z), r: byteToAngle(p.r), a: p.a });
-        if (o.buf.length > 30) o.buf.shift();
+        // 보낸 쪽 시계(p.s)가 있으면 자리 사이 간격을 그 시계로 잡는다: 도착한 때는 서버가 0.1초마다 묶어 보내는 데 맞춰 들쭉날쭉해서,
+        // 그대로 쓰면 고르게 걷는 학생도 속도가 0.5~2배로 출렁인다. (도착한 때에서 0.12초 넘게 벗어나지는 않게 붙잡아 둔다)
+        // 시계가 그대로면 자리 소식이 아니라 체력·가방 같은 다른 것이 바뀐 것이므로 자리를 새로 찍지 않는다
+        const fresh = !p.s || p.s !== o.stamp;
+        let st = t;
+        if (p.s && o.stamp && last) {
+          const ds = ((p.s - o.stamp + 65535) % 65535) * 10;
+          if (ds < 1000) st = Math.min(t, Math.max(last.t + ds, t - 120));
+        }
+        o.stamp = p.s;
+        if (fresh) {
+          // 오래 멈춰 있다가 다시 움직이면, 직전 위치를 "방금 전"으로 다시 찍어 순간이동을 막음
+          if (last && Math.hypot(fromCm(p.x) - last.x, fromCm(p.z) - last.z) > 8) o.buf.length = 0; // 포탈을 탔으면 미끄러지지 않고 바로 그 자리에
+          else if (last && st - last.t > 300) o.buf.push({ ...last, t: st - 100 });
+          o.buf.push({ t: st, x: fromCm(p.x), z: fromCm(p.z), r: byteToAngle(p.r), a: p.a });
+          if (o.buf.length > 30) o.buf.shift();
+        }
         char.setTool(p.t);
         char.setArrows(p.q);
       };
@@ -1956,7 +1968,7 @@ function updateMe(dt) {
     const msg = [toCm(me.x), toCm(me.z), angleToByte(me.targetRot), anim, local.tool, local.arrows];
     const l = local.last;
     if (!l || msg.some((v, i) => v !== l[i])) {
-      room.send('m', msg);
+      room.send('m', [...msg, Math.round(performance.now() / 10) % 65535 + 1]); // 끝은 보낸 때 (10ms 단위, 1~65535): 받는 쪽이 자리 사이 간격을 고르게 잡는다
       local.last = msg;
       // 서버가 다시 켜져 새로 들어갈 때 이 자리·방향으로 돌아오도록 기억 (이 탭에만)
       store.set(sessionStorage, 'spot', JSON.stringify({ x: me.x, z: me.z, r: msg[2] }));
@@ -1993,7 +2005,7 @@ function updateOthers(now) {
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
 // step: 화면이 가려져 그리기가 멈춘 동안에도 내 캐릭터만 정해진 시간만큼 움직여 보는 점검용
-if (import.meta.env.DEV) window.__game = { renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
+if (import.meta.env.DEV) window.__game = { field, renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
