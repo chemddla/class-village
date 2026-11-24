@@ -193,6 +193,14 @@ export function drawFace(tex, skin, { mouth = 'smile', blush = 1 } = {}, look = 
     const p = new Path2D();
     p.ellipse(mx, my + 6, 19, 25, 0, 0, Math.PI * 2);
     open(p, [mx, my + 26, 14, 9]);
+  } else if (mouth === 'wince') {
+    // 아파서 찡그린 입: 꼬불꼬불한 물결 선
+    g.lineWidth = 9;
+    g.lineJoin = 'round';
+    g.beginPath();
+    g.moveTo(mx - 40, my + 4);
+    for (let i = 1; i <= 4; i++) g.quadraticCurveTo(mx - 40 + (i - 0.5) * 20, my + (i % 2 ? -12 : 18), mx - 40 + i * 20, my + 4);
+    g.stroke();
   } else if (mouth === 'pout') {
     // 삐죽 입: 한쪽으로 치우친 짧은 시옷자
     g.lineWidth = 9;
@@ -452,7 +460,7 @@ export const EYE_STYLES = {
   },
 };
 
-// ── 눈: 세로 1.25배 타원. mode: open | round | happy | closed | angry ──
+// ── 눈: 세로 1.25배 타원. mode: open | round | happy | closed | angry | wince ──
 // 눈 조각은 실제 크기가 정사각형이므로 그린 비율이 그대로 보인다. 텍스처 오른쪽(+u)이 바깥쪽 눈꼬리.
 export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic' }) {
   const c = tex.image;
@@ -501,6 +509,19 @@ export function drawEye(tex, { iris, lash = false, mode = 'open', style = 'basic
   g.lineCap = 'round';
   g.strokeStyle = ink;
 
+  if (mode === 'wince') {
+    // 아파서 질끈 감은 눈 (> <): 바깥 눈꼬리에서 코 쪽으로 모이는 꺾인 선 (텍스처 오른쪽이 바깥)
+    g.lineWidth = 30;
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(cx + rx * 0.75, cy - ry * 0.55);
+    g.lineTo(cx - rx * 0.6, cy + ry * 0.05);
+    g.lineTo(cx + rx * 0.75, cy + ry * 0.6);
+    g.stroke();
+    tex.needsUpdate = true;
+    return;
+  }
   if (mode === 'happy' || mode === 'closed') {
     // 반달 눈웃음(∩) / 감은 눈: 굵은 곡선 하나
     const k = mode === 'happy' ? 0.5 : 0.34;

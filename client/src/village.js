@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   WORLD, HALF, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, RIVER_BANK_CLEAR, riverCenterZ,
   islandN, shoreN, islandRadius, BEACH, FISH, FISH_APPROACH, LURE_HESITATE, NIBBLE_MS, shadowLen, rollFish, NOTICE,
-  VILLAGE_FRUIT, FRUIT_MAX, PORTALS,
+  VILLAGE_FRUIT, FRUIT_MAX, PORTALS, WOOD_BY_ID, LIFE_SPOTS,
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
@@ -950,14 +950,75 @@ function groundFruit(fruit) {
   }
   return groundFruitCache.get(fruit);
 }
+// 땅에 떨어진 목재: 통나무(껍질 + 양 끝 자른 면 + 옹이) · 나뭇가지(잔가지와 잎 하나)
+function woodParts(w) {
+  if (w.shape === 'branch') {
+    return [
+      tint(new THREE.CylinderGeometry(0.018, 0.026, 0.44, 7).rotateZ(Math.PI / 2), w.bark),
+      tint(new THREE.CylinderGeometry(0.009, 0.015, 0.17, 6).translate(0, 0.085, 0).rotateZ(-0.75).translate(0.06, 0, 0), w.bark),
+      tint(new THREE.SphereGeometry(0.04, 8, 6).scale(1.7, 0.35, 1).rotateZ(-0.5).translate(0.2, 0.13, 0), 0x7fbf4f),
+      tint(new THREE.CylinderGeometry(0.019, 0.019, 0.006, 7).rotateZ(Math.PI / 2).translate(-0.222, 0, 0), w.inner),
+    ];
+  }
+  const R = 0.075;
+  const L = 0.36;
+  // 자작나무는 하얀 껍질에 짧은 검은 가로 무늬(껍질눈)와 군데군데 거뭇한 얼룩이 있다 (면마다 칠해 무늬 가장자리가 또렷하게).
+  // 다른 나무는 세로 결만 살짝
+  const birch = w.tree === 'birch';
+  const bark = tint(new THREE.CylinderGeometry(R, R * 1.04, L, birch ? 24 : 12, birch ? 18 : 1).rotateZ(Math.PI / 2), w.bark,
+    birch ? null : (c, x, y, z) => c.multiplyScalar(0.9 + 0.1 * Math.sin(x * 60 + Math.atan2(z, y) * 5)));
+  if (birch) {
+    const hash = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+    const pos = bark.attributes.position;
+    const col = bark.attributes.color;
+    const base = new THREE.Color(w.bark);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i += 3) {
+      const x = (pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2)) / 3;
+      const y = (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3;
+      const z = (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
+      if (Math.hypot(y, z) < R * 0.5) continue; // 뚜껑 면은 그대로
+      const ring = Math.floor((x + L / 2) / (L / 18)); // 길이 방향 18칸
+      const seg = Math.floor(((Math.atan2(z, y) + Math.PI) / (Math.PI * 2)) * 24); // 둘레 24칸
+      // 가로 무늬: 같은 줄(ring)에서 둘레로 2~4칸 이어진 짧은 띠
+      const band = hash(ring, Math.floor(seg / 3)) < 0.28 && hash(ring, seg) < 0.85;
+      c.copy(base);
+      if (band) c.lerp(new THREE.Color(0x2b2622), 0.88);
+      else if (hash(Math.floor(ring / 3), Math.floor(seg / 4) + 50) < 0.12) c.lerp(new THREE.Color(0x8c8478), 0.45); // 거뭇한 얼룩
+      else c.multiplyScalar(0.95 + 0.05 * hash(ring + 9, seg + 3));
+      for (let k = 0; k < 3; k++) col.setXYZ(i + k, c.r, c.g, c.b);
+    }
+  }
+  return [
+    bark,
+    tint(new THREE.CylinderGeometry(R * 0.9, R * 0.9, 0.014, 12).rotateZ(Math.PI / 2).translate(L / 2 + 0.004, 0, 0), w.inner,
+      (c, x, y, z) => c.multiplyScalar(0.86 + 0.14 * Math.cos(Math.hypot(y, z) * 110))), // 나이테
+    tint(new THREE.CylinderGeometry(R * 0.9, R * 0.9, 0.014, 12).rotateZ(Math.PI / 2).translate(-L / 2 - 0.004, 0, 0), w.inner,
+      (c, x, y, z) => c.multiplyScalar(0.86 + 0.14 * Math.cos(Math.hypot(y, z) * 110))),
+    tint(new THREE.SphereGeometry(0.018, 6, 4).translate(0.05, R * 0.95, 0), w.bark, (c) => c.multiplyScalar(0.8)), // 옹이
+  ];
+}
+// 땅에 떨어진 물건 모양: 과일 또는 목재 (땅 위에 놓이게)
+const groundItemCache = new Map();
+function groundItem(f) {
+  const w = WOOD_BY_ID[f];
+  if (!w) return groundFruit(f);
+  if (!groundItemCache.has(f)) {
+    const g = mergeGeometries(woodParts(w).map((p) => p.scale(1.3, 1.3, 1.3)));
+    g.computeBoundingBox();
+    g.translate(0, -g.boundingBox.min.y, 0);
+    groundItemCache.set(f, g);
+  }
+  return groundItemCache.get(f);
+}
 function buildDrops(group) {
   const mat = toon(0xffffff, { vertexColors: true });
   const list = new Map(); // 번호 → { mesh, t, from, to, gone }
   const FALL = 0.55;
   return {
-    // from: 떨어지기 시작하는 자리(나무 잎 높이), 없으면 이미 땅에 있던 과일
+    // from: 떨어지기 시작하는 자리(나무 잎 높이·찍은 줄기), 없으면 이미 땅에 있던 것
     add(id, fruit, x, z, from = null) {
-      const mesh = new THREE.Mesh(groundFruit(fruit), mat);
+      const mesh = new THREE.Mesh(groundItem(fruit), mat);
       mesh.rotation.y = Math.random() * Math.PI * 2;
       mesh.position.set(x, 0, z);
       addOutline(mesh, 0.018);
@@ -1523,6 +1584,11 @@ function buildBugs(group) {
       Object.assign(e, { tx: x, ty: y, tz: z, r, fly });
     },
     // reason: 'fled'·'left' 이면 위로 날아가며 사라지고, 그 밖(잡힘)은 바로 없앤다
+    // 잠자리채에 막 걸린 곤충은 서버가 잡았다고 알려 오기 전까지 잠깐 숨겨 둔다 (놓쳤으면 다시 보인다)
+    hide(id, on = true) {
+      const e = list.get(id);
+      if (e) e.m.visible = !on;
+    },
     remove(id, reason) {
       const e = list.get(id);
       if (!e) return;
@@ -1604,11 +1670,21 @@ export function buildVillage(scene, { low = false } = {}) {
     lure, // 낚시 찌로 다가오는 물고기
     bugs, // 마을의 곤충 (서버 상태를 따라 그림)
     fishShadows, // 돌아다니는 물고기 (찌를 알아채는지 보기)
-    // 땅에 떨어진 과일 (k: 떨어진 과일나무 번호, fall: 지금 막 떨어지는 중이면 true)
-    addDrop(id, fruit, x, z, k, fall) {
-      const t = WORLD.trees[WORLD.fruitTrees[k]];
-      const from = fall && t ? new THREE.Vector3(t.x + (x - t.x) * 0.35, 1.9 * t.s, t.z + (z - t.z) * 0.35) : null;
-      drops.add(id, fruit, x, z, from);
+    // 땅에 떨어진 과일·목재 (k: 떨어진 과일나무 번호, fall: 지금 막 떨어지는 중이면 true,
+    // tree: 목재를 찍은 나무 번호 + 1 · 광장 체험용 나무는 -(번호+1)). 과일은 잎 높이에서, 목재는 찍은 줄기에서 툭 튀어나온다
+    addDrop(id, item, x, z, k, fall, tree = 0) {
+      let from = null;
+      if (fall && tree) {
+        const t = tree > 0 ? WORLD.trees[tree - 1] : { ...LIFE_SPOTS[-tree - 1], r: 0.25, s: 0.85 };
+        if (t) {
+          const d = Math.hypot(x - t.x, z - t.z) || 1;
+          from = new THREE.Vector3(t.x + ((x - t.x) / d) * t.r, 0.9 * (t.s ?? 1), t.z + ((z - t.z) / d) * t.r);
+        }
+      } else if (fall && k >= 0) {
+        const t = WORLD.trees[WORLD.fruitTrees[k]];
+        if (t) from = new THREE.Vector3(t.x + (x - t.x) * 0.35, 1.9 * t.s, t.z + (z - t.z) * 0.35);
+      }
+      drops.add(id, item, x, z, from);
     },
     removeDrop: drops.remove,
     shakeRock: rocks.shake,

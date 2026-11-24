@@ -7,7 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
-  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE,
+  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS,
   PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
@@ -39,8 +39,9 @@ const Player = schema({
 const Drop = schema({
   x: 'int16', // cm
   z: 'int16', // cm
-  f: 'string', // 과일 이름 (FRUITS)
+  f: 'string', // 과일 이름 (FRUITS) 또는 목재 id (WOODS)
   k: 'int8', // 떨어진 과일나무 번호 (떨어지는 연출용)
+  t: 'int16', // 목재: 찍은 나무 번호 + 1 (광장 체험용 나무는 음수, 0 이면 없음 · 떨어지는 연출용)
 }, 'Drop');
 
 // 마을의 곤충 (누구나 잠자리채로 잡을 수 있음, 움직임은 서버가 정함: server/bugs.js)
@@ -57,7 +58,7 @@ const VillageState = schema({
   players: { map: Player },
   freeLook: 'boolean',
   fruitLeft: ['uint8'], // 과일나무마다 남은 과일 개수 (WORLD.fruitTrees 순서)
-  drops: { map: Drop }, // 땅에 떨어진 과일: 번호 → 자리
+  drops: { map: Drop }, // 땅에 떨어진 과일·목재: 번호 → 자리
   bugs: { map: Bug }, // 곤충: 번호 → 종류·자리
 }, 'VillageState');
 
@@ -219,7 +220,73 @@ class VillageRoom extends Room {
       this.broadcast('caught', [client.sessionId, f.fish.id]); // 모두의 화면에서 머리 위로 물고기를 들어 보임
     });
 
-    // 떨어진 과일 줍기: [과일 번호]. 가까이 있을 때만 가방에 넣는다
+    // 도끼로 나무 찍기: [나무 번호] (광장 체험용 나무는 -(번호+1)). 찍을 때마다 목재가 하나 나무 밑동(찍은 쪽)에 떨어진다.
+    // 한 그루에서 WOOD_STOCK 개가 나오면 잠시 쉬고, WOOD_REGROW 초마다 하나씩 다시 찬다
+    this.woodLeft = new Map(); // 나무 번호 → { n: 남은 개수, at: 다음에 하나 차는 시각 }
+    this.onMessage('chop', (client, i) => {
+      const p = this.state.players.get(client.sessionId);
+      i = Number(i);
+      if (!p || !Number.isInteger(i)) return;
+      const t = i >= 0 ? WORLD.trees[i] : FREE_LOOK && LIFE_SPOTS[-i - 1]?.kind === 'tree' ? { ...LIFE_SPOTS[-i - 1], r: 0.25 } : null;
+      if (!t) return;
+      const px = fromCm(p.x);
+      const pz = fromCm(p.z);
+      if (Math.hypot(px - t.x, pz - t.z) > t.r + CHOP_REACH) return;
+      const now = Date.now();
+      if (now - (client.userData?.chopAt ?? 0) < 400) return; // 너무 빠른 연속 찍기는 무시
+      client.userData = { ...client.userData, chopAt: now };
+      const w = this.woodLeft.get(i) ?? { n: WOOD_STOCK, at: 0 };
+      while (w.n < WOOD_STOCK && w.at && now >= w.at) { w.n += 1; w.at = w.n < WOOD_STOCK ? w.at + WOOD_REGROW * 1000 : 0; }
+      if (w.n <= 0) { this.woodLeft.set(i, w); client.send('woodRest'); return; }
+      w.n -= 1;
+      if (!w.at) w.at = now + WOOD_REGROW * 1000;
+      this.woodLeft.set(i, w);
+      // 찍은 사람의 왼쪽이나 오른쪽 옆 밑동 둘레에 툭 (정면이면 발밑에 깔려 안 보인다 · 갈 수 없는 곳은 피함)
+      const base = Math.atan2(px - t.x, pz - t.z);
+      let x = t.x + Math.sin(base + 1) * (t.r + 0.5);
+      let z = t.z + Math.cos(base + 1) * (t.r + 0.5);
+      for (let tries = 0; tries < 10; tries++) {
+        const a = base + (Math.random() < 0.5 ? -1 : 1) * (0.75 + Math.random() * 0.7);
+        const d = t.r + 0.35 + Math.random() * 0.45;
+        const tx = t.x + Math.sin(a) * d;
+        const tz = t.z + Math.cos(a) * d;
+        if (!isBlocked(tx, tz, 0.15)) { x = tx; z = tz; break; }
+      }
+      const id = String(++this.dropId);
+      const d = new Drop();
+      d.x = toCm(x);
+      d.z = toCm(z);
+      d.f = rollWood(i);
+      d.k = -1;
+      d.t = i >= 0 ? i + 1 : i;
+      this.state.drops.set(id, d);
+      this.dropAt.set(id, now + DROP_LIFE * 1000);
+      // 과일나무를 찍으면 흔들린 가지에서 과일도 하나 떨어진다 (남은 과일이 있을 때. 흔들기처럼 나중에 다시 열린다)
+      const k = WORLD.fruitTrees.indexOf(i);
+      if (k >= 0 && this.state.fruitLeft[k] > 0) {
+        this.state.fruitLeft[k] -= 1;
+        let fx = t.x;
+        let fz = t.z + t.r + 0.6;
+        for (let tries = 0; tries < 12; tries++) {
+          const a = Math.random() * Math.PI * 2;
+          const r = t.r + 0.45 + Math.random() * 0.8;
+          const tx = t.x + Math.cos(a) * r;
+          const tz = t.z + Math.sin(a) * r;
+          if (!isBlocked(tx, tz, 0.15) && Math.hypot(tx - x, tz - z) > 0.4) { fx = tx; fz = tz; break; }
+        }
+        const fid = String(++this.dropId);
+        const f = new Drop();
+        f.x = toCm(fx);
+        f.z = toCm(fz);
+        f.f = VILLAGE_FRUIT;
+        f.k = k;
+        this.state.drops.set(fid, f);
+        this.dropAt.set(fid, now + DROP_LIFE * 1000);
+        this.regrow.push({ k, at: now + FRUIT_REGROW * 1000 });
+      }
+    });
+
+    // 떨어진 과일·목재 줍기: [번호]. 가까이 있을 때만 가방에 넣는다
     this.onMessage('grab', (client, id) => {
       const p = this.state.players.get(client.sessionId);
       const d = this.state.drops.get(String(id));

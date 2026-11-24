@@ -147,6 +147,10 @@ button, input, textarea, select { font-family: inherit; }
 #quick button small { position: absolute; left: 5px; top: 3px; font-size: 11px; font-weight: 800; color: var(--muted); }
 #quick button .ammo { position: absolute; right: 4px; bottom: 2px; font-size: 11px; font-weight: 800; font-style: normal; color: #7a4a24; }
 #quick button .ammo.out { color: #d9534f; }
+/* 도끼 내구도 막대: 칸 아래쪽에 가늘게, 많이 닳으면 빨갛게 */
+.dura { position: absolute; left: 7px; right: 7px; bottom: 4px; height: 4px; border-radius: 2px; background: rgba(0, 0, 0, 0.12); overflow: hidden; }
+.dura i { display: block; height: 100%; background: #5aa04a; border-radius: 2px; }
+.dura.low i { background: #d9534f; }
 #quick button.on { border-color: var(--accent-dark); background: #eef8e6; }
 #quick button.empty { background: rgba(243, 234, 216, 0.6); border-style: dashed; border-color: #e0d4bd; }
 #quick .quick-key { font-size: 12px; font-weight: 800; color: var(--muted); padding: 0 4px; }

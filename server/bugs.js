@@ -1,7 +1,7 @@
 // 곤충 채집 (서버): 마을에 늘 BUG_COUNT 마리쯤의 곤충을 두고 움직이며, 다가오는 학생에 놀라 도망가거나
 // 잠자리채에 잡힌다. 위치는 상태(state.bugs)로 모두에게 같게 보이고, 잡혔는지·도망갔는지는 서버가 정한다.
 import {
-  BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX,
+  ANIM, BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX,
   WORLD, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
 } from '../shared/world.js';
 
@@ -9,8 +9,8 @@ const rnd = (a, b) => a + Math.random() * (b - a);
 const RUNNING = 4.0; // 이보다 빠르면 달리는 중 (m/초)
 const WALKING = 0.8; // 이보다 빠르면 걷는 중
 const SCARE = 1.7; // 헛손질하면 이만큼 안의 겁 많은 곤충이 (확률로) 놀라 도망감 (m)
-const SPOOK_RUN = 0.3; // 달려와서 놀란 곤충이 0.1초마다 날아갈 확률
-const SPOOK_WALK = 0.08; // 걸어서 너무 가까이 왔을 때 (평균 1초 남짓 버틴다)
+const SPOOK_RUN = 0.35; // 달려와서 놀란 곤충이 0.1초마다 날아갈 확률 (걸어서 다가올 때는 희귀도별 walkP)
+const SWINGING = new Set([ANIM.NET_SWING, ANIM.NET_HIGH, ANIM.NET_LOW]); // 휘두르며 내딛는 한 발에는 놀라지 않는다
 
 // room: 마을 방 · Bug: 상태 스키마 · speedOf(sessionId): 그 학생이 지금 움직이는 빠르기 (m/초)
 export function setupBugs(room, Bug, speedOf) {
@@ -205,13 +205,12 @@ export function setupBugs(room, Bug, speedOf) {
   // 겁 많은 곤충은 달려오거나(희귀할수록 멀리서부터) 걸어서 너무 가까이 오면 날아가 버린다
   function scaredBy(s) {
     const shy = BUG_SHY[s.sp.rarity];
-    if (!shy.run && !shy.walk) return false;
     for (const [sid, p] of room.state.players) {
       const v = speedOf(sid);
-      if (v < WALKING) continue;
+      if (v < WALKING || SWINGING.has(p.a)) continue;
       const d = Math.hypot(fromCm(p.x) - s.x, fromCm(p.z) - s.z);
-      if (shy.run && v > RUNNING && d < shy.run && Math.random() < SPOOK_RUN) return true;
-      if (shy.walk && d < shy.walk && Math.random() < SPOOK_WALK) return true;
+      if (v > RUNNING && d < shy.run && Math.random() < SPOOK_RUN) return true;
+      if (d < shy.walk && Math.random() < Math.min(0.9, shy.walkP * 2 * (1 - d / shy.walk))) return true; // 가까울수록 잘 놀란다
     }
     return false;
   }
