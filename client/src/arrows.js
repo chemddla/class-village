@@ -26,9 +26,10 @@ export function makeBolt() {
   return g;
 }
 
-// 볼이 터질 때 (맞았을 때·막혔을 때·사거리 끝): 하얀 번쩍임이 부풀며 사라지고, 파란 껍질이 터지는 반지름(BOLT.splash)까지 퍼지며 옅어지고,
+// 볼이 터질 때 (맞았을 때·막혔을 때·사거리 끝): 하얀 번쩍임이 부풀며 사라지고, 파란 껍질이 조금 퍼지며 옅어지고,
 // 작은 빛 조각들이 사방으로 튀며 작아진다. update(dt) 가 false 를 돌려주면 끝 (scene 에서 빼는 것은 부른 쪽)
-const BURST_TIME = 0.35;
+const BURST_TIME = 0.3;
+const BURST_R = 0.45; // 껍질이 퍼지는 반지름 (보이는 크기만. 맞는 범위는 BOLT.splash)
 const SPARK_GEO = new THREE.SphereGeometry(0.03, 6, 4);
 const SPARK_MAT = new THREE.MeshBasicMaterial({ color: '#d8f5ff' });
 export function makeBurst(at) {
@@ -41,7 +42,7 @@ export function makeBurst(at) {
   const sparks = [];
   for (let i = 0; i < 8; i++) {
     const s = new THREE.Mesh(SPARK_GEO, SPARK_MAT);
-    s.userData.v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(1.8 + Math.random() * 1.4);
+    s.userData.v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(1 + Math.random() * 0.8);
     g.add(s);
     sparks.push(s);
   }
@@ -52,9 +53,9 @@ export function makeBurst(at) {
       t += dt;
       const k = Math.min(1, t / BURST_TIME);
       const out = 1 - (1 - k) ** 3; // 처음에 빠르게 퍼지고 끝에서 느려진다
-      flash.scale.setScalar(1 + out * 1.4);
+      flash.scale.setScalar(1 + out * 0.8);
       flash.material.opacity = 1 - Math.min(1, k * 1.6);
-      shell.scale.setScalar(1 + out * (BOLT.splash / 0.13 - 1)); // 껍질 반지름 0.13 → 맞는 범위 끝까지
+      shell.scale.setScalar(1 + out * (BURST_R / 0.13 - 1)); // 껍질 반지름 0.13 → BURST_R
       shell.material.opacity = 0.6 * (1 - k);
       for (const s of sparks) {
         s.position.addScaledVector(s.userData.v, dt);
