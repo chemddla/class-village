@@ -612,43 +612,88 @@ hmotion('위협', '옆으로 서서 게걸음 하악… "냐"', 3.4, (c, H, t) =
 });
 
 // 5. 공격 ① 냥냥펀치: 쨉쨉쨉, 근데 다 허공
-hmotion('공격 ① 냥냥펀치', '쨉쨉쨉! 근데 다 허공', 2.6, (c, H, t) => {
-  const up = ease(seg(c, 0, 0.3)) * (1 - ease(seg(c, 2.2, 2.6)));
-  H.body.rotation.x = -0.45 * up; // 뒷발로 일어섬
-  H.move.position.y = 0.006 * up;
-  H.head.rotation.x = 0.35 * up;
+hmotion('공격 ① 냥냥펀치', '엉덩이 깔고 앉아 냥펀치 탁탁탁! 근데 다 허공', 2.6, (c, H, t) => {
+  const up = ease(seg(c, 0, 0.25)) * (1 - ease(seg(c, 2.2, 2.6)));
+  // 엉덩이를 붙이고 앉아 상체를 세움: 뒷다리는 접어서 엉덩이 밑에, 앞발은 가슴 앞에 들고 준비
+  H.body.rotation.x = -0.75 * up;
+  H.legs[2].rotation.x = H.legs[3].rotation.x = 0.4 * up;
+  H.legs[2].scale.y = H.legs[3].scale.y = 1 - 0.25 * up;
+  H.head.rotation.x = 0.6 * up; // 몸은 세워도 눈은 상대를 봄
   const pc = seg(c, 0.35, 1.6);
-  const n = pc * 7; // 일곱 번 쨉
-  const jab = pc > 0 && pc < 1 ? Math.sin((n % 1) * PI) : 0;
+  const n = pc * 6; // 양발 번갈아 여섯 번
+  const f = pc > 0 && pc < 1 ? n % 1 : 0;
   const which = Math.floor(n) % 2;
-  H.legs[0].rotation.x = -1.3 * up - (which === 0 ? jab * 0.7 : 0);
-  H.legs[1].rotation.x = -1.3 * up - (which === 1 ? jab * 0.7 : 0);
-  H.body.rotation.y = (which ? -1 : 1) * jab * 0.12;
-  if (pc > 0 && pc < 1) { H.face.blink(0.5); H.earAt(0.3); H.mouthAs('flat'); } // 힘줘서 입 꾹
+  // 한 번 칠 때: 발을 높이 들고(발끝 오므림) → 아래 안쪽으로 탁! 빠르게 → 천천히 다시 준비 자세로
+  const raise = THREE.MathUtils.smoothstep(f, 0, 0.35) * (1 - THREE.MathUtils.smoothstep(f, 0.35, 0.48));
+  const strike = THREE.MathUtils.smoothstep(f, 0.35, 0.48) * (1 - THREE.MathUtils.smoothstep(f, 0.55, 1));
+  [0, 1].forEach((i) => {
+    const sd = i ? 1 : -1, me = i === which;
+    const l = H.legs[i];
+    l.rotation.x = -0.9 * up + (me ? -0.9 * raise + 0.65 * strike : 0);
+    l.rotation.z = sd * (0.12 * up + (me ? 0.35 * raise - 0.3 * strike : 0));
+    l.scale.y = 1 - 0.12 * up - (me ? 0.15 * raise : 0);
+  });
+  const sw = which ? 1 : -1;
+  H.body.rotation.y = -sw * strike * 0.15; // 치는 쪽 어깨가 따라 나감
+  H.head.rotation.y = -sw * strike * 0.12;
+  H.move.position.y = 0.004 * strike; // 탁! 칠 때 몸이 살짝 들썩
+  if (pc > 0 && pc < 1) { H.face.blink(0.35); H.earAt(0.4); H.mouthAs('flat'); } // 눈 가늘게, 귀는 옆으로 젖히고, 입 꾹
   if (c > 1.7 && c < 2.3) { // 내 발… 안 맞았네?
     H.head.rotation.z = 0.3 * bump(c, 1.7, 2.3);
     H.eyeSize(1.25);
     H.mouthAs('o', 0.7);
   }
-  H.tail.rotation.z = Math.sin(t * 8) * 0.3;
+  // 꼬리는 낮게 깔고 좌우로 탁탁 (화난 고양이)
+  H.tail.rotation.x = -0.5 * up;
+  H.tail.rotation.z = Math.sin(t * 7) * 0.45 * up;
+  H.tailCurl = 0.05;
+  H.tailWave = 0.1 + 0.25 * up;
+  H.tailWaveF = 7;
 });
 
 // 6. 공격 ② 덮치기: 엉덩이 씰룩씰룩 → 덮쳤는데 코 박음
-hmotion('공격 ② 덮치기', '엉덩이 씰룩 → 덮치다 코 박음', 3.8, (c, H, t) => {
-  const ready = ease(seg(c, 0, 0.2)) * (1 - seg(c, 1.2, 1.25));
-  H.body.position.y = -0.006 * ready;
-  H.body.rotation.x = 0.15 * ready;
-  H.torso.rotation.y = Math.sin(t * 28) * 0.2 * ready * seg(c, 0.3, 0.6); // 엉덩이 씰룩씰룩
-  H.tail.rotation.z = Math.sin(t * 30) * 0.25 * ready;
-  H.legs.forEach((l) => (l.scale.y = 1 - ready * 0.25));
+hmotion('공격 ② 덮치기', '납작 엎드려 엉덩이 씰룩 → 덮치다 코 박음', 3.8, (c, H, t) => {
+  // 사냥 자세: 납작 엎드려 앞발은 앞으로, 머리는 낮게 내밀고 눈은 상대에 고정, 귀는 앞으로
+  const crouch = ease(seg(c, 0, 0.25)) * (1 - seg(c, 1.15, 1.25));
+  const wig = seg(c, 0.3, 0.6) * crouch; // 엉덩이 씰룩 + 뒷발 꼼지락 (뛰기 직전)
+  H.body.position.y = -0.009 * crouch;
+  H.body.rotation.x = 0.12 * crouch;
+  H.torso.rotation.y = Math.sin(t * 26) * 0.16 * wig;
+  H.legs.forEach((l, i) => {
+    if (i < 2) {
+      l.rotation.x = -0.35 * crouch; // 앞발은 앞으로 쭉
+      l.scale.y = 1 - 0.35 * crouch; // 팔꿈치를 접어 몸을 낮춤
+    } else {
+      l.rotation.x = 0.15 * crouch;
+      l.scale.y = 1 - 0.3 * crouch - 0.12 * wig * Math.max(0, (i === 2 ? 1 : -1) * Math.sin(t * 26)); // 뒷발을 번갈아 꼼지락
+    }
+  });
+  H.head.position.y -= 0.004 * crouch;
+  H.head.position.z += 0.004 * crouch;
+  H.head.rotation.x = -0.12 * crouch; // 몸은 숙여도 눈은 상대를 노려봄
+  H.earAt(-0.25 * crouch); // 귀 쫑긋 앞으로
+  H.eyeSize(1 + 0.2 * crouch);
   if (c > 0.3 && c < 1.2) H.mouthAs('flat'); // 집중
+  // 꼬리는 낮게 뒤로 쭉 깔고, 끝만 파르르
+  H.tail.rotation.x = -1.0 * crouch;
+  H.tailCurl = 0.15 - 0.35 * crouch;
+  H.tailWave = 0.08 + 0.22 * wig;
+  H.tailWaveF = 2.4 + 12 * wig;
   const fly = seg(c, 1.2, 1.6);
   const back = ease(seg(c, 3.1, 3.7));
   H.move.position.z = 0.055 * ease(fly) * (1 - back);
-  if (c > 1.2 && c < 1.6) {
+  if (c > 1.2 && c < 1.6) { // 뒷발로 박차고 몸을 쭉 펴며 앞발을 벌려 덮침
     H.move.position.y = Math.sin(fly * PI) * 0.035;
-    H.body.rotation.x = -0.4 + fly * 0.9;
-    H.legs.forEach((l, i) => (l.rotation.x = i < 2 ? -1.2 : 0.9));
+    H.body.rotation.x = -0.35 + fly * 0.85;
+    H.torso.scale.z = 1.08;
+    H.legs.forEach((l, i) => {
+      if (i < 2) { l.rotation.x = -1.5; l.rotation.z = (i ? 1 : -1) * 0.25; } // 앞발 쫙 벌려 앞으로
+      else { l.rotation.x = 1.1; l.scale.y = 1.05; } // 뒷발은 뒤로 쭉
+    });
+    H.tail.rotation.x = -1.1;
+    H.tailCurl = -0.2;
+    H.tailWave = 0;
+    H.earAt(-0.25);
     H.eyeSize(1.2);
     H.mouthAs('o', 1.1); // 덮쳐라!
   }
