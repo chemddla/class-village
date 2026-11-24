@@ -58,7 +58,7 @@ function lerpAngle(a, b, t) {
 const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 // 잠깐 하는 동작: 번호 → 주민 액션 이름. 길이는 일회성은 액션 길이, 반복형은 정해 둔 시간
 const ACTS = {
-  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.FAINT]: 'faint',
+  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.HURT]: 'hurt', [ANIM.ANGRY]: 'angry', [ANIM.FAINT]: 'faint',
   [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3', [ANIM.SMASH4]: 'clubSmash4',
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
   [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket',
@@ -119,6 +119,7 @@ export class Character {
     this.shakeT = 0;
     this.trails = {};
     this.netPath = [];
+    this.netSegs = [];
 
     const shadow = new THREE.Mesh(blobGeometry, shadowMat);
     shadow.position.y = 0.004;
@@ -300,9 +301,12 @@ export class Character {
     const u = this.villager.progress;
     if (((def?.trail && u >= def.trail[0] && u <= def.trail[1]) || this.villager.trailOn) && toolEnds(rig, vA, vB)) {
       this.trail('swing', { life: 0.15, color: 0xfffbe8, alpha: 0.95 }).push(this.time, vA, vB);
-      if (cur?.startsWith('net')) this.netPath.push(vB.toArray()); // 잠자리채: 그물 테(채 끝)가 지나간 길
+      if (cur?.startsWith('net')) {
+        this.netPath.push(vB.toArray()); // 잠자리채: 그물 테(채 끝)가 지나간 길
+        this.netSegs.push([vA.toArray(), vB.toArray()]); // 채 전체(손잡이 쪽 → 끝): 물체에 부딪히는지 볼 때
+      }
     }
-    if (cur?.startsWith('net') && def?.trail && u < def.trail[0]) this.netPath = [];
+    if (cur?.startsWith('net') && def?.trail && u < def.trail[0]) { this.netPath = []; this.netSegs = []; this.netBonked = false; }
     for (const k in this.trails) this.trails[k].update(this.time);
 
     // 상체 기울기: 달릴수록 앞으로 숙이고, 도는 쪽으로 몸을 눕힘 (공중제비 도약 때는 앞으로 확)

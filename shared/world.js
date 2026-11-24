@@ -42,6 +42,7 @@ export const ANIM = {
   NET_SWING: 36, NET_HIGH: 37, NET_LOW: 38, // 잠자리채 휘두르기: 가슴 높이 · 머리 위 · 발 앞 낮게 (곤충 채집)
   BOW_AIR: 39, BOW_SLAM: 40, BOW_BACK: 41, // 활 점프 공격(대각선 아래로) · 더블 점프 공격 · 달리기 공격(뒤돌아 쏘기)
   STAFF_CAST: 42, // 마법 지팡이: 앞으로 찔러 마법 에너지 볼 날리기
+  HURT: 43, ANGRY: 44, // 맞아서 아파함 (질끈 감은 눈) · 자꾸 맞으면 발을 동동 구르며 화냄
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
@@ -470,14 +471,15 @@ export const BUGS = [
 ];
 export const BUG_BY_ID = Object.fromEntries(BUGS.map((b) => [b.id, b]));
 // 희귀도별로 얼마나 잘 도망가는지: run 달려서 이만큼 안에 오면 · walk 걸어서 이만큼 안에 오면 (m, 0 이면 안 도망감) · miss 헛손질에 놀라 도망감
-// 흔한 곤충은 그냥 다가가 잡으면 되고, 희귀할수록 멀리서부터 살금살금 다가가야 한다 (멈춘 채 휘두르면 안 놀람)
-// run: 달려오면 이 거리(m)부터 놀람 · walk: 걸어서 이만큼 가까이 오면 놀람 · miss: 헛스윙에 놀라 날아갈 확률
-// (놀라도 곧바로 날아가지 않고 매 순간 조금씩 확률로 → 살금살금 다가갈 틈이 있다)
+// 곤충은 바로 옆에서 움직이면 놀라 날아간다. 희귀할수록 멀리서부터 놀라고 잘 놀라니 살금살금 다가가 멈춘 뒤 휘둘러야 한다
+// (멈춰 서 있거나 잠자리채를 휘두르는 동안 내딛는 한 발에는 놀라지 않는다)
+// run: 달려오면 이 거리(m)부터 놀람 · walk: 걸어서 이만큼 가까이 오면 놀람 · walkP: 걸을 때 놀라는 정도 · miss: 헛스윙에 놀라 날아갈 확률
+// (놀라도 곧바로 날아가지 않고 0.1초마다 확률로, 가까울수록 잘 놀란다 → 바로 옆을 지나가면 거의 날아가고, 멀찍이 스치면 남아 있기도 한다)
 export const BUG_SHY = {
-  common: { run: 0, walk: 0, miss: 0 },
-  uncommon: { run: 1.8, walk: 0, miss: 0.4 },
-  rare: { run: 2.4, walk: 0.8, miss: 0.6 },
-  legend: { run: 2.8, walk: 0.95, miss: 0.8 },
+  common: { run: 1.4, walk: 1.0, walkP: 0.3, miss: 0 },
+  uncommon: { run: 2.0, walk: 1.3, walkP: 0.35, miss: 0.4 },
+  rare: { run: 2.5, walk: 1.55, walkP: 0.4, miss: 0.6 },
+  legend: { run: 3.0, walk: 1.75, walkP: 0.45, miss: 0.8 },
 };
 export const NET_CATCH = 0.42; // 그물 테가 지나간 길에서 이만큼 안에 있던 곤충이 잡힌다 (m)
 export const NET_ROOM = 3.2; // 휘두른 길은 캐릭터 둘레 이만큼 안이어야 믿는다 (m)
@@ -489,4 +491,114 @@ export function onGrass(x, z) {
   if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + 1) return false;
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < PLAZA.r + 0.5) return false;
   return true;
+}
+
+// ── 목재: 도끼로 나무를 한 번 찍을 때마다 하나씩 나무 밑동에 떨어진다 (F·클릭으로 주워 가방에, 나중에 대장간에서 무기·생활 도구를 만드는 재료) ──
+// 찍은 나무의 종류에서만 나온다: 흔함은 그 나무 목재, 보통은 단단한 원목, 희귀는 오래된 고목(같은 나무의 좋은 부분).
+// 나뭇가지는 어느 나무에서나, 황금 나무(전설)는 어느 나무에서나 아주 드물게 나오는 신기한 나무다.
+// tree: oak 둥근 나무(참나무) · pine 침엽수(소나무) · birch 키 큰 달걀꼴 나무(자작나무) · fruit 과일나무(복숭아나무), 없으면 어느 나무에서나
+// shape: log 통나무 · branch 나뭇가지 · bark 껍질 색 · inner 자른 면 색 · price 값 (희귀할수록 좋은 재료)
+const TREE_WOOD = [
+  // [tree, id 앞부분, 이름, 껍질·자른 면 색 (흔함 · 보통 · 희귀)]
+  ['oak', 'oak', '참나무', [0x8a5a36, 0xe3b87f], [0x6e4428, 0xc9925a], [0x4e2f1c, 0xa86a3c]],
+  ['pine', 'pine', '소나무', [0x9a6a45, 0xf1d39c], [0x84562f, 0xe7b86a], [0x6b3f22, 0xd99a4a]],
+  ['birch', 'birch', '자작나무', [0xe9e3d6, 0xf3e2c0], [0xdcd4c4, 0xf0d6a8], [0xcdc3b0, 0xe8c48c]], // 하얀 껍질에 검은 가로 무늬 (village.js)
+  ['fruit', 'peachwood', '복숭아나무', [0xa0614e, 0xf0c2a2], [0x8a4c3c, 0xe8a888], [0x6f3a2e, 0xd98a6e]],
+];
+export const WOODS = [
+  { id: 'branch', name: '나뭇가지', rarity: 'common', shape: 'branch', bark: 0x8a5a36, inner: 0xd9a86c, price: 5 },
+  ...TREE_WOOD.flatMap(([tree, id, name, c, u, r]) => [
+    { id, name: `${name} 목재`, rarity: 'common', tree, shape: 'log', bark: c[0], inner: c[1], price: tree === 'fruit' ? 18 : 15 },
+    { id: `${id}Hard`, name: `단단한 ${name} 원목`, rarity: 'uncommon', tree, shape: 'log', bark: u[0], inner: u[1], price: 45 },
+    { id: `${id}Old`, name: `오래된 ${name} 고목`, rarity: 'rare', tree, shape: 'log', bark: r[0], inner: r[1], price: 140 },
+  ]),
+  { id: 'goldwood', name: '황금 나무', rarity: 'legend', shape: 'log', bark: 0xd4a537, inner: 0xffe27a, price: 600 },
+];
+export const WOOD_BY_ID = Object.fromEntries(WOODS.map((w) => [w.id, w]));
+export const WOOD_ODDS = { common: 72, uncommon: 20, rare: 7, legend: 1 }; // 한 번 찍을 때 희귀도별 확률(%)
+export const WOOD_STOCK = 5; // 나무 한 그루에서 연달아 나오는 목재 수 (다 나오면 잠시 쉼)
+export const WOOD_REGROW = 40; // 쉰 나무에 목재가 하나씩 다시 차는 시간 (초)
+// 생활 도구 내구도: 이만큼 쓰면 부서진다 (대장간에서 새로 만든다). 도끼는 한 번 찍을 때 · 낚싯대는 한 번 던질 때 · 잠자리채는 한 번 휘두를 때 1씩 닳는다
+export const TOOL_DURABILITY = { axe: 40, rod: 30, net: 50 }; // 기본 도구라 금방 닳는다 (대장간에서 더 튼튼한 도구로 바꾼다)
+export const CHOP_REACH = 2.2; // 나무 둘레에서 이만큼 안이면 목재가 나온다 (m)
+// 나무 번호 → 보이는 모양 (village.js 의 나무 종류와 같게). 광장 체험용 나무(번호 < 0)는 둥근 나무
+export function treeWoodKind(i) {
+  if (i < 0) return 'oak';
+  if (WORLD.fruitTrees.includes(i)) return 'fruit';
+  return WORLD.trees[i].kind === 1 ? 'pine' : i % 3 === 2 ? 'birch' : 'oak';
+}
+// 한 번 찍었을 때 나오는 목재 id: 그 나무에서 나올 수 있는 것 중 희귀도를 뽑는다 (흔한 것은 절반쯤 나뭇가지)
+export function rollWood(i, rnd = Math.random) {
+  let r = rnd() * 100;
+  let rarity = 'common';
+  for (const [k, p] of Object.entries(WOOD_ODDS)) { if (r < p) { rarity = k; break; } r -= p; }
+  const kind = treeWoodKind(i);
+  if (rarity === 'common' && rnd() < 0.45) return 'branch';
+  const pool = WOODS.filter((w) => w.rarity === rarity && w.id !== 'branch' && (!w.tree || w.tree === kind));
+  return pool[Math.floor(rnd() * pool.length)].id;
+}
+
+// ── 휘두르는 도구(잠자리채)가 부딪히는 단단한 것들: 높이 구간이 있는 둥근 기둥 { x, z, r, y0, h, kind, i } ──
+// seg: [x1, z1, x2, z2] 가 있으면 그 선분을 두른 길쭉한 기둥 (벤치·표지판 판처럼 옆으로 긴 것)
+// (사람이 지나가는 부딪힘 원 isBlocked 와 달리 물·강은 막지 않고, 높이를 본다: 낮은 벤치 위로 높게 휘두르면 지나가고,
+//  분수 위 접시 아래 빈 곳은 지나간다). 나무는 줄기만 (잎은 부드러워 통과). 모양은 village.js 의 실제 크기에 맞춘다
+const FOUNTAIN_TIERS = { low: { y: 1.0, r: 0.95 }, top: { y: 1.62, r: 0.5 } }; // village.js FOUNTAIN 과 같게
+function buildSolids(trees, rocks, extra) {
+  return [
+    ...trees.map((t, i) => ({ x: t.x, z: t.z, r: 0.24 * t.s, h: 1.6 * t.s, kind: 'tree', i })),
+    ...rocks.map((o) => ({ x: o.x, z: o.z, r: o.r * 0.9, h: 0.9 * o.r, kind: 'rock' })),
+    ...extra,
+  ];
+}
+const pillarSolids = (p) => portalPillars(p).map((c) => ({ ...c, h: 3, kind: 'post' }));
+const F = PLAZA.fountain;
+export const VILLAGE_SOLIDS = buildSolids(WORLD.trees, WORLD.rocks, [
+  // 예정지 표지판: 기둥 + 옆으로 긴 판 (village.js buildPlots)
+  ...PLOTS.flatMap((p) => {
+    const sz = p.z + p.d / 2 + 0.2;
+    return [
+      { x: p.x, z: sz, r: 0.08, h: 1.0, kind: 'sign' },
+      { x: p.x, z: sz + 0.07, seg: [p.x - 0.55, sz + 0.07, p.x + 0.55, sz + 0.07], r: 0.06, y0: 0.72, h: 1.28, kind: 'sign' },
+    ];
+  }),
+  // 분수: 바닥 수반 · 가운데 기둥 · 아래 접시 · 위 접시 (접시 아래 빈 곳은 지나간다)
+  { x: F.x, z: F.z, r: F.r + 0.05, h: 0.55, kind: 'fountain' },
+  { x: F.x, z: F.z, r: 0.32, h: FOUNTAIN_TIERS.top.y + 0.25, kind: 'fountain' },
+  { x: F.x, z: F.z, r: FOUNTAIN_TIERS.low.r, y0: FOUNTAIN_TIERS.low.y - 0.15, h: FOUNTAIN_TIERS.low.y + 0.15, kind: 'fountain' },
+  { x: F.x, z: F.z, r: FOUNTAIN_TIERS.top.r, y0: FOUNTAIN_TIERS.top.y - 0.12, h: FOUNTAIN_TIERS.top.y + 0.12, kind: 'fountain' },
+  // 벤치: 길이 1.5m 앉음판·등받이 (바라보는 쪽 rot 에 수직으로 길다)
+  ...PLAZA.benches.map((b) => {
+    const ax = Math.cos(b.rot) * 0.72;
+    const az = -Math.sin(b.rot) * 0.72;
+    return { x: b.x, z: b.z, seg: [b.x - ax, b.z - az, b.x + ax, b.z + az], r: 0.32, h: 0.9, kind: 'bench' };
+  }),
+  // 가로등: 가는 기둥 + 위의 등
+  ...PLAZA.lamps.flatMap((l) => [
+    { x: l.x, z: l.z, r: 0.11, h: 2.3, kind: 'post' },
+    { x: l.x, z: l.z, r: 0.26, y0: 2.2, h: 2.8, kind: 'post' },
+  ]),
+  ...pillarSolids(PORTALS[0]),
+]);
+export const FIELD_SOLIDS = buildSolids(FIELD_MAP.trees, FIELD_MAP.rocks, [
+  ...pillarSolids(PORTALS[1]),
+  { x: PORTALS[1].x + 2.6, z: PORTALS[1].z - 1.2, r: 0.2, h: 1.4, kind: 'sign' }, // 들판 표지판
+]);
+// 땅 위 자리에서 단단한 것까지의 거리 (둥근 기둥은 가운데에서, 길쭉한 것은 선분에서)
+function solidDist(s, x, z) {
+  if (!s.seg) return Math.hypot(x - s.x, z - s.z);
+  const [x1, z1, x2, z2] = s.seg;
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const t = Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / (dx * dx + dz * dz)));
+  return Math.hypot(x - (x1 + dx * t), z - (z1 + dz * t));
+}
+// (x, y, z) 자리(y는 땅에서 높이)가 단단한 것에 pad 만큼 가까우면 그것, 아니면 null. extra: 화면에서만 있는 것 (광장 체험용 나무 등)
+export function solidAt(x, y, z, extra = [], pad = 0) {
+  for (const list of [inField(x, z) ? FIELD_SOLIDS : VILLAGE_SOLIDS, extra]) {
+    for (const s of list) {
+      if (y < (s.y0 ?? 0) - pad || y > s.h + pad) continue;
+      if (solidDist(s, x, z) < s.r + pad) return s;
+    }
+  }
+  return null;
 }

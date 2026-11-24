@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel } from './village.js';
 import { buildField } from './field.js';
@@ -222,10 +222,24 @@ function getHit(fromX, fromZ) {
     local.actLeft = local.hurt = actTime(ANIM.FAINT);
     return;
   }
-  local.act = ANIM.SURPRISE; // 'hit' 피격 모션
-  local.actLeft = actTime(ANIM.SURPRISE);
+  ouch(fromX, fromZ);
+}
+// 맞았다: 때린 쪽으로 돌아보며 아파하는 표정으로 움찔. 짧은 시간에 자꾸 맞으면 발을 동동 구르며 화낸다
+// (내 동작이 다른 학생 화면에도 그대로 보여, 아파하는 얼굴·화내는 모습을 모두가 본다)
+const ANGRY_HITS = 3; // ANGRY_WINDOW 초 안에 이만큼 맞으면 화낸다
+const ANGRY_WINDOW = 8;
+function ouch(fromX, fromZ) {
+  const now = performance.now();
+  local.hits = (local.hits ?? []).filter((t) => now - t < ANGRY_WINDOW * 1000);
+  local.hits.push(now);
+  const angry = local.hits.length >= ANGRY_HITS;
+  if (angry) local.hits = [];
+  if (local.fishing) stopFishing();
+  local.act = angry ? ANIM.ANGRY : ANIM.HURT;
+  local.actLeft = actTime(local.act);
   local.hurt = local.actLeft; // 맞는 동안은 움직여도 끊기지 않음
   me.setPose(me.x, me.z, Math.atan2(fromX - me.x, fromZ - me.z)); // 때린 쪽으로 돌아봄
+  return angry;
 }
 // ── 타격 연출: 휘두르기·생활 행동의 '맞는 순간'(hitAt)에 불림 (내 캐릭터·다른 학생 모두) ──
 // 히트스톱(내가 때리거나 맞을 때만) + 대상 흔들기 + 대상에 맞는 조각 파티클
@@ -278,6 +292,11 @@ function hitFx(char, action) {
       const t = tree >= 0 ? WORLD.trees[tree] : { ...LIFE_SPOTS[spot], r: 0.25, s: 0.85 };
       if (tree >= 0) village.shakeTree(tree, fx, fz, action === 'chop' ? 1 : 0.7);
       else shakeSpot(spot);
+      // 도끼로 찍은 순간: (내 캐릭터면) 서버에 알려 목재가 하나 밑동에 떨어진다 (광장 체험용 나무는 -(번호+1))
+      if (action === 'chop' && char === me) {
+        room?.send('chop', tree >= 0 ? tree : -spot - 1);
+        wearTool('axe');
+      }
       // 나뭇조각은 맞은 자리에서 때린 사람 쪽으로 튀고, 잎은 위에서 팔랑팔랑
       burst('wood', 9, at(t.x - fx * t.r, t.z - fz * t.r, 0.6), { dir: [-fx, -fz] });
       burst('leaf', 7, at(t.x, t.z, 1.9 * t.s), { spread: Math.PI, power: 0.8 });
@@ -287,8 +306,15 @@ function hitFx(char, action) {
     }
   } else if (action === 'netSwing' || action === 'netHigh' || action === 'netLow') {
     // 다 쓸고 난 순간: (내 캐릭터면) 그물 테가 지나간 길을 서버에 보내, 그 길에 걸린 곤충을 잡는다
-    if (char === me) room?.send('swing', (char.netPath ?? []).map((p) => p.map((v) => Math.round(v * 100))));
+    if (char === me && !local.netSent) {
+      local.netSent = true;
+      room?.send('swing', (char.netPath ?? []).map((p) => p.map((v) => Math.round(v * 100))));
+      wearTool('net');
+    }
     burst('leaf', 4, at(char.x + fx * 1.3, char.z + fz * 1.3, 0.4), { spread: Math.PI, power: 0.5 });
+  } else if (action === 'angry') {
+    // 화나서 발을 구르는 순간 발밑에 먼지가 퐁
+    burst('dust', 8, at(char.x, char.z, 0.05), { ring: true, power: 0.7 });
   } else if (action === 'treeShake') {
     // 줄기를 잡은 순간: (내 캐릭터면) 서버에 흔들기를 알려 과일이 떨어지게 하고, 잎이 우수수
     const pend = char === me ? local.picked : null;
@@ -299,7 +325,9 @@ function hitFx(char, action) {
     const pend = char === me && local.picked?.grab !== undefined ? local.picked : null;
     if (pend) {
       local.picked = null;
+      const w = WOOD_BY_ID[drops.get(pend.grab)?.f];
       room?.send('grab', pend.grab);
+      if (w) toast(`🪵 ${eul(w.name)} 주웠다! ${stars(w.rarity)} ${RARITY[w.rarity].name}`);
     }
     burst('sparkle', 8, at(char.x + fx * 0.45, char.z + fz * 0.45, 0.25), { spread: Math.PI });
   } else if (action === 'gather') {
@@ -315,7 +343,8 @@ function hitFx(char, action) {
     burst('dust', 14, at(char.x + fx * 0.6, char.z + fz * 0.6, 0.05), { ring: true, power: 1.5 });
     burst('stone', 6, at(char.x + fx * 0.6, char.z + fz * 0.6, 0.05), { spread: Math.PI, power: 0.9 });
   }
-  if (char === me || strong) FX.hitstop(slam ? 0.08 : 0.05);
+  // 멈칫(히트스톱)은 무언가를 세게 때리는 동작(몽둥이·목검·도끼)에만: 잠자리채·낚시·채집·줍기에 넣으면 렉처럼 보인다
+  if ((char === me || strong) && (action === 'clubSmash' || action === 'chop')) FX.hitstop(slam ? 0.08 : 0.05);
 }
 Character.onHit = (char, action) => hitFx(char, action);
 
@@ -414,7 +443,46 @@ function setArrows(n) {
 const BOW = TOOLS.indexOf('bow');
 const NET = TOOLS.indexOf('net');
 const STAFF = TOOLS.indexOf('staff');
-let invItems = [1, 2, 4, NET, STAFF]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
+// 생활 도구 내구도: 쓸 때마다 1씩 닳고 0이 되면 부서져 가방에서 사라진다 (이 브라우저에 저장. 대장간에서 새로 만든다)
+const WEAR_TOOLS = Object.keys(TOOL_DURABILITY); // axe · rod · net
+local.dura = (() => {
+  let saved = {};
+  try { saved = JSON.parse(store.get(localStorage, 'dura') ?? '{}') ?? {}; } catch { /* 처음 */ }
+  return Object.fromEntries(WEAR_TOOLS.map((k) => {
+    const n = saved[k];
+    return [k, Number.isInteger(n) && n >= 0 && n <= TOOL_DURABILITY[k] ? n : TOOL_DURABILITY[k]];
+  }));
+})();
+const saveDura = () => store.set(localStorage, 'dura', JSON.stringify(local.dura));
+const toolBroken = (name) => WEAR_TOOLS.includes(name) && local.dura[name] <= 0;
+const wearWarn = (name) => Math.ceil(TOOL_DURABILITY[name] * 0.2); // 이만큼 남으면 한 번 알려 준다
+// 이름 뒤에 받침에 맞는 '이/가'
+const iga = (name) => { const c = name.charCodeAt(name.length - 1) - 0xac00; return `${name}${c >= 0 && c <= 11171 && c % 28 ? '이' : '가'}`; };
+// 가방에 든 장비 목록 정하기 (부서진 도구는 뺀다)
+function setInvItems(list) {
+  invItems = list.filter((t) => !toolBroken(TOOLS[t]));
+  if (local.equip && !invItems.includes(local.equip)) equipTool(0);
+}
+// 생활 도구를 한 번 썼다: 닳게 하고, 다 닳으면 부서진다 (낚싯대는 그 낚시를 마친 뒤에 부서진다)
+function wearTool(name) {
+  if (!WEAR_TOOLS.includes(name) || local.dura[name] <= 0) return;
+  local.dura[name] -= 1;
+  saveDura();
+  const label = EQUIPMENT[name].label;
+  if (local.dura[name] === wearWarn(name)) toast(`⚠️ ${iga(label)} 많이 닳았어요! ${wearWarn(name)}번 더 쓰면 부서져요`);
+  if (local.dura[name] > 0 || (name === 'rod' && local.fishing)) { renderQuick(); return; }
+  breakTool(name);
+}
+// 부서짐: 도구 자리에서 조각·별이 튀고, 손과 가방에서 사라진다
+function breakTool(name) {
+  FX.burst('wood', 14, me.x + Math.sin(me.targetRot) * 0.5, me.groundY + 0.9, me.z + Math.cos(me.targetRot) * 0.5, { floor: me.groundY, spread: Math.PI, power: 1.1 });
+  FX.burst('star', 8, me.x, me.groundY + 1.4, me.z, { floor: me.groundY, spread: Math.PI, power: 0.8 });
+  toast(`💥 ${iga(EQUIPMENT[name].label)} 부서졌어요! 대장간에서 목재로 새로 만들어야 해요`);
+  setInvItems(invItems);
+  renderQuick();
+  renderInv();
+}
+let invItems = [1, 2, 4, NET, STAFF].filter((t) => !toolBroken(TOOLS[t])); // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
 let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이·하악냥)
@@ -496,6 +564,14 @@ function nextLifeTool() {
   const i = list.indexOf(local.equip);
   equipTool(list[(i + 1) % list.length]);
 }
+// 생활 도구 칸 아래의 내구도 막대 (많이 닳으면 빨갛게). 닳지 않는 도구면 빈 글자
+function durabilityBar(t) {
+  const name = TOOLS[t];
+  if (!WEAR_TOOLS.includes(name)) return '';
+  const k = local.dura[name] / TOOL_DURABILITY[name];
+  return `<span class="dura${local.dura[name] <= wearWarn(name) ? ' low' : ''}"><i style="width:${Math.round(k * 100)}%"></i></span>`;
+}
+const duraText = (t) => (WEAR_TOOLS.includes(TOOLS[t]) ? ` · 내구도 ${local.dura[TOOLS[t]]}/${TOOL_DURABILITY[TOOLS[t]]}` : '');
 function renderQuick() {
   ui.quick.innerHTML = '';
   // 왼쪽: 생활 도구 칸 (R) — 누르면 들고, 든 것을 다시 누르면 내려놓는다
@@ -506,7 +582,8 @@ function renderQuick() {
     b.type = 'button';
     b.className = t === local.equip ? 'on' : '';
     b.title = `${EQUIPMENT[TOOLS[t]].label} (생활 도구)`;
-    b.innerHTML = TOOL_ICON[TOOLS[t]];
+    b.innerHTML = TOOL_ICON[TOOLS[t]] + durabilityBar(t);
+    b.title += duraText(t);
     b.onclick = () => equipTool(t === local.equip ? 0 : t);
     life.appendChild(b);
   }
@@ -637,9 +714,10 @@ function renderInv() {
   // 생활 도구: 누르면 들고, 든 것을 다시 누르면 내려놓는다
   for (const t of LIFE_ITEMS.filter((x) => invItems.includes(x))) {
     const name = EQUIPMENT[TOOLS[t]].label;
-    const b = cell(TOOL_ICON[TOOLS[t]], { cls: `life${t === local.equip ? ' on' : ''}`, title: `${name} (생활 도구, R)` });
+    const dura = duraText(t);
+    const b = cell(TOOL_ICON[TOOLS[t]] + durabilityBar(t), { cls: `life${t === local.equip ? ' on' : ''}`, title: `${name} (생활 도구, R)${dura}` });
     b.onclick = () => {
-      invInfo = t === local.equip ? `${name}을(를) 내려놓았어요` : `${name}을(를) 들었어요 (생활 도구는 R로도 들어요)`;
+      invInfo = (t === local.equip ? `${name}을(를) 내려놓았어요` : `${name}을(를) 들었어요 (생활 도구는 R로도 들어요)`) + dura;
       equipTool(t === local.equip ? 0 : t);
     };
     add(`t:${t}`, b);
@@ -658,6 +736,11 @@ function renderInv() {
     const color = `#${f.color.toString(16).padStart(6, '0')}`;
     add(`fish:${f.id}`, info(cell('🐟', { count: bag.get(f.id), title: `${f.name} ×${bag.get(f.id)}`, color }),
       `${f.name} ×${bag.get(f.id)} (${RARITY[f.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
+  }
+  for (const w of WOODS.filter((x) => bag.get(x.id) > 0)) {
+    const color = `#${w.inner.toString(16).padStart(6, '0')}`;
+    add(`wood:${w.id}`, info(cell(w.shape === 'branch' ? '🌿' : '🪵', { count: bag.get(w.id), title: `${w.name} ×${bag.get(w.id)}`, color }),
+      `${w.name} ×${bag.get(w.id)} (${RARITY[w.rarity].name}): 대장간에서 무기·생활 도구를 만드는 재료예요 (희귀할수록 좋은 재료)`));
   }
   for (const b of BUGS.filter((x) => bag.get(x.id) > 0)) {
     add(`bug:${b.id}`, info(cell('🦋', { count: bag.get(b.id), title: `${b.name} ×${bag.get(b.id)}` }),
@@ -702,13 +785,15 @@ function renderInv() {
 
   const help = document.createElement('p');
   help.className = 'inv-help inv-info';
-  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 가방 칸끼리 끌어다 놓으면 자리를 옮겨요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해, 곤충은 잠자리채(R)를 들고 G로 잡아 모아요.';
+  help.textContent = invInfo || '무기를 누르거나 퀵슬롯 칸으로 끌어다 놓아 넣어요. 가방 칸끼리 끌어다 놓으면 자리를 옮겨요. 과일은 나무를 F로 흔들어, 물고기는 물가에서 G로 낚시해, 곤충은 잠자리채(R)를 들고 G로 잡아, 목재는 도끼로 나무를 찍어 떨어진 것을 F로 주워 모아요(대장간 재료). 도끼·낚싯대·잠자리채는 많이 쓰면 부서져요.';
   ui.inv.appendChild(help);
 }
 
 // ── 도감 (B): 강·바다 물고기를 모두 보여 주고, 잡아 본 것만 이름·희귀도·값이 보인다 ──
 const dexPanel = $id('dex-panel');
 const stars = (r) => '★'.repeat(RARITY[r].stars);
+// 이름 뒤에 받침에 맞는 '을/를' (원목을 · 꿀벌을 · 나뭇가지를)
+const eul = (name) => { const c = name.charCodeAt(name.length - 1) - 0xac00; return `${name}${c >= 0 && c <= 11171 && c % 28 ? '을' : '를'}`; };
 let dexTab = 'fish'; // 'fish' · 'bug'
 // 곤충 사는 곳 (도감에서 묶어 보여 줄 때)
 const BUG_PLACE = [['fly', '🌼 날아다니는 곤충'], ['flower', '🌸 꽃에 앉는 곤충'], ['tree', '🌳 나무에 붙는 곤충'], ['ground', '🌱 풀밭에서 뛰는 곤충']];
@@ -792,6 +877,7 @@ function startFishing() {
   const [n0, n1] = NOTICE.after;
   local.fishing = { phase: 'cast', water, castAt: performance.now(), noticeAt: performance.now() + (n0 + Math.random() * (n1 - n0)) * 1000 };
   room.send('cast', angleToByte(me.targetRot));
+  wearTool('rod');
 }
 // 낚시가 끝나면 찌·물고기·느낌표를 정리 (flee: 물고기가 도망가는 모습)
 function endFishing(flee) {
@@ -801,6 +887,7 @@ function endFishing(flee) {
   alertMark.visible = false;
   if (me) me.bobberDip = 0;
   village.lure.end(flee ? 'flee' : 'caught');
+  if (toolBroken('rod') && invItems.includes(TOOLS.indexOf('rod'))) breakTool('rod'); // 마지막으로 던진 낚시를 마치면 부서진다
 }
 // 낚시 그만두기 (움직이거나, 물고기가 오기 전에 G를 다시 누름)
 function stopFishing() {
@@ -869,18 +956,152 @@ function swingNet(target) {
   const y = aim?.y ?? 1;
   const anim = y < NET_LOW_Y ? ANIM.NET_LOW : y > NET_HIGH_Y ? ANIM.NET_HIGH : ANIM.NET_SWING;
   if (aim) {
-    me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z));
-    // 채를 젖히는 동안 곤충 쪽으로 한 발 다가서거나 물러서서, 그물 테가 지나가는 자리(몸에서 NET_RING)에 곤충이 오게 한다
-    const want = THREE.MathUtils.clamp(best - NET_RING[anim], -0.7, 1.0);
-    local.netStep = { left: Math.abs(want), speed: Math.abs(want) / NET_STEP_TIME, rot: me.targetRot + (want < 0 ? Math.PI : 0) };
+    // 위에서 아래로 비스듬히 덮으므로, 곤충 높이에서 그물 테가 지나가는 쪽(각도)과 거리에 곤충이 오도록 돌아서고
+    // 채를 젖히는 동안 한 발 다가서거나 물러선다
+    const { ang, ring } = netCross(anim, y);
+    me.setPose(me.x, me.z, Math.atan2(aim.x - me.x, aim.z - me.z) - ang);
+    const want = THREE.MathUtils.clamp(best - ring, -0.7, 1.0);
+    const dir = Math.atan2(aim.x - me.x, aim.z - me.z);
+    local.netStep = { left: Math.abs(want), speed: Math.abs(want) / NET_STEP_TIME, rot: dir + (want < 0 ? Math.PI : 0) };
   }
   startAct(anim);
+  local.netCaught = null; // 이번 휘두르기에 그물에 걸린 곤충 (잡는 순간 연출용)
+  local.netBlocked = false; // 그물이 나무·분수 같은 단단한 것에 턱 막혔는지
+  local.netSent = false; // 그물이 지나간 길을 서버에 이미 보냈는지 (막히면 그 자리에서 바로 보낸다)
 }
-const NET_LOW_Y = 0.5; // 이보다 낮은 곤충은 발 앞을 낮게 쓸고
-const NET_HIGH_Y = 1.4; // 이보다 높으면 머리 위로 쓴다
-// 휘두를 때 그물 테가 몸에서 이만큼 떨어져 지나간다 (m). 머리 위로 쓸 때는 팔을 들어 올려 몸 가까이로 지나간다
-const NET_RING = { [ANIM.NET_SWING]: 1.45, [ANIM.NET_LOW]: 1.5, [ANIM.NET_HIGH]: 0.75 };
+const NET_LOW_Y = 0.5; // 이보다 낮은 곤충은 발 앞을 위에서 덮고
+const NET_HIGH_Y = 1.6; // 이보다 높으면 머리 위로 쓴다
+// 휘두를 때 그물 테가 지나가는 길: [바라보는 쪽에서 각도(도, 오른쪽이 -), 땅에서 높이(m), 몸에서 거리(m)].
+// 오른쪽 위에서 앞 아래로 비스듬히 지나가므로 높을수록 오른쪽, 낮을수록 왼쪽에서 지나간다 (actions.js netSweep 를 재어 둔 값)
+const NET_PATHS = {
+  [ANIM.NET_SWING]: [[-28, 1.72, 1.14], [-6, 1.16, 1.4], [6, 0.74, 1.54], [22, 0.34, 1.48]],
+  [ANIM.NET_LOW]: [[-26, 1.38, 1.38], [-6, 0.72, 1.56], [4, 0.4, 1.58], [12, 0.2, 1.54], [16, 0.14, 1.52]],
+  [ANIM.NET_HIGH]: [[0, 2.06, 0.75]], // 머리 위로 옆으로 쓴다 (몸 가까이로 지나감)
+};
+// 높이 y 에서 그물 테가 지나가는 각도(라디안)와 몸에서 거리
+function netCross(anim, y) {
+  const rows = NET_PATHS[anim];
+  let r = rows[0];
+  if (y <= rows[rows.length - 1][1]) r = rows[rows.length - 1];
+  else {
+    for (let i = 0; i < rows.length - 1; i++) {
+      const [a0, h0, d0] = rows[i];
+      const [a1, h1, d1] = rows[i + 1];
+      if (y <= h0 && y >= h1) {
+        const t = (h0 - y) / (h0 - h1);
+        r = [a0 + (a1 - a0) * t, y, d0 + (d1 - d0) * t];
+        break;
+      }
+    }
+  }
+  return { ang: (r[0] * Math.PI) / 180, ring: r[2] };
+}
 const NET_STEP_TIME = 0.28; // 채를 젖히는 동안 (초): 이 사이에 다가서거나 물러선다
+
+// 잠자리채로 잡는 순간 (내 화면에서 그물 테가 곤충을 지나가는 그 장면): 서버 답을 기다리지 않고 바로
+// 그물 자리에서 반짝·별이 톡 + 몸이 통 튀고 + 카메라가 살짝 다가갔다 돌아온다 (멈칫하는 히트스톱은 렉처럼 보여서 넣지 않는다). 곤충은 그물 속으로 쏙 (숨김).
+// 서버가 판정은 같은 길로 하므로 거의 늘 잡히고, 혹시 놓쳤다고 오면 곤충을 다시 보인다
+const NET_ANIMS = new Set([ANIM.NET_SWING, ANIM.NET_HIGH, ANIM.NET_LOW]);
+function netCatchMoment(id, [x, y, z]) {
+  local.netCaught = id;
+  village.bugs.hide(id);
+  FX.burst('sparkle', 16, x, y, z, { floor: me.groundY, spread: Math.PI, power: 1.0 });
+  FX.burst('star', 7, x, y, z, { floor: me.groundY, spread: Math.PI, power: 0.8 });
+  me.squash(1.07, 0.93, 1.07);
+  local.camKick = 1;
+}
+// 그물이 단단한 것(나무 줄기·바위·분수·벤치·가로등·표지판)에 턱 막혔다: 그 자리에서 잠깐 멈췄다가(내 캐릭터만, 세상은 그대로)
+// 휘두르기를 그만두고 들고 다니는 자세로 돌아온다. 막힌 곳까지 지나간 길로 곤충 판정을 받는다
+const NET_STUCK = 0.16; // 막혀서 멈춰 있는 시간 (초)
+const NET_HOOP = 0.09; // 그물 테 둘레 두께 (끝 쪽은 테가 넓어서 이만큼 더 일찍 닿는다)
+const spotSolids = () => (lifeSpots.length ? LIFE_SPOTS.filter((t) => t.kind === 'tree').map((t) => ({ x: t.x, z: t.z, r: 0.2, h: 1.6, kind: 'spot' })) : []);
+function netBlocked([x, y, z], solid) {
+  local.netBlocked = true;
+  local.netStep = null;
+  local.netStuck = NET_STUCK;
+  if (!local.netSent) {
+    local.netSent = true;
+    room?.send('swing', me.netPath.map((p) => p.map((v) => Math.round(v * 100))));
+    wearTool('net');
+  }
+  const opts = { floor: me.groundY, spread: Math.PI, power: 0.7 };
+  if (solid.kind === 'head') {
+    // 다른 학생 머리: 별만 톡 (흔들기·움찔은 netBonk 에서)
+  } else if (solid.kind === 'tree' || solid.kind === 'spot') {
+    if (solid.kind === 'tree' && !onField) village.shakeTree(solid.i, Math.sin(me.targetRot), Math.cos(me.targetRot), 0.45);
+    FX.burst('leaf', 5, x, y, z, opts);
+    FX.burst('wood', 4, x, y, z, opts);
+  } else {
+    FX.burst('dust', 7, x, y, z, opts);
+    FX.burst(solid.kind === 'rock' || solid.kind === 'fountain' ? 'stone' : 'wood', 3, x, y, z, opts);
+  }
+  me.squash(0.97, 1.03, 0.97);
+  local.camKick = 0.45;
+}
+// ── 잠자리채로 다른 학생 머리 콩: 휘두르는 학생(내 캐릭터·다른 학생 모두)의 채가 다른 학생 머리에 닿으면
+// 맞은 학생은 흔들리며 머리 위로 별이 튀고, 휘두른 채는 턱 막힌다. 내가 맞았으면 아파하고, 자꾸 맞으면 화낸다 (그물이라 체력은 그대로)
+// 판정은 학생마다 자기 화면에서 한다 (몽둥이와 같은 방식)
+const BONK_R = 0.45; // 머리 가운데에서 이만큼 안에 채가 들어오면 맞음 (머리 반지름 약 0.4m + 그물 테 두께)
+const headPos = new THREE.Vector3();
+function checkNetBonks() {
+  const chars = [me, ...[...others.values()].map((o) => o.char)].filter(Boolean);
+  for (const c of chars) {
+    if (!c.current?.startsWith('net') || c.netBonked || !c.netSegs?.length) continue;
+    if (c === me && local.netBlocked) continue;
+    const [base, tip] = c.netSegs[c.netSegs.length - 1];
+    for (const v of chars) {
+      if (v === c || !v.root.visible) continue;
+      v.villager.rig.head.getWorldPosition(headPos);
+      const hit = [0.6, 0.8, 1].map((f) => base.map((b, n) => b + (tip[n] - b) * f)).find((p) => headPos.distanceTo(new THREE.Vector3(...p)) < BONK_R);
+      if (hit) { netBonk(c, v, hit); break; }
+    }
+  }
+}
+function netBonk(c, v, p) {
+  c.netBonked = true;
+  v.shake();
+  FX.burst('star', 9, headPos.x, headPos.y + 0.25, headPos.z, { floor: v.groundY, spread: Math.PI, power: 0.8 });
+  if (c === me) netBlocked(p, { kind: 'head' }); // 내가 휘둘렀으면 내 채가 턱 막힌다
+  if (v === me && local.dodge <= 0 && local.hurt <= 0) {
+    // 내가 맞았다: 휘두른 쪽으로 돌아보며 아파한다 (그물이라 체력은 그대로). 자꾸 맞으면 화낸다
+    toast(ouch(c.x, c.z) ? '😠 자꾸 때리면 화낼 거예요!' : '앗! 잠자리채로 머리를 콩 맞았어요');
+  }
+}
+
+// 매 장면: 방금 그물 테가 지나간 마디가 곤충에 닿았는지 (서버와 같은 거리 NET_CATCH), 단단한 것에 부딪혔는지
+function checkNetCatch() {
+  if (!me || local.netBlocked || !NET_ANIMS.has(local.act) || local.actLeft <= 0) return;
+  const path = me.netPath;
+  if (!path?.length) return;
+  const b = path[path.length - 1];
+  const a = path[path.length - 2] ?? b;
+  // 채 전체(자루 가운데 → 그물 테 끝)를, 지난 장면에서 이번 장면까지 몇 걸음으로 나눠 본다
+  // (빠르게 휘두르면 한 장면에 많이 움직여 끝 한 점만 보면 얇은 기둥을 뚫고 지나간다)
+  const segs = me.netSegs;
+  if (segs?.length) {
+    const s1 = segs[segs.length - 1];
+    const s0 = segs[segs.length - 2] ?? s1;
+    const extra = spotSolids();
+    const lerp = (p, q, t) => p.map((v, n) => v + (q[n] - v) * t);
+    for (let k = 1; k <= 4; k++) {
+      const base = lerp(s0[0], s1[0], k / 4);
+      const tip = lerp(s0[1], s1[1], k / 4);
+      for (const f of [0.45, 0.6, 0.75, 0.9, 1]) { // 자루 가운데부터 그물 테 끝까지 (손 가까이는 몸이라 빼고)
+        const p = lerp(base, tip, f);
+        const s = solidAt(p[0], p[1] - me.groundY, p[2], extra, f > 0.8 ? NET_HOOP : 0.02);
+        if (s) { netBlocked(p, s); return; }
+      }
+    }
+  }
+  if (local.netCaught) return;
+  for (const [id, bug] of bugSpots) {
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const ap = [bug.x - a[0], bug.y - a[1], bug.z - a[2]];
+    const L = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+    const t = L > 0 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / L)) : 0;
+    if (Math.hypot(ap[0] - ab[0] * t, ap[1] - ab[1] * t, ap[2] - ab[2] * t) < NET_CATCH) { netCatchMoment(id, b); return; }
+  }
+}
 
 // mesh: 들어 보일 모양 (물고기·곤충), big: 원래 크기의 몇 배로 보일지
 function showCatch(char, mesh, big = 1) {
@@ -894,7 +1115,8 @@ function updateShows(dt) {
     const up = Math.min(1, s.t / 0.25);
     s.mesh.position.set(s.char.x, s.char.groundY + 2.2 + up * 0.5 + Math.sin(s.t * 6) * 0.04, s.char.z);
     s.mesh.rotation.set(0, s.char.root.rotation.y + Math.PI / 2, Math.sin(s.t * 9) * 0.25); // 파닥파닥
-    s.mesh.scale.setScalar(s.base * (s.t > 2 ? Math.max(0, 1 - (s.t - 2) / 0.25) : up));
+    const pop = up < 1 ? up * (1 + Math.sin(up * Math.PI) * 0.45) : 1; // 커지며 한 번 통 튀었다가 제 크기로
+    s.mesh.scale.setScalar(s.base * (s.t > 2 ? Math.max(0, 1 - (s.t - 2) / 0.25) : pop));
     if (s.t > 2.25) { scene.remove(s.mesh); shows.splice(i, 1); }
   }
 }
@@ -906,13 +1128,17 @@ renderInv();
 const aimRay = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const aimHit = new THREE.Vector3();
-function aimRot() {
+// 마우스가 가리키는 땅 위 자리 (내 발밑 높이의 평면). 터치·펜이면 null
+function aimPoint() {
   const p = input.pointer;
   if (!p || !me) return null;
   const r = canvas.getBoundingClientRect();
   aimRay.setFromCamera(new THREE.Vector2(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1), camera);
-  aimPlane.constant = -me.groundY; // 내 발밑 높이의 평면
-  if (!aimRay.ray.intersectPlane(aimPlane, aimHit)) return null;
+  aimPlane.constant = -me.groundY;
+  return aimRay.ray.intersectPlane(aimPlane, aimHit);
+}
+function aimRot() {
+  if (!aimPoint()) return null;
   const dx = aimHit.x - me.x;
   const dz = aimHit.z - me.z;
   return Math.hypot(dx, dz) < 0.25 ? null : Math.atan2(dx, dz);
@@ -969,8 +1195,9 @@ function startAct(a) {
 
 // 마우스 클릭(Z): 무기를 들지 않았으면(맨손·도끼·낚싯대·잠자리채) 공격 대신 생활 동작을 한다.
 // 낚시 중이면 G처럼 낚아채기·줄 감기, 잠자리채는 마우스가 가리키는 쪽으로 휘두르기,
-// 가까이에 생활 대상이 없고 과일이 있으면 F처럼 줍기·흔들기. 할 것이 없으면 아무것도 하지 않는다 (빈 땅 클릭에 안내가 뜨지 않게)
+// 떨어진 과일·목재를 직접 누르면 F처럼 줍기, 생활 대상이 없으면 발밑의 것을 줍거나 과일나무 흔들기. 할 것이 없으면 아무것도 하지 않는다 (빈 땅 클릭에 안내가 뜨지 않게)
 const CLICK_LIFE = new Set(['none', 'axe', 'rod', 'net']);
+const CLICK_PICK = 0.55; // 떨어진 것을 마우스로 누른 것으로 치는 거리 (m)
 function clickAction() {
   if (local.fishing) return 'life';
   if (!CLICK_LIFE.has(TOOLS[local.tool])) return 'attack';
@@ -980,8 +1207,20 @@ function clickAction() {
     if (r !== null) me.setPose(me.x, me.z, r);
     return 'life';
   }
+  // 떨어진 과일·목재를 마우스로 콕 눌렀으면(손이 닿는 거리 안) 그것을 줍는다.
+  // 그 밖을 누르면 나무 찍기 등 생활 동작이 먼저다: 찍을 때마다 목재가 떨어져도 계속 찍을 수 있게
+  const hit = aimPoint();
+  if (hit) {
+    let pick = null;
+    let bestD = CLICK_PICK;
+    for (const [id, d] of drops) {
+      const dist = Math.hypot(d.x - hit.x, d.z - hit.z);
+      if (dist < bestD && Math.hypot(d.x - me.x, d.z - me.z) < GRAB_REACH) { bestD = dist; pick = { id, x: d.x, z: d.z }; }
+    }
+    if (pick) { local.clickDrop = pick; return 'pick'; }
+  }
   if (findLife(me.x, me.z, lifeSpots)) return 'life';
-  if (nearDrop(me.x, me.z) || findFruit(me.x, me.z)) return 'pick';
+  if (nearDrop(me.x, me.z) || findFruit(me.x, me.z)) return 'pick'; // 할 생활 동작이 없으면 발밑의 것을 줍거나 과일나무 흔들기
   return null;
 }
 
@@ -1065,10 +1304,12 @@ const input = createInput({
     } else if (name === 'pick') {
       // F: 떨어진 과일이 가까이 있으면 줍고, 없으면 과일나무를 흔들어 과일을 떨어뜨린다
       if (local.actLeft > 0) return;
-      const d = nearDrop(me.x, me.z);
+      const d = local.clickDrop ?? nearDrop(me.x, me.z); // 마우스로 콕 누른 것이 있으면 그것부터
+      local.clickDrop = null;
       const t = d ? null : findFruit(me.x, me.z);
       if (!d && !t) { toast(`${FRUIT_NAMES[VILLAGE_FRUIT]}가 열린 과일나무에 바짝 붙어서 F를 눌러 보세요`); return; }
-      if (d && (bag.get(VILLAGE_FRUIT) ?? 0) >= BAG_MAX) { toast(`가방에 ${FRUIT_NAMES[VILLAGE_FRUIT]}가 가득 찼어요`); return; }
+      const item = d && drops.get(d.id)?.f;
+      if (d && (bag.get(item) ?? 0) >= BAG_MAX) { toast(`가방에 ${WOOD_BY_ID[item]?.name ?? FRUIT_NAMES[item] ?? '이것'}이(가) 가득 찼어요`); return; }
       const aim = d ?? t;
       local.picked = d ? { grab: d.id, x: d.x, z: d.z } : { shake: t.pick, x: t.x, z: t.z };
       holdTool(0);
@@ -1086,6 +1327,7 @@ const input = createInput({
       if (TOOLS[local.equip] === 'net') { swingNet(null); return; }
       const t = findLife(me.x, me.z, lifeSpots);
       if (!t) { toast('곤충·나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
+      if (toolBroken(t.tool)) { toast(`${iga(EQUIPMENT[t.tool].label)} 부서져서 쓸 수 없어요. 대장간에서 새로 만들어야 해요`); return; }
       if (t.tool === 'net') { swingNet(t); return; }
       if (t.tool === 'rod') { startFishing(); return; }
       holdTool(TOOLS.indexOf(t.tool));
@@ -1215,7 +1457,8 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
-    invItems = free ? [1, 2, 3, 4, BOW, NET, STAFF] : [1, 2, 4, NET, STAFF];
+    if (free) { for (const k of WEAR_TOOLS) local.dura[k] = TOOL_DURABILITY[k]; saveDura(); } // 테스트 서버: 들어올 때마다 새 생활 도구 (아직 대장간이 없음)
+    setInvItems(free ? [1, 2, 3, 4, BOW, NET, STAFF] : [1, 2, 4, NET, STAFF]);
     // 활을 처음 받으면 빈 퀵슬롯에 넣어 준다 (한 번만). 테스트 서버에서는 들어올 때마다 화살통을 가득 채워 준다 (아직 화살을 얻는 곳이 없음)
     if (free && !store.get(localStorage, 'bowGiven')) {
       store.set(localStorage, 'bowGiven', '1');
@@ -1223,7 +1466,6 @@ function attach(r) {
       if (!quick.includes(BOW) && empty >= 0) { quick[empty] = BOW; saveQuick(); }
     }
     if (free) setArrows(ARROW.max);
-    if (local.equip && !invItems.includes(local.equip)) equipTool(0);
     renderQuick();
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
@@ -1248,8 +1490,8 @@ function attach(r) {
     const x = fromCm(d.x);
     const z = fromCm(d.z);
     drops.set(id, { x, z, f: d.f });
-    village.addDrop(id, d.f, x, z, d.k, dropsReady);
-    if (dropsReady) {
+    village.addDrop(id, d.f, x, z, d.k, dropsReady, d.t);
+    if (dropsReady && d.k >= 0) {
       const t = WORLD.trees[WORLD.fruitTrees[d.k]];
       if (t) village.shakeTree(WORLD.fruitTrees[d.k], (x - t.x) * 0.3, (z - t.z) * 0.3, 0.6);
     }
@@ -1287,9 +1529,11 @@ function attach(r) {
     if (char !== me) return;
     const first = !announced.has(id) && (dex.get(id) ?? 0) <= 1;
     announced.add(id);
-    toast(`🦋 ${sp.name}를 잡았다! ${stars(sp.rarity)} ${RARITY[sp.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
+    toast(`🦋 ${eul(sp.name)} 잡았다! ${stars(sp.rarity)} ${RARITY[sp.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
   });
+  r.onMessage('woodRest', () => toast('이 나무에서는 목재를 다 얻었어요. 잠시 뒤에 다시 찍거나 다른 나무를 찍어 보세요'));
   r.onMessage('netResult', (m) => {
+    if (local.netCaught) { village.bugs.hide(local.netCaught, false); local.netCaught = null; } // 그물에 걸린 줄 알았는데 서버는 놓쳤다고
     if (m.full) toast('가방에 이 곤충이 가득 찼어요');
     else if (m.scared) toast('앗, 놓쳤어요! 곤충이 놀라 날아갔어요');
     else if (m.near) toast('아깝다! 곤충을 바라보고 가까이에서 G');
@@ -1316,7 +1560,7 @@ function attach(r) {
     endFishing(false);
     local.actLeft = 0; // 기다리던 자세를 끝내고 바로 낚아 올린다
     startAct(ANIM.FISH_CATCH);
-    toast(`🎣 ${fish.name}를 낚았다! ${stars(fish.rarity)} ${RARITY[fish.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
+    toast(`🎣 ${eul(fish.name)} 낚았다! ${stars(fish.rarity)} ${RARITY[fish.rarity].name}${first ? ' · 도감에 새로 등록!' : ''}`);
   });
   r.onMessage('escaped', (why) => {
     if (!local.fishing) return;
@@ -1726,12 +1970,25 @@ function frame() {
   const d = cam.dist * camScale * cam.zoom;
   camOffset.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
   camera.position.copy(camTarget).addScaledVector(camOffset, d);
+  // 잠자리채로 잡는 순간: 카메라가 살짝 다가가며 떨렸다가 돌아온다
+  if (local.camKick > 0) {
+    local.camKick = Math.max(0, local.camKick - realDt / 0.28);
+    const k = local.camKick * local.camKick;
+    camera.position.addScaledVector(camOffset, -d * 0.06 * k);
+    camera.position.y += Math.sin(now * 0.08) * 0.05 * k;
+  }
   camera.lookAt(camTarget.x, 0.8, camTarget.z);
   // 멀리 볼수록 안개를 옅게 (멀리 빼도 내 주변이 뿌옇게 되지 않게)
   scene.fog.density = FOG_DENSITY / Math.max(1, cam.zoom * camScale);
   setCurveCenter(camTarget.x, camTarget.z, cam.yaw);
   // 둥근 지평선의 중심을 정한 뒤에 캐릭터를 내린다 (한 프레임 늦으면 걸을 때 발이 땅과 어긋남)
-  if (me) me.update(dt);
+  // 그물이 턱 막히면 내 캐릭터만 잠깐 그 자세로 멈췄다가 휘두르기를 그만둔다 (세상과 카메라는 그대로 흘러 렉처럼 보이지 않는다)
+  if (local.netStuck > 0) {
+    local.netStuck -= realDt;
+    if (local.netStuck <= 0 && NET_ANIMS.has(local.act)) local.actLeft = 0;
+  }
+  if (me) me.update(local.netStuck > 0 ? 0 : dt);
+  checkNetCatch();
   // 화면 밖 학생은 숨기고 움직이지도 않는다 (숨기지 않으면 보이지 않아도 매 장면 뼈대를 계산한다).
   // 동작 중이면 화면 밖이어도 움직인다: 화면 밖에서 쏜 화살·휘두른 타격이 그 동작의 '맞는 순간'에 나온다
   camera.updateMatrixWorld();
@@ -1748,6 +2005,7 @@ function frame() {
     char.update(Math.min(char.lag, 0.1)); // 화면 밖에 오래 있다 돌아왔으면 한꺼번에 넘기지 않는다
     char.lag = 0;
   }
+  checkNetBonks(); // 다른 학생들도 움직인 뒤에
   for (const m of hereMonsters()) m.update(dt, me);
   arrows.update(dt);
   FX.update(dt);

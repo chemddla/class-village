@@ -1525,6 +1525,7 @@ export const EXPRESSIONS = {
   wink: { label: '윙크', eyes: ['closed', 'open'], mouth: 'smile', blush: 1.2 },
   angry: { label: '화남', eyes: ['angry', 'angry'], mouth: 'pout', blush: 1.15 },
   ko: { label: '기절', eyes: ['closed', 'closed'], mouth: 'o', blush: 0.6, hidden: true }, // 액션 전용
+  hurt: { label: '아파함', eyes: ['wince', 'wince'], mouth: 'wince', blush: 1.45, hidden: true }, // 맞았을 때 (액션 전용)
 };
 
 // 이 키가 바뀌면 얼굴·눈 텍스처를 다시 그린다
