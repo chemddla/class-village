@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel } from './village.js';
 import { buildField } from './field.js';
@@ -101,6 +101,7 @@ const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
   fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
+  hp: $id('hp-bar'), mp: $id('mp-bar'), sp: $id('sp-bar'),
   toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), pickBtn: $id('pick-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
 let toastTimer = 0;
@@ -159,7 +160,7 @@ const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM,
 // 공격 동작: 하는 동안에는 방향키로 움직이지 못한다 (떠서 하는 공중 공격·내리찍기도 마찬가지)
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH,
-  ANIM.BOW_AIR, ANIM.BOW_SLAM, ANIM.BOW_BACK]); // 활 점프·더블 점프·달리기 공격
+  ANIM.BOW_AIR, ANIM.BOW_SLAM, ANIM.BOW_BACK, ANIM.STAFF_CAST]); // 활 점프·더블 점프·달리기 공격 · 지팡이
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
 const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Shift 회피 구르기: 방향키 쪽(없으면 정면)으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
@@ -175,7 +176,54 @@ const SLAM_SPEED = 2.9;
 // 땅에서 휘두르는 타(몽둥이 1~4타, 목검 1·2·4타): 타격 직전부터 직후까지(0.25초) 보는 쪽으로 SWING_STEP(m)만큼 살짝 나아간다
 const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH4]);
 const SWING_STEP = 0.3;
+// 체력·마나·기력 (내 화면에서만 셈)
+// 마나: 대시 공격·더블 점프 내리찍기에 쓰고 천천히 찬다 · 기력: 구르기에 쓰고, 안 쓰고 잠깐 있으면 빠르게 찬다
+const STAT = { max: 100, hit: 10, hpRegen: 2, mpRegen: 6, roll: 25, skill: 20, spWait: 0.6, spRegen: 70 };
+const stats = { hp: STAT.max, mp: STAT.max, sp: STAT.max, spIdle: 0 };
+const ghost = { hp: { v: STAT.max, hold: 0 }, mp: { v: STAT.max, hold: 0 }, sp: { v: STAT.max, hold: 0 } };
+// 모자라서 못 썼을 때 그 줄을 떨어 보인다
+function statShort(k) {
+  const row = ui[k];
+  row.classList.remove('short');
+  void row.offsetWidth; // 연달아 눌러도 다시 떨리게
+  row.classList.add('short');
+}
+function useMana(n) {
+  if (stats.mp < n) { statShort('mp'); toast('마나가 모자라요'); return false; }
+  stats.mp -= n;
+  return true;
+}
+function updateStats(dt) {
+  stats.hp = Math.min(STAT.max, stats.hp + STAT.hpRegen * dt);
+  stats.mp = Math.min(STAT.max, stats.mp + STAT.mpRegen * dt);
+  stats.spIdle += dt;
+  if (stats.spIdle > STAT.spWait) stats.sp = Math.min(STAT.max, stats.sp + STAT.spRegen * dt);
+  for (const k of ['hp', 'mp', 'sp']) {
+    // 잔상: 줄어든 자리에 잠깐(0.4초) 머물렀다가 빠르게 따라 내려온다 (차오를 때는 바로 같이)
+    const g = ghost[k];
+    if (stats[k] >= g.v) { g.v = stats[k]; g.hold = 0.4; }
+    else if ((g.hold -= dt) < 0) g.v = Math.max(stats[k], g.v - 90 * dt);
+    const row = ui[k];
+    const fill = row.querySelector('i');
+    const w = `${(stats[k] / STAT.max) * 100}%`;
+    if (fill.style.width !== w) fill.style.width = w;
+    const gw = `${(g.v / STAT.max) * 100}%`;
+    const gb = row.querySelector('b');
+    if (gb.style.width !== gw) gb.style.width = gw;
+    const n = String(Math.floor(stats[k]));
+    const em = row.querySelector('em');
+    if (em.textContent !== n) em.textContent = n;
+    row.classList.toggle('low', stats[k] < STAT.max * 0.25);
+  }
+}
 function getHit(fromX, fromZ) {
+  stats.hp = Math.max(0, stats.hp - STAT.hit);
+  if (stats.hp <= 0) { // 다 닳으면 벌러덩 쓰러졌다가 다시 꽉 찬다
+    stats.hp = STAT.max;
+    local.act = ANIM.FAINT;
+    local.actLeft = local.hurt = actTime(ANIM.FAINT);
+    return;
+  }
   local.act = ANIM.SURPRISE; // 'hit' 피격 모션
   local.actLeft = actTime(ANIM.SURPRISE);
   local.hurt = local.actLeft; // 맞는 동안은 움직여도 끊기지 않음
@@ -186,6 +234,7 @@ function getHit(fromX, fromZ) {
 function hitFx(char, action) {
   // 활: 시위를 놓는 순간 화살이 날아간다 (맞는 건 arrowHit). 점프·더블 점프 공격은 대각선 아래로
   if (action === 'bowRelease' || action === 'bowAir' || action === 'bowSlam' || action === 'bowBack') { arrows.shoot(char, char === me, BOW_PITCH[action] ?? 0); return; }
+  if (action === 'staffBolt') { arrows.shoot(char, char === me, 0, true); return; } // 지팡이 끝에서 에너지 볼
   const slam = action === 'clubSlam' || action === 'swordSlam';
   const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
   if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
@@ -308,7 +357,7 @@ const NET_ICON = `<svg class="ico" viewBox="0 0 32 32" aria-hidden="true">
 <path d="M22.5 20.6 Q24.75 17.6 27 20.6" stroke="#8a8f96" stroke-width="1.1" fill="none"/>
 <path d="M23 29 Q24 25.5 23.5 24 M25.5 29 Q26.5 26 27.2 25" stroke="#7fbf4f" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 </svg>`;
-const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹', net: NET_ICON };
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹', net: NET_ICON, staff: '🪄' };
 const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', net: NET_ICON };
 const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', net: '곤충' };
 const QUICK_SLOTS = 4;
@@ -338,7 +387,8 @@ function setArrows(n) {
 }
 const BOW = TOOLS.indexOf('bow');
 const NET = TOOLS.indexOf('net');
-let invItems = [1, 2, 4, NET]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
+const STAFF = TOOLS.indexOf('staff');
+let invItems = [1, 2, 4, NET, STAFF]; // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채는 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
 let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이·하악냥)
@@ -903,6 +953,9 @@ const input = createInput({
     else if (name === 'dodge') {
       // 공격 중·맞는 중·쿨타임에는 못 한다. 방향키(조이스틱)를 누르고 있으면 그쪽으로, 아니면 보던 쪽(정면)으로
       if (local.hurt > 0 || local.dodge > -DODGE.cool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
+      if (stats.sp < STAT.roll) { statShort('sp'); return; } // 기력이 모자라면 못 구른다
+      stats.sp -= STAT.roll;
+      stats.spIdle = 0;
       if (local.fishing) stopFishing();
       local.act = ANIM.ROLL;
       local.actLeft = actTime(ANIM.ROLL);
@@ -930,6 +983,13 @@ const input = createInput({
       // 한 번 누르면 한 번만 휘두른다: 휘두르는 중에 또 눌러도 다음 타를 예약하지 않는다 (이어 치기는 꾹 누르고 있을 때만)
       if (local.hurt > 0) return;
       if (local.tool === BOW) { drawBow(); return; }
+      if (local.tool === STAFF) { // 마나를 써서 바라보는(마우스가 가리키는) 쪽으로 에너지 볼
+        if (local.actLeft > 0 || !useMana(BOLT.cost)) return;
+        const rot = aimRot();
+        if (rot !== null) me.setPose(me.x, me.z, rot);
+        startAct(ANIM.STAFF_CAST);
+        return;
+      }
       // 몽둥이와 목검은 같은 흐름: 점프 중이면 공중 공격, 더블 점프 중이면 착지하며 내리치기, 달리는 중이면 대시 공격, 아니면 1타
       // (계속 누르면 아래에서 다음 타로 이어진다)
       const sword = TOOLS[local.tool] === 'woodSword';
@@ -945,12 +1005,13 @@ const input = createInput({
         local.act = A.air;
       } else if (local.act === ANIM.FLIP && local.actLeft > 0 && el < 0.5) {
         // 더블 점프 뒤 공격: 착지하며 땅을 내리찍는다 (목검은 내려벤다)
+        if (!useMana(STAT.skill)) return;
         if (rot !== null) me.setPose(me.x, me.z, rot);
         local.act = A.slam;
         local.actLeft = actTime(A.slam) - el;
       } else if (local.actLeft <= 0) {
         const inp = input.read();
-        if (inp.run && inp.mag > 0) { startAct(A.dash); input.stopRun(); } // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
+        if (inp.run && inp.mag > 0 && useMana(STAT.skill)) { startAct(A.dash); input.stopRun(); } // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
         else {
           if (rot !== null) me.setPose(me.x, me.z, rot);
           startAct(A.first);
@@ -1109,7 +1170,7 @@ function attach(r) {
     const free = !!v;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
-    invItems = free ? [1, 2, 3, 4, BOW, NET] : [1, 2, 4, NET];
+    invItems = free ? [1, 2, 3, 4, BOW, NET, STAFF] : [1, 2, 4, NET, STAFF];
     // 활을 처음 받으면 빈 퀵슬롯에 넣어 준다 (한 번만). 테스트 서버에서는 들어올 때마다 화살통을 가득 채워 준다 (아직 화살을 얻는 곳이 없음)
     if (free && !store.get(localStorage, 'bowGiven')) {
       store.set(localStorage, 'bowGiven', '1');
@@ -1351,6 +1412,7 @@ function updateMe(dt) {
   const inp = input.read();
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
+  updateStats(dt);
   local.dodge -= dt; // 0 아래로 내려간 만큼이 쿨타임이 지난 시간
   // 잠자리채: 휘두르기 전에 곤충과의 거리를 맞추는 한 발
   if (local.netStep?.left > 0) {

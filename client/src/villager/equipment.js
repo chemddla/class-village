@@ -412,7 +412,7 @@ export const EQUIPMENT = {
   woodSword: { label: '목검', right: woodSword, carry: [-0.5, 0] },
   // 활은 시위가 팔 뒤쪽(몸 뒤 안쪽)으로 가게 세워 든다 (carryL: 왼손 소켓 회전을 직접 정함)
   bow: { label: '활', left: bow, back: quiver, carry: [0, 0], carryL: [-0.75, 0.75, 0.2] },
-  staff: { label: '마법 지팡이', right: staff, carry: [-1.35, 0] },
+  staff: { label: '마법 지팡이', right: staff, carry: [-0.3, 0] }, // 끝이 앞을 향하게 (살짝 위로)
 };
 const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'roll', 'wave', 'cheer']);
 

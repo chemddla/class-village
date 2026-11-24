@@ -65,6 +65,7 @@ const ACTS = {
   [ANIM.NET_SWING]: 'netSwing', [ANIM.NET_HIGH]: 'netHigh', [ANIM.NET_LOW]: 'netLow', [ANIM.FISH_CAST]: 'fishCast', [ANIM.FISH_WAIT]: 'fishWait', [ANIM.FISH_CATCH]: 'fishCatch', [ANIM.SLASH1]: 'swordSlash1', [ANIM.SLASH2]: 'swordSlash2', [ANIM.SLASH3]: 'swordSlash3', [ANIM.SLASH4]: 'swordSlash4',
   [ANIM.SLASH_AIR]: 'swordAir', [ANIM.SLASH_SLAM]: 'swordSlam', [ANIM.SLASH_DASH]: 'swordDash', [ANIM.ROLL]: 'roll',
   [ANIM.BOW_AIM]: 'bowAim', [ANIM.BOW_SHOT]: 'bowRelease', [ANIM.BOW_AIR]: 'bowAir', [ANIM.BOW_SLAM]: 'bowSlam', [ANIM.BOW_BACK]: 'bowBack',
+  [ANIM.STAFF_CAST]: 'staffBolt',
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
 const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP,

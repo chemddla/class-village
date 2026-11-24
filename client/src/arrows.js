@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { makeArrow, ARROW_LEN } from './villager/equipment.js';
 import { syncToon } from './villager/toon.js';
 import { curveDrop } from './materials.js';
-import { ARROW, WORLD, inField, isBlocked } from '../../shared/world.js';
+import { ARROW, BOLT, WORLD, inField, isBlocked } from '../../shared/world.js';
 
 const SCALE = 1.7; // 캐릭터 크기 배율 (character.js 와 같게)
 const OUTLINE_SCALE = 0.65;
@@ -14,6 +14,14 @@ const STUCK_TIME = 3; // 땅·나무에 박힌 채 남아 있는 시간 (초)
 const MAX = 40; // 한꺼번에 있을 수 있는 화살 수 (넘으면 오래된 것부터 치운다)
 
 const v = new THREE.Vector3();
+// 마법 에너지 볼: 빛나는 공 + 흐린 겉껍질 (조명 없이도 밝게). 모든 볼이 같은 모양·재질을 나눠 쓴다
+const BOLT_GEO = [new THREE.SphereGeometry(0.09, 12, 8), new THREE.SphereGeometry(0.16, 12, 8)];
+const BOLT_MAT = [new THREE.MeshBasicMaterial({ color: '#e8fbff' }), new THREE.MeshBasicMaterial({ color: '#4fc3ff', transparent: true, opacity: 0.45, depthWrite: false })];
+function makeBolt() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 2; i++) g.add(new THREE.Mesh(BOLT_GEO[i], BOLT_MAT[i]));
+  return g;
+}
 
 // 화살이 날아가다 막히는 곳: 마을은 나무·바위·건물 둘레(강·바다 위는 지나간다), 들판은 들판 벽
 const blocked = (x, z) => (inField(x, z) ? isBlocked(x, z, 0) : WORLD.colliders.some((c) => Math.hypot(x - c.x, z - c.z) < c.r));
@@ -24,7 +32,7 @@ export function createArrows(scene, hit) {
 
   function remove(a) {
     scene.remove(a.mesh);
-    a.mesh.traverse((x) => x.geometry?.dispose()); // 재질은 두어 셰이더를 다시 컴파일하지 않게 (equipment.js attachEquipment 참고)
+    if (!a.bolt) a.mesh.traverse((x) => x.geometry?.dispose()); // 재질은 두어 셰이더를 다시 컴파일하지 않게 (equipment.js attachEquipment 참고)
     list.splice(list.indexOf(a), 1);
   }
 
@@ -40,19 +48,22 @@ export function createArrows(scene, hit) {
 
   return {
     // char: 쏜 캐릭터 (Character), mine: 내 캐릭터가 쐈는지, pitch: 아래로 기울여 쏘는 각 (점프 공격)
-    shoot(char, mine, pitch = 0) {
-      const mesh = makeArrow();
-      mesh.scale.setScalar(SCALE);
-      syncToon(mesh, true, OUTLINE_SCALE);
+    // bolt: 화살 대신 지팡이 끝에서 마법 에너지 볼 (떨어지지 않고 곧게 날아가며, 막히면 꽂히지 않고 사라진다)
+    shoot(char, mine, pitch = 0, bolt = false) {
+      const mesh = bolt ? makeBolt() : makeArrow();
+      if (!bolt) {
+        mesh.scale.setScalar(SCALE);
+        syncToon(mesh, true, OUTLINE_SCALE);
+      }
       const dir = new THREE.Vector3(Math.sin(char.targetRot) * Math.cos(pitch), -Math.sin(pitch), Math.cos(char.targetRot) * Math.cos(pitch));
       // 활 손잡이 자리에서 출발 (화살 꼬리가 원점이므로 반 길이만큼 뒤에서)
-      const at = char.villager.rig.leftSocket.getWorldPosition(new THREE.Vector3());
+      const at = char.villager.rig[bolt ? 'rightSocket' : 'leftSocket'].getWorldPosition(new THREE.Vector3());
       // 활 손잡이는 조준선 위에 있다 (equipment.js bowDraw): 메긴 화살 자리 그대로 꼬리가 손잡이 조금 뒤에서 출발
       // 둥근 지평선: 땅과 캐릭터는 화면 가운데에서 멀수록 아래로 내려 그린다(curveDrop). 화살은 '평평한 땅 기준 높이'로 날리고
       // 그릴 때만 그 자리만큼 내린다 → 곧게 쏘아도 땅에서 떠오르지 않고 땅을 따라 날아간다
-      const pos = at.clone().addScaledVector(dir, -0.15);
+      const pos = at.clone().addScaledVector(dir, bolt ? 0.6 : -0.15); // 볼은 지팡이 길이만큼 앞(수정 끝)에서
       pos.y += curveDrop(at.x, at.z);
-      const a = { mesh, pos, vel: dir.multiplyScalar(ARROW.speed), dir: dir.clone().setY(0).normalize(), from: char, mine, flown: 0, stuck: -1 };
+      const a = { mesh, pos, vel: dir.clone().multiplyScalar(bolt ? BOLT.speed : ARROW.speed), dir: dir.clone().setY(0).normalize(), from: char, mine, flown: 0, stuck: -1, bolt };
       place(a);
       scene.add(mesh);
       list.push(a);
@@ -67,7 +78,7 @@ export function createArrows(scene, hit) {
           else place(a); // 화면이 움직이면 땅이 내려가는 정도도 바뀌므로 꽂힌 화살도 매번 다시 놓는다
           continue;
         }
-        a.vel.y -= GRAVITY * dt;
+        if (!a.bolt) a.vel.y -= GRAVITY * dt;
         const move = a.vel.length() * dt;
         const n = Math.max(1, Math.ceil(move / STEP));
         let done = false;
@@ -75,10 +86,11 @@ export function createArrows(scene, hit) {
           a.pos.addScaledVector(a.vel, dt / n);
           a.flown += move / n;
           // 화살촉 자리로 맞았는지 본다
-          const tip = v.copy(a.vel).normalize().multiplyScalar(ARROW_LEN * SCALE).add(a.pos);
+          const tip = a.bolt ? v.copy(a.pos) : v.copy(a.vel).normalize().multiplyScalar(ARROW_LEN * SCALE).add(a.pos);
           a.tip = tip.clone().setY(tip.y - curveDrop(tip.x, tip.z)); // 맞았는지는 화면에 그린 자리로 (캐릭터도 내려 그림)
           if (hit(a, a.from, a.mine)) { remove(a); done = true; break; }
-          if (tip.y <= 0.01 || blocked(tip.x, tip.z)) { // 평평한 땅 기준이라 땅 높이는 0
+          if (a.bolt && (tip.y <= 0.01 || blocked(tip.x, tip.z) || a.flown > BOLT.range)) { remove(a); done = true; } // 볼은 펑 사라진다
+          else if (tip.y <= 0.01 || blocked(tip.x, tip.z)) { // 평평한 땅 기준이라 땅 높이는 0
             // 땅·나무에 꽂혀 잠시 남는다 (촉이 조금 박히게)
             a.pos.addScaledVector(a.vel.clone().normalize(), 0.08);
             a.stuck = 0;

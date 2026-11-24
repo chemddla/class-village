@@ -54,6 +54,41 @@ button, input, textarea, select { font-family: inherit; }
   background: rgba(255, 250, 240, 0.9); padding: 6px 14px; border-radius: 999px;
   font-weight: 700; font-size: 15px; box-shadow: var(--shadow);
 }
+#hud { align-items: flex-start; }
+#hud .hud-right { display: flex; gap: 8px; }
+/* 체력·마나·기력: 아이콘 + 막대 + 숫자. 줄어든 만큼은 연한 잔상이 잠깐 남았다가 따라 줄어든다 */
+#stats { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px 8px 8px; border-radius: 18px; }
+#stats .stat { display: flex; align-items: center; gap: 6px; }
+#stats .ic { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; flex: none; }
+#stats .bar {
+  position: relative; width: 140px; height: 13px; border-radius: 999px; overflow: hidden;
+  background: #efe3cf; box-shadow: inset 0 1px 2px rgba(74, 53, 37, 0.25);
+}
+#stats .bar b, #stats .bar i { position: absolute; inset: 0 auto 0 0; width: 100%; border-radius: inherit; }
+#stats .bar b { background: #fffaf0; }
+#stats .bar i {
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+#stats em { width: 26px; text-align: right; font-style: normal; font-size: 12px; font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
+#stats .hp .ic { background: #fde1dd; }
+#stats .mp .ic { background: #dde9fb; }
+#stats .sp .ic { background: #fdf0cf; }
+#stats .hp i { background: linear-gradient(90deg, #e2574c, #ff8a6e); }
+#stats .mp i { background: linear-gradient(90deg, #3f7fd6, #6fb5ff); }
+#stats .sp i { background: linear-gradient(90deg, #eea21c, #ffd25a); }
+/* 얼마 안 남았을 때: 막대가 깜빡깜빡 */
+#stats .stat.low i { animation: stat-low 0.8s ease-in-out infinite; }
+#stats .stat.low em { color: #d9534f; }
+@keyframes stat-low { 50% { filter: brightness(1.35) saturate(0.7); } }
+/* 모자라서 못 썼을 때: 줄이 부르르 떨리고 빨갛게 번쩍 */
+#stats .stat.short .bar { animation: stat-short 0.35s ease-out; }
+@keyframes stat-short {
+  0% { transform: translateX(0); box-shadow: 0 0 0 2px #e2574c; }
+  25% { transform: translateX(-4px); }
+  50% { transform: translateX(4px); }
+  75% { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
 
 #joy-base {
   position: fixed; width: 130px; height: 130px; margin: -65px 0 0 -65px;
@@ -136,14 +171,14 @@ button, input, textarea, select { font-family: inherit; }
   border: none; background: var(--card); box-shadow: var(--shadow); border-radius: 999px;
   padding: 8px 14px; font-weight: 800; font-size: 15px; color: var(--ink); cursor: pointer;
 }
+#look-btn { top: max(144px, calc(env(safe-area-inset-top) + 132px)); } /* 오른쪽 줄: 가방 → 도감 → 꾸미기 */
 #look-panel {
-  position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); right: 12px;
+  position: fixed; top: max(188px, calc(env(safe-area-inset-top) + 176px)); right: 12px;
   width: min(300px, calc(100% - 24px)); max-height: calc(100% - 300px); overflow: auto; padding: 14px 16px;
 }
 #look-panel h3 { margin: 10px 0 6px; font-size: 14px; }
-#inv-btn { right: auto; left: 12px; }
 #inv-panel {
-  position: fixed; top: max(144px, calc(env(safe-area-inset-top) + 132px)); left: 12px; /* 도감 버튼 아래 */
+  position: fixed; top: max(188px, calc(env(safe-area-inset-top) + 176px)); right: 12px; /* 꾸미기 버튼 아래 */
   width: min(300px, calc(100% - 24px)); padding: 14px 16px;
 }
 #inv-panel h3 { margin: 0 0 8px; font-size: 14px; }
@@ -218,12 +253,12 @@ button, input, textarea, select { font-family: inherit; }
 
 /* 도감 */
 #dex-btn {
-  position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); left: 12px;
+  position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); right: 12px;
   border: none; background: var(--card); box-shadow: var(--shadow); border-radius: 999px;
   padding: 8px 14px; font-weight: 800; font-size: 15px; color: var(--ink); cursor: pointer;
 }
 #dex-panel {
-  position: fixed; top: max(144px, calc(env(safe-area-inset-top) + 132px)); left: 12px;
+  position: fixed; top: max(188px, calc(env(safe-area-inset-top) + 176px)); right: 12px;
   width: min(330px, calc(100% - 24px)); max-height: calc(100% - 300px); overflow: auto; padding: 14px 16px;
 }
 #dex-panel h3 { margin: 0 0 4px; font-size: 14px; }

@@ -41,12 +41,15 @@ export const ANIM = {
   BOW_AIM: 34, BOW_SHOT: 35, // 활: 공격키를 누르고 있는 동안 시위를 당겨 조준 · 떼면 놓아 쏘기
   NET_SWING: 36, NET_HIGH: 37, NET_LOW: 38, // 잠자리채 휘두르기: 가슴 높이 · 머리 위 · 발 앞 낮게 (곤충 채집)
   BOW_AIR: 39, BOW_SLAM: 40, BOW_BACK: 41, // 활 점프 공격(대각선 아래로) · 더블 점프 공격 · 달리기 공격(뒤돌아 쏘기)
+  STAFF_CAST: 42, // 마법 지팡이: 앞으로 찔러 마법 에너지 볼 날리기
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
-export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net']; // net: 잠자리채(+ 왼손 채집통)
+export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', 'staff']; // net: 잠자리채(+ 왼손 채집통)
 // 활: 화살통에 넣고 다니는 화살 최대 개수 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
 export const ARROW = { max: 30, speed: 24, range: 20 };
+// 마법 지팡이: 에너지 볼 한 발에 드는 마나 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
+export const BOLT = { cost: 12, speed: 14, range: 16 };
 export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이·목검)는 인벤토리에서 꺼냄
 // 테스트 서버에서 광장에 놓는 생활 체험용 나무
 export const LIFE_SPOTS = [
