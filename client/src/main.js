@@ -139,6 +139,8 @@ let me = null; // 내 캐릭터
 const others = new Map(); // sessionId → { char, buf }
 // act: 지금 하는 잠깐 동작(ANIM 번호), actLeft: 남은 시간, tool: 지금 손에 든 도구 번호,
 // equip: 퀵슬롯에서 고른 장비 번호 (생활 행동 중에는 그 일에 맞는 도구를 잠깐 들었다가, 끝나면 다시 이것으로 돌아온다)
+// 방향키가 가리키는 땅 위 방향의 기준 각도. V 로 맞추는 동안은 도착할 각도를 써서, 카메라가 도는 동안 캐릭터가 따라 돌지 않게
+const moveYaw = () => local.recenter ?? cam.yaw;
 const local = { dodge: -1, dodgeRot: 0, sendTimer: 0, act: ANIM.IDLE, actLeft: 0, tool: 0, equip: 0, last: null, hurt: 0, lifeTimer: 0, picked: null, fishing: null };
 // 휘두르기 시작 → 내려찍는 순간 (동작 길이 × hitAt): 1타 0.72초 × 0.5, 이어 치는 2타·4타 0.62초 × 0.5, 3타(야구 스윙) 0.78초 × 0.5
 const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 390, [ANIM.SMASH4]: 310, [ANIM.SMASH_AIR]: 190, [ANIM.SMASH_SLAM]: 400, [ANIM.SMASH_DASH]: 300,
@@ -1347,7 +1349,7 @@ const input = createInput({
     if (!me) return;
     if (name === 'attack') name = clickAction();
     if (!name) return;
-    if (name === 'behind') { local.recenter = true; return; } // V: 카메라를 등 뒤로 (스르르 돌아감)
+    if (name === 'behind') { local.recenter = me.targetRot + Math.PI; return; } // V: 누른 순간 보던 쪽의 등 뒤로 스르르 (그 뒤에 돌아도 따라가지 않음)
     if (name === 'jump') {
       // 더블 점프: 떠 있는 동안 한 번 더 누르면 앞으로 공중제비
       const up = actTime(ANIM.JUMP) - local.actLeft;
@@ -1365,7 +1367,7 @@ const input = createInput({
       local.dodge = DODGE.time;
       const inp = input.read();
       local.dodgeRot = inp.mag > 0
-        ? Math.atan2(inp.x * Math.cos(cam.yaw) + inp.z * Math.sin(cam.yaw), -inp.x * Math.sin(cam.yaw) + inp.z * Math.cos(cam.yaw))
+        ? Math.atan2(inp.x * Math.cos(moveYaw()) + inp.z * Math.sin(moveYaw()), -inp.x * Math.sin(moveYaw()) + inp.z * Math.cos(moveYaw()))
         : me.targetRot;
       me.setPose(me.x, me.z, local.dodgeRot);
     }
@@ -1452,7 +1454,7 @@ const input = createInput({
     }
   },
   onOrbit(dx, dy) {
-    local.recenter = false; // 손으로 돌리면 V 로 돌아가던 것은 그만
+    local.recenter = null; // 손으로 돌리면 V 로 돌아가던 것은 그만
     camGoal.yaw -= dx * 0.006;
     camGoal.pitch = THREE.MathUtils.clamp(camGoal.pitch + dy * 0.004, 0.3, 1.3);
     saveCam();
@@ -1836,7 +1838,7 @@ if (store.get(sessionStorage, 'joined') && store.get(localStorage, 'name')) {
 // 활 조준·지팡이 기 모으기: 방향키를 누르면 그쪽으로 BOW_AIM_TURN 빠르기로 천천히 돌아선다 (걷지는 않는다)
 function aimTurn(inp, dt) {
   if (local.hurt > 0 || inp.mag <= 0) return;
-  const want = Math.atan2(inp.x * Math.cos(cam.yaw) + inp.z * Math.sin(cam.yaw), -inp.x * Math.sin(cam.yaw) + inp.z * Math.cos(cam.yaw));
+  const want = Math.atan2(inp.x * Math.cos(moveYaw()) + inp.z * Math.sin(moveYaw()), -inp.x * Math.sin(moveYaw()) + inp.z * Math.cos(moveYaw()));
   const diff = Math.atan2(Math.sin(want - me.targetRot), Math.cos(want - me.targetRot)); // -π~π 사이로 줄인 남은 각도
   const step = BOW_AIM_TURN * dt;
   me.setPose(me.x, me.z, me.targetRot + THREE.MathUtils.clamp(diff, -step, step));
@@ -1910,8 +1912,8 @@ function updateMe(dt) {
     if (local.act === ANIM.BOW_AIM) aimTurn(inp, dt);
   } else if (inp.mag > 0 && local.hurt <= 0) {
     // 화면 기준 방향을 카메라가 돈 만큼 돌려 땅 위 방향으로
-    const c = Math.cos(cam.yaw);
-    const sn = Math.sin(cam.yaw);
+    const c = Math.cos(moveYaw());
+    const sn = Math.sin(moveYaw());
     const wx = inp.x * c + inp.z * sn;
     const wz = -inp.x * sn + inp.z * c;
     const speed = inp.run ? RUN_SPEED : WALK_SPEED * Math.max(0.45, inp.mag);
@@ -2159,11 +2161,11 @@ function frame() {
   if (me) camTarget.lerp(camWant.set(me.x, 0, me.z), 1 - Math.exp(-dt * 5));
   else camTarget.set(Math.sin(now / 6000) * 6, 0, 3 + Math.cos(now / 6000) * 4); // 입장 전: 천천히 둘러보기
   // V: 카메라가 등 뒤로 돌아간다. 스프링(임계 감쇠)이라 스르르 빨라졌다 스르르 멈춘다.
-  // 목표는 바로 바뀌는 targetRot 말고 몸이 실제로 돌아간 각도 (돌아서는 중에 눌러도 덜컥하지 않게)
-  if (me && local.recenter) {
-    const diff = me.root.rotation.y + Math.PI - cam.yaw;
+  // 목표는 V 를 누른 순간 정해진다: 맞추는 동안 캐릭터가 돌아도 카메라가 쫓아 돌지 않는다
+  if (me && local.recenter != null) {
+    const diff = local.recenter - cam.yaw;
     const w = RECENTER_RATE;
-    if (Math.abs(Math.atan2(Math.sin(diff), Math.cos(diff))) < 0.01) { local.recenter = false; saveCam(); }
+    if (Math.abs(Math.atan2(Math.sin(diff), Math.cos(diff))) < 0.01) { local.recenter = null; saveCam(); }
     local.yawVel = (local.yawVel ?? 0) + (Math.atan2(Math.sin(diff), Math.cos(diff)) * w * w - 2 * w * (local.yawVel ?? 0)) * realDt;
     camGoal.yaw = cam.yaw += local.yawVel * realDt; // 스프링이 이미 부드러우니 목표도 함께 옮긴다
   } else if (local.yawVel) { local.yawVel *= Math.exp(-realDt * 6); camGoal.yaw = cam.yaw += local.yawVel * realDt; } // 멈출 때도 스르르
