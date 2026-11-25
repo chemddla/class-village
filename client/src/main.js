@@ -14,7 +14,7 @@ import { createLookEditor } from './look-editor.js';
 import { createMinimap } from './minimap.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
-import { setCurveCenter, curveDrop } from './materials.js';
+import { setCurveCenter, curveDrop, HOLE } from './materials.js';
 import { FX } from './fx.js';
 import { createPlazaMonsters } from './monsters/plaza-monsters.js';
 import { createArrows } from './arrows.js';
@@ -76,10 +76,15 @@ const camTarget = new THREE.Vector3(0, 0, 3);
 let camScale = 1;
 // 시점: 마우스 왼쪽 끌기로 돌리기(yaw)·기울기(pitch), 휠로 거리(zoom). 처음 값은 예전 고정 시점과 같음
 const cam = { yaw: 0, pitch: Math.atan2(12.5, 13.5), dist: Math.hypot(12.5, 13.5), zoom: 1 };
+const RECENTER_RATE = 5; // V 로 등 뒤로 돌아갈 때 스프링 세기 (약 0.6초)
 // 새로고침해도 카메라 각도·거리는 그대로 (이 탭에만 기억)
 try { Object.assign(cam, JSON.parse(store.get(sessionStorage, 'cam') ?? '{}')); } catch { /* 처음 */ }
-const saveCam = () => store.set(sessionStorage, 'cam', JSON.stringify({ yaw: cam.yaw, pitch: cam.pitch, zoom: cam.zoom }));
+// 마우스 끌기·휠은 여기(목표)만 바꾸고 cam 은 장면마다 스르르 따라간다: 마우스 신호는 장면과 박자가 안 맞아 바로 넣으면 툭툭 끊긴다
+const camGoal = { yaw: cam.yaw, pitch: cam.pitch, zoom: cam.zoom };
+const CAM_EASE = 14; // 클수록 손을 바로 따라옴 (1/s)
+const saveCam = () => store.set(sessionStorage, 'cam', JSON.stringify(camGoal));
 const camOffset = new THREE.Vector3();
+const camWant = new THREE.Vector3();
 
 function resize() {
   const w = innerWidth;
@@ -1342,6 +1347,7 @@ const input = createInput({
     if (!me) return;
     if (name === 'attack') name = clickAction();
     if (!name) return;
+    if (name === 'behind') { local.recenter = true; return; } // V: 카메라를 등 뒤로 (스르르 돌아감)
     if (name === 'jump') {
       // 더블 점프: 떠 있는 동안 한 번 더 누르면 앞으로 공중제비
       const up = actTime(ANIM.JUMP) - local.actLeft;
@@ -1446,12 +1452,13 @@ const input = createInput({
     }
   },
   onOrbit(dx, dy) {
-    cam.yaw -= dx * 0.006;
-    cam.pitch = THREE.MathUtils.clamp(cam.pitch + dy * 0.004, 0.3, 1.3);
+    local.recenter = false; // 손으로 돌리면 V 로 돌아가던 것은 그만
+    camGoal.yaw -= dx * 0.006;
+    camGoal.pitch = THREE.MathUtils.clamp(camGoal.pitch + dy * 0.004, 0.3, 1.3);
     saveCam();
   },
   onZoom(dy) {
-    cam.zoom = THREE.MathUtils.clamp(cam.zoom * Math.exp(dy * 0.0012), 0.2, 3);
+    camGoal.zoom = THREE.MathUtils.clamp(camGoal.zoom * Math.exp(dy * 0.0012), 0.2, 3);
     saveCam();
   },
 });
@@ -1784,6 +1791,7 @@ function enterGame() {
   ui.actions.classList.remove('hidden');
   ui.hint.classList.remove('hidden');
   ui.invBtn.classList.remove('hidden');
+  $id('behind-btn').classList.remove('hidden');
   $id('dex-btn').classList.remove('hidden');
   $id('chat-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
@@ -2120,6 +2128,19 @@ let slowFor = 0;
 let fpsFrames = 0;
 let fpsTime = 0;
 
+// 나무·건물이 내 캐릭터를 가리면 그 부분을 비쳐 보이게 (materials.js HOLE)
+const holeV = new THREE.Vector3();
+const holeSize = new THREE.Vector2();
+function updateHole() {
+  if (!me) { HOLE.center.z = 0; return; }
+  holeV.set(me.x, 0.9, me.z).applyMatrix4(camera.matrixWorldInverse);
+  const depth = -holeV.z;
+  holeV.applyMatrix4(camera.projectionMatrix); // 화면 좌표(-1~1)
+  renderer.getDrawingBufferSize(holeSize);
+  HOLE.depth.value = depth;
+  HOLE.center.set((holeV.x * 0.5 + 0.5) * holeSize.x, (holeV.y * 0.5 + 0.5) * holeSize.y,
+    1.3 * holeSize.y * 0.5 / (Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * Math.max(depth, 0.5))); // 반지름 약 1.3m
+}
 function frame() {
   const rawDt = clock.getDelta();
   const realDt = Math.min(rawDt, 0.05);
@@ -2134,9 +2155,22 @@ function frame() {
   if (me) updateMe(dt);
   updateOthers(now);
 
-  // 카메라는 비스듬히 내려다보며 부드럽게 따라감
-  if (me) camTarget.lerp(new THREE.Vector3(me.x, 0, me.z), Math.min(1, dt * 5));
+  // 카메라는 부드럽게 따라감. exp 로 줄여야 장면 빠르기가 출렁여도 캐릭터가 화면에서 앞뒤로 떨리지 않는다
+  if (me) camTarget.lerp(camWant.set(me.x, 0, me.z), 1 - Math.exp(-dt * 5));
   else camTarget.set(Math.sin(now / 6000) * 6, 0, 3 + Math.cos(now / 6000) * 4); // 입장 전: 천천히 둘러보기
+  // V: 카메라가 등 뒤로 돌아간다. 스프링(임계 감쇠)이라 스르르 빨라졌다 스르르 멈춘다.
+  // 목표는 바로 바뀌는 targetRot 말고 몸이 실제로 돌아간 각도 (돌아서는 중에 눌러도 덜컥하지 않게)
+  if (me && local.recenter) {
+    const diff = me.root.rotation.y + Math.PI - cam.yaw;
+    const w = RECENTER_RATE;
+    if (Math.abs(Math.atan2(Math.sin(diff), Math.cos(diff))) < 0.01) { local.recenter = false; saveCam(); }
+    local.yawVel = (local.yawVel ?? 0) + (Math.atan2(Math.sin(diff), Math.cos(diff)) * w * w - 2 * w * (local.yawVel ?? 0)) * realDt;
+    camGoal.yaw = cam.yaw += local.yawVel * realDt; // 스프링이 이미 부드러우니 목표도 함께 옮긴다
+  } else if (local.yawVel) { local.yawVel *= Math.exp(-realDt * 6); camGoal.yaw = cam.yaw += local.yawVel * realDt; } // 멈출 때도 스르르
+  const ease = 1 - Math.exp(-realDt * CAM_EASE);
+  cam.yaw += (camGoal.yaw - cam.yaw) * ease;
+  cam.pitch += (camGoal.pitch - cam.pitch) * ease;
+  cam.zoom *= (camGoal.zoom / cam.zoom) ** (ease * 0.7); // 거리는 배율로 (가까울 때·멀 때 똑같은 느낌), 조금 더 느긋하게
   const d = cam.dist * camScale * cam.zoom;
   camOffset.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
   camera.position.copy(camTarget).addScaledVector(camOffset, d);
@@ -2162,6 +2196,7 @@ function frame() {
   // 화면 밖 학생은 숨기고 움직이지도 않는다 (숨기지 않으면 보이지 않아도 매 장면 뼈대를 계산한다).
   // 동작 중이면 화면 밖이어도 움직인다: 화면 밖에서 쏜 화살·휘두른 타격이 그 동작의 '맞는 순간'에 나온다
   camera.updateMatrixWorld();
+  updateHole();
   viewFrustum.setFromProjectionMatrix(viewMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
   // 내게서 FAR_ANIM(m)보다 먼 학생은 두 장면에 한 번만 움직인다 (그동안 흐른 시간을 모아서): 팔·도구 자세 계산이 한 명당 0.2ms 라 여럿이면 크다
   frameNo++;

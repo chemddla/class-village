@@ -7,7 +7,12 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 export const CURVE = { strength: 0.0065, center: new THREE.Vector2(0, 0), yaw: new THREE.Vector2(0, 1) };
 // 풀잎 흔들림·구름 그림자·물결이 함께 쓰는 시간(초)
 export const TIME = { value: 0 };
+// 캐릭터를 가리는 것 뚫어 보기: 화면에서 캐릭터 둘레(xy 픽셀, z 반지름 픽셀) 안에 있으면서 캐릭터보다 카메라에 가까운 것은
+// 점점이 비워 비쳐 보이게 한다. 나무는 한 재질을 여러 그루가 나눠 쓰는 InstancedMesh 라 재질 투명도 대신 셰이더에서 거른다
+export const HOLE = { center: new THREE.Vector3(0, 0, 0), depth: { value: 0 } };
 const uniforms = {
+  uHole: { value: HOLE.center },
+  uHoleDepth: HOLE.depth,
   uCurve: { value: CURVE.strength },
   uCurveCenter: { value: CURVE.center },
   uCurveYaw: { value: CURVE.yaw },
@@ -90,13 +95,21 @@ transformed += sDir;`;
 function addCurve(material, pre = '', key = 'curved', { clouds = false } = {}) {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
+    // 땅(y<0.25)은 거르지 않는다: 발 앞 땅은 늘 캐릭터보다 가깝다. 구멍 안도 30%는 남겨 무엇이 있는지는 보이게
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uHole;\nuniform float uHoleDepth;\nvarying float vHoleZ;\nvarying float vHoleY;')
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+if (uHole.z > 0.0 && vHoleY > 0.25 && vHoleZ < uHoleDepth - 0.7) {
+  float keep = mix(0.3, 1.0, smoothstep(0.55, 1.0, length(gl_FragCoord.xy - uHole.xy) / uHole.z));
+  if (keep < fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
+}`);
     if (clouds) {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>\n${CLOUD_GLSL}`)
         .replace('#include <fog_fragment>', 'gl_FragColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.85, 0.96), cloudShade(vCvWorld));\n#include <fog_fragment>');
     }
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uCurve;\nuniform vec2 uCurveCenter;\nuniform vec2 uCurveYaw;\nuniform float uTime;\nvarying vec2 vCvWorld;')
+      .replace('#include <common>', '#include <common>\nuniform float uCurve;\nuniform vec2 uCurveCenter;\nuniform vec2 uCurveYaw;\nuniform float uTime;\nvarying vec2 vCvWorld;\nvarying float vHoleZ;\nvarying float vHoleY;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${pre}`)
       .replace(
         '#include <project_vertex>',
@@ -109,12 +122,14 @@ function addCurve(material, pre = '', key = 'curved', { clouds = false } = {}) {
 #endif
 vec4 cvWorld = modelMatrix * mvPosition;
 vCvWorld = cvWorld.xz;
+vHoleY = cvWorld.y;
 float cvDz = cvWorld.z - uCurveCenter.y;
 float cvDx = cvWorld.x - uCurveCenter.x;
 float cvF = cvDx * uCurveYaw.x + cvDz * uCurveYaw.y;
 float cvS = cvDx * uCurveYaw.y - cvDz * uCurveYaw.x;
 cvWorld.y -= (cvF * cvF * 0.8 + cvS * cvS * 0.25) * uCurve;
 mvPosition = viewMatrix * cvWorld;
+vHoleZ = -mvPosition.z;
 gl_Position = projectionMatrix * mvPosition;`,
       );
   };
