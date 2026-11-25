@@ -301,7 +301,7 @@ export function makeArrow() {
   part(new THREE.CylinderGeometry(0.0035, 0.0035, 0.3, 6).rotateX(PI / 2), mat('#e7c39b'), arrow, '화살대', [0, 0, 0.15]);
   part(new THREE.ConeGeometry(0.014, 0.045, 8).rotateX(PI / 2), METAL(), arrow, '화살촉', [0, 0, 0.3225]); // 굵은 촉 (대 끝 0.3 ~ 0.345)
   for (const r of [0, PI / 2]) {
-    const f = part(fletchGeometry(), new THREE.MeshStandardMaterial({ color: '#f28aa0', side: THREE.DoubleSide }), arrow, '깃');
+    const f = part(fletchGeometry(), new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide }), arrow, '깃');
     f.rotation.z = r;
   }
   // 윤곽선 두께를 부품마다 같게 (크기로 정하면 길쭉한 화살대만 두껍고 촉·깃은 가늘어 들쭉날쭉하다)
@@ -744,7 +744,9 @@ function twoHandGrip(rig, y, w, dt, aim) {
   // 4) 두 팔을 뻗어 쥔다. 도구는 오른손에 붙어 있으므로 왼손은 오른손이 실제로 간 곳의 자루를 쥔다
   // 쥐는 중·놓는 중(w < 1)에는 관절 각도를 섞지 않고 '손이 갈 자리'를 섞는다: 애니메이션만의 손 자리 → 쥘 자리.
   // (각도를 섞으면 두 자세가 많이 다를 때 중간에서 팔이 휙 뒤집히며 손이 튄다)
-  const wq = Math.min(1, w * 5); // 팔꿈치 방향만 처음에 잠깐 섞어 준다
+  // 팔꿈치 방향만 처음에 잠깐 섞어 준다. 꺾이지 않는 곡선으로: min(1, w × 5) 처럼 w = 0.2 에서 꺾이면
+  // 놓는 도중 그 순간에 섞는 빠르기가 갑자기 바뀌어 팔이 툭 튄다
+  const wq = 1 - (1 - Math.min(1, w / 0.3)) ** 2;
   const Qw = Q0.clone().slerp(Q, w);
   // 쥐러 가는 길·놓고 돌아오는 길은 몸 앞으로 둥글게 돌아간다: 옆구리 옆의 손과 가슴 앞의 쥘 자리를 곧장 이으면 손이 배를 뚫고 지나간다
   const arc = V(0, 0, 1).applyQuaternion(torsoQ).multiplyScalar(0.07 * scale * Math.sin(Math.PI * w));
@@ -773,43 +775,6 @@ function twoHandGrip(rig, y, w, dt, aim) {
   // 왼손은 오른손 방향을 그대로 베끼지 않고, 왼팔이 오는 쪽에 맞춰 자루를 감싼다
   const gL = sock.localToWorld(V(0, 0, y));
   hold('L', L0.lerp(gL, w).addScaledVector(arc, 1 - w), handL0.slerp(gripQuat(V(0, 0, 1).applyQuaternion(sock.getWorldQuaternion(qA)), SL, gL, up, inward.L), w));
-}
-
-// ── 왼손이 이끄는 한 손 쥐기 (야구 마무리) ──
-// 도구는 오른손(rightSocket)에 붙어 있지만, 오른손을 놓은 동안에는 도구 자리를 왼손 기준으로 따로 정한다:
-// 왼팔을 aim.pos(몸통 기준, 왼손이 쥘 자루 자리)로 뻗어 쥐고, 도구는 그 주먹에서 자루를 따라 aim.dir 쪽으로 뻗게 놓는다.
-// w: 0 이면 오른손이 쥔 원래 자리, 1 이면 왼손이 이끄는 자리 (사이는 섞는다: 놓는 순간·돌려주는 순간 도구가 튀지 않게)
-// y: 두 손 쥐기에서 왼손이 쥐는 자루 자리 (도구 공간, 오른손 = 0)
-function leftLeadGrip(rig, y, aim) {
-  const w = aim.w ?? 1;
-  const torso = rig.shoulderL.parent;
-  const sock = rig.rightSocket;
-  const tool = sock.children[0];
-  if (!tool) return;
-  const torsoQ = torso.getWorldQuaternion(new THREE.Quaternion());
-  const SL = rig.shoulderL.getWorldPosition(V());
-  const up = V(0, 1, 0).applyQuaternion(torsoQ);
-  const inwardL = V(-1, 0.35, 0).normalize().applyQuaternion(torsoQ);
-  const gL = torso.localToWorld(V(...aim.pos));
-  const D = V(...aim.dir).normalize().applyQuaternion(torsoQ);
-  // 1) 왼팔: 그 자리를 감싸 쥔다 (지금 왼손 자리에서 w 만큼 섞어 간다)
-  const L0 = rig.leftSocket.getWorldPosition(V());
-  const hq0 = rig.handL.getWorldQuaternion(new THREE.Quaternion());
-  const hq = gripQuat(D, SL, gL, up, inwardL);
-  armIK(rig, 'L', L0.lerp(gL, w), hq0.slerp(hq, w), 1, GRIP_POLE.L);
-  // 2) 도구: 실제로 간 왼손 자리에서 자루를 따라 오른손 자리(자루 위쪽)를 구하고, 그 자리에 오른손 소켓이 있는 것처럼 놓는다
-  if (!tool.userData.leadBase) { tool.updateMatrix(); tool.userData.leadBase = tool.matrix.clone(); }
-  const Lw = rig.leftSocket.getWorldPosition(V());
-  const ss = sock.getWorldScale(V()); // 손 안 소켓의 크기 (어깨와 다를 수 있다)
-  const want = new THREE.Matrix4().compose(Lw.addScaledVector(D, -y * ss.z), hq, ss).multiply(tool.userData.leadBase);
-  const have = sock.matrixWorld.clone().multiply(tool.userData.leadBase);
-  const p0 = V(), q0 = new THREE.Quaternion(), p1 = V(), q1 = new THREE.Quaternion(), sc = V();
-  have.decompose(p0, q0, sc);
-  want.decompose(p1, q1, sc);
-  const mixed = new THREE.Matrix4().compose(p0.lerp(p1, w), q0.slerp(q1, w), sc);
-  tool.matrix.copy(sock.matrixWorld).invert().multiply(mixed).decompose(tool.position, tool.quaternion, tool.scale);
-  tool.updateMatrixWorld(true);
-  rig.leadOn = true;
 }
 
 // ── 한 손 쥐기: 한손검처럼 오른손 하나로 휘두르는 동작 ──
@@ -854,7 +819,7 @@ function oneHandGrip(rig, w, aim) {
   const Q0 = rig.handR.getWorldQuaternion(new THREE.Quaternion());
   const Pw = P0.lerp(P, w);
   const hq = Q0.clone().slerp(fist, w);
-  const wq = Math.min(1, w * 5);
+  const wq = 1 - (1 - Math.min(1, w / 0.3)) ** 2; // 꺾이지 않게 (두 손 쥐기와 같은 까닭)
   // 팔꿈치가 굽는 쪽: 동작이 정한 방향(aim.pole)을 바탕으로, 손목이 손등·손바닥 쪽으로 꺾이지 않는 자리를 고른다 (elbowPole)
   // armIK 는 팔꿈치 방향을 몸통 기준으로 받는다
   // fixPole: 팔꿈치를 동작이 정한 쪽에 그대로 둔다 (찌르기: 팔꿈치를 바깥으로 벌려야 칼끝이 수평으로 선다)
@@ -1107,6 +1072,16 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
   else if (fx.twoHand) rig.lastAim = null; // 자리를 직접 정하지 않는 다른 두 손 동작이 시작되면 잊는다
   if (grip != null && rig.twoHandW > 0.001) twoHandGrip(rig, grip, rig.twoHandW, dt, rig.lastAim ?? null);
   else { rig.toolFix = null; rig.lastAim = null; } // 두 손 쥐기가 끝나면 밀어낸 기록을 지운다
+  // 쥐고 놓는 사이(0 < w < 1)에는 팔 관절을 앞 장면과 살짝 섞어 다듬는다: 이 사이에는 손목 한계에 맞추는 되풀이가
+  // 장면마다 다른 횟수로 끝나 팔이 앞뒤로 덜덜 떤다 (휘두르는 동안 꽉 쥔 때는 섞지 않아 타격이 뭉개지지 않는다)
+  const easing = grip != null && rig.twoHandW > 0.001 && rig.twoHandW < 0.97;
+  const prevArm = rig.armShown;
+  if (easing && prevArm) {
+    const k = 1 - Math.exp(-30 * dt);
+    ARM_JOINTS.forEach((j, n) => rig[j].quaternion.copy(prevArm[n].slerp(rig[j].quaternion, k)));
+    rig.shoulderL.parent.updateMatrixWorld(true);
+  }
+  rig.armShown = ARM_JOINTS.map((j) => rig[j].quaternion.clone());
   // 한 손 쥐기 (한손검): 쥘 때는 빠르게, 놓을 때는 조금 느긋하게. 놓는 동안에는 마지막 자리를 기준으로 삼는다
   if (fx.oneHand) rig.oneAim = fx.oneHand;
   // oneHand.w: 동작이 쥐는 정도를 직접 정한다 (서서히 놓아 평소 들고 다니는 자세로 녹아들게. 잠자리채 휘두른 뒤)
@@ -1121,13 +1096,6 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
   else rig.armBase = null;
   if (fx.armSettle != null && !fx.armHold) settleArm(rig, fx.armSettle);
   else rig.settleBase = null;
-  // 왼손이 도구를 이끈다 (야구 마무리: 위쪽 오른손을 놓고 아래쪽 왼손 하나로 몽둥이를 넘긴다)
-  if (fx.leftLead && (fx.leftLead.w ?? 1) > 0.001) leftLeadGrip(rig, EQUIPMENT[equipment]?.twoHand ?? 0, fx.leftLead);
-  else if (rig.leadOn) { // 끝나면 도구를 오른손 안 제자리로 (w 를 0 까지 내린 뒤라 움직임은 없다)
-    rig.leadOn = false;
-    const tool = rig.rightSocket.children[0];
-    if (tool?.userData.leadBase) tool.matrix.copy(tool.userData.leadBase).decompose(tool.position, tool.quaternion, tool.scale);
-  }
   // 활 당기기: 두 팔을 조준선 위에 놓는다 (시위·화살은 아래에서 오른손을 따라간다)
   if ((fx.bowL ?? 0) > 0.001 || (fx.bowR ?? 0) > 0.001) bowDraw(rig, root, fx.bowL ?? 0, fx.bowR ?? 0, fx.draw ?? 0, fx.bowPitch ?? 0, fx.drop ?? 0);
   for (const sock of [rig.rightSocket, rig.leftSocket]) {

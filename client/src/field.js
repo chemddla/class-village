@@ -38,8 +38,8 @@ function dirt(x, z) {
 }
 
 function buildGround() {
-  const size = 96;
-  const seg = 192;
+  const size = 2 * FIELD.r + 42; // 들판 + 둘레 숲까지
+  const seg = Math.round(size / 0.5);
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2).translate(FIELD.x, 0, FIELD.z);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -92,7 +92,7 @@ const TREE_CELL = 20;
 function buildTrees(group, low) {
   const rand = seeded(20261124);
   const list = FIELD_MAP.trees.map((t) => ({ ...t, look: t.kind === 1 ? 1 : 0 }));
-  const ring = low ? 120 : 200;
+  const ring = low ? 240 : 400;
   for (let i = 0; i < ring; i++) {
     const a = (i / ring) * Math.PI * 2 + rand() * 0.03;
     const ux = Math.cos(a);
@@ -204,8 +204,8 @@ function buildMeadow(group, low) {
   }
   const tuftGeo = mergeGeometries(blades);
   const tufts = [];
-  const want = low ? 260 : 520;
-  for (let tries = 0; tufts.length < want && tries < 6000; tries++) {
+  const want = low ? 1040 : 2080;
+  for (let tries = 0; tufts.length < want && tries < 24000; tries++) {
     const x = FIELD.x + (rand() * 2 - 1) * FIELD.r;
     const z = FIELD.z + (rand() * 2 - 1) * FIELD.r;
     if (noise(x * 1.7, z * 1.7) < 0.5 || !grassy(x, z)) continue; // 무리 지어
@@ -225,7 +225,7 @@ function buildMeadow(group, low) {
   const stem = new THREE.CylinderGeometry(0.018, 0.024, 0.26, 5).translate(0, 0.13, 0);
   const head = paint(new THREE.SphereGeometry(0.07, 8, 5).scale(1, 0.45, 1).translate(0, 0.27, 0), 0xffffff);
   const flowers = [];
-  for (let tries = 0; flowers.length < (low ? 120 : 220) && tries < 4000; tries++) {
+  for (let tries = 0; flowers.length < (low ? 480 : 880) && tries < 16000; tries++) {
     const x = FIELD.x + (rand() * 2 - 1) * FIELD.r;
     const z = FIELD.z + (rand() * 2 - 1) * FIELD.r;
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.7 + rand() * 0.5 });

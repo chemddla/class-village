@@ -186,8 +186,9 @@ class Streaks {
   }
 
   // target(out): 모이는 자리를 out 에 담아 돌려준다 (매 장면 다시 물어 움직이는 몽둥이를 따라간다). alive(): false 가 되면 그만
-  start(target, { dur = 0.16, rate = 70, radius = [0.8, 1.3], life = 0.16, alive = () => true } = {}) {
-    this.gathers.push({ target, dur, rate, radius, life, alive, t: 0, acc: 0 });
+  // colors: 줄기 색 (없으면 노란 기)
+  start(target, { dur = 0.16, rate = 70, radius = [0.8, 1.3], life = 0.16, alive = () => true, colors = STREAK_COLORS } = {}) {
+    this.gathers.push({ target, dur, rate, radius, life, alive, colors, t: 0, acc: 0 });
   }
 
   update(dt) {
@@ -200,7 +201,7 @@ class Streaks {
         const a = Math.random() * Math.PI * 2;
         const y = Math.random() * 1.5 - 0.5;
         const d = new THREE.Vector3(Math.cos(a), y, Math.sin(a)).normalize();
-        this.list.push({ g, d, r0: rnd(...g.radius), age: 0, life: g.life * rnd(0.85, 1.15), color: STREAK_COLORS[Math.floor(Math.random() * STREAK_COLORS.length)] });
+        this.list.push({ g, d, r0: rnd(...g.radius), age: 0, life: g.life * rnd(0.85, 1.15), color: g.colors[Math.floor(Math.random() * g.colors.length)] });
       }
       return g.t < g.dur;
     });

@@ -200,7 +200,8 @@ export function createArrows(scene, hit, onBurst) {
     // char: 쏜 캐릭터 (Character), mine: 내 캐릭터가 쐈는지, pitch: 아래로 기울여 쏘는 각 (점프 공격)
     // bolt: 화살 대신 지팡이 끝에서 마법 에너지 볼 (떨어지지 않고 곧게 날아가며, 막히면 꽂히지 않고 사라진다)
     // power: 화살 시위를 당긴 정도 0~1 (WEAK 참고), 볼은 크기 배수 (다 모아 쏘면 BOLT.big: 터지는 둘레도 그만큼)
-    shoot(char, mine, pitch = 0, bolt = false, power = 1) {
+    // opts.pierce: 맞힌 뒤에도 사라지지 않고 꿰뚫고 지나가는 횟수 · opts.dmg: 피해 배수 (활 강타)
+    shoot(char, mine, pitch = 0, bolt = false, power = 1, { pierce = 0, dmg = 1 } = {}) {
       const mesh = bolt ? makeBolt() : makeArrow();
       if (bolt) mesh.scale.setScalar(power);
       if (!bolt) {
@@ -230,7 +231,8 @@ export function createArrows(scene, hit, onBurst) {
       }
       pos.y += curveDrop(at.x, at.z);
       const a = { mesh, pos, vel: dir.clone().multiplyScalar(bolt ? BOLT.speed : ARROW.speed * (1 - (1 - WEAK.speed) * weak)), dir: dir.clone().setY(0).normalize(), from: char, mine, flown: 0, stuck: -1, bolt, size: bolt ? power : 1, off, age: 0,
-        gravity: GRAVITY + WEAK.gravity * weak ** 1.5 }; // 거의 다 당겼으면 조금만 더 떨어진다
+        gravity: GRAVITY + WEAK.gravity * weak ** 1.5, // 거의 다 당겼으면 조금만 더 떨어진다
+        pierce, dmg, struck: new Set() }; // struck: 이미 맞힌 대상 (꿰뚫고 지나가는 동안 다시 맞지 않게)
       place(a);
       scene.add(mesh);
       list.push(a);

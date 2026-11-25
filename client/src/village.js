@@ -27,8 +27,8 @@ function noise(x, z) {
 }
 
 function buildGround() {
-  const size = 110; // 섬 모서리(가운데에서 약 47m)까지 덮게
-  const seg = 245; // 0.45m 간격
+  const size = 2 * HALF + 60; // 섬 모서리(가운데에서 약 HALF + 55m)까지 덮게
+  const seg = Math.round(size / 0.5); // 0.5m 간격
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -157,10 +157,11 @@ function riverStrip(from, to, y, uScale, rows = 1, colorAt = null) {
   const uv = [];
   const col = [];
   const idx = [];
-  const n = 160;
+  const n = 320;
   const R = rows + 1;
+  const X = HALF + 18; // 섬 양쪽 바다 밑까지
   for (let i = 0; i <= n; i++) {
-    const x = -48 + (96 * i) / n;
+    const x = -X + (2 * X * i) / n;
     const zc = riverCenterZ(x);
     for (let r = 0; r <= rows; r++) {
       const v = r / rows;
@@ -225,7 +226,7 @@ function buildRiverDecor(group) {
   const rockMat = toon(0xa9a59b);
   const ringMat = basic(0xffffff, { transparent: true, opacity: 0.6, depthWrite: false });
   const rocks = [];
-  for (const [x, side] of [[-21, 1], [-12, -1], [-6.5, 1], [7, -1], [15, 1], [23, -1]]) {
+  for (const [x, side] of [[-52, -1], [-41, 1], [-31, -1], [-21, 1], [-12, -1], [-6.5, 1], [7, -1], [15, 1], [23, -1], [33, 1], [44, -1], [54, 1]]) {
     const zc = riverCenterZ(x) + side * (W - 0.55 - rand() * 0.4);
     for (let k = 0; k < 2; k++) {
       const s = k ? 0.18 + rand() * 0.08 : 0.3 + rand() * 0.12;
@@ -247,7 +248,7 @@ function buildRiverDecor(group) {
   const padMat2 = toon(0x86cf68);
   const flowerMat = toon(0xf6a8c8);
   const pads = [];
-  for (const [x, side] of [[-25, -1], [-16, 1], [-3.5, -1], [11, 1], [19, -1]]) {
+  for (const [x, side] of [[-47, 1], [-36, -1], [-25, -1], [-16, 1], [-3.5, -1], [11, 1], [19, -1], [29, -1], [39, 1], [50, -1]]) {
     const n = 3 + Math.floor(rand() * 3);
     for (let k = 0; k < n; k++) {
       const px = x + (rand() - 0.5) * 2.2;
@@ -678,7 +679,7 @@ function buildMeadow(group, { low = false } = {}) {
   // 들꽃: 마을 꽃(채집 대상) + 장식용 꽃
   const palette = [0xffa8c5, 0xfff08a, 0xffffff, 0xcdb4ff, 0xffbe94, 0xa8d8ff].map((c) => new THREE.Color(c));
   const flowers = WORLD.flowers.map((f) => ({ ...f }));
-  for (let tries = 0; flowers.length < (low ? 220 : 380) && tries < 3000; tries++) {
+  for (let tries = 0; flowers.length < (low ? 880 : 1520) && tries < 12000; tries++) {
     const x = (rand() * 2 - 1) * (HALF - 1.5);
     const z = (rand() * 2 - 1) * (HALF - 1.5);
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.6 + rand() * 0.5 });
@@ -949,11 +950,11 @@ function buildClouds(group) {
   const rand = seeded(77);
   const mat = basic(0xffffff, { vertexColors: true, fog: false });
   const shapes = [0, 1, 2].map(() => cloudGeometry(rand));
-  const SPAN = 85; // 이 범위를 벗어나면 반대편에서 다시 나타남
+  const SPAN = HALF + 55; // 이 범위를 벗어나면 반대편에서 다시 나타남
   const clouds = [];
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 36; i++) {
     const a = rand() * Math.PI * 2;
-    const r = 40 + rand() * 34; // 섬 바깥쪽 하늘
+    const r = HALF + 10 + rand() * 34; // 섬 바깥쪽 하늘
     const m = new THREE.Mesh(shapes[i % shapes.length], mat);
     const s = 2.2 + rand() * 2.2;
     m.scale.set(s, s * (0.8 + rand() * 0.3), s);
@@ -1314,7 +1315,7 @@ function buildFishShadows(group) {
     f.len = shadowLen(rollFish(f.kind, rand).size) * (0.92 + rand() * 0.16);
     for (const m of f.parts) m.scale.setScalar(f.len * m.userData.k);
     if (f.kind === 'river') {
-      f.rx = (rand() * 2 - 1) * 32;
+      f.rx = (rand() * 2 - 1) * (HALF + 2);
       f.off = (rand() * 2 - 1) * 1.1;
       f.v = (rand() < 0.5 ? -1 : 1) * (0.22 + rand() * 0.3); // 느긋하게 (m/초)
     } else {
@@ -1324,8 +1325,8 @@ function buildFishShadows(group) {
       f.v = (rand() < 0.5 ? -1 : 1) * (0.25 + rand() * 0.35);
     }
   }
-  for (let i = 0; i < 10; i++) fish.push(make('river', -0.045));
-  for (let i = 0; i < 40; i++) fish.push(make('sea', SEA_Y + 0.003)); // 섬 둘레가 길어서 넉넉히
+  for (let i = 0; i < 20; i++) fish.push(make('river', -0.045));
+  for (let i = 0; i < 80; i++) fish.push(make('sea', SEA_Y + 0.003)); // 섬 둘레가 길어서 넉넉히
   const showFish = (f, on) => { for (const m of f.parts) m.visible = on; };
   return {
     // 찌(bx, bz)를 입 앞에 둔 물고기 (입에서 NOTICE.dist 안, 헤엄치는 방향에서 NOTICE.angle 안) 중 가장 가까운 것

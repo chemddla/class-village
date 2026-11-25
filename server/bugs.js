@@ -2,7 +2,7 @@
 // 잠자리채에 잡힌다. 위치는 상태(state.bugs)로 모두에게 같게 보이고, 잡혔는지·도망갔는지는 서버가 정한다.
 import {
   ANIM, BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX, XP,
-  WORLD, PLAZA, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
+  WORLD, HALF, PLAZA, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
 } from '../shared/world.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -31,8 +31,8 @@ export function setupBugs(room, Bug, speedOf) {
   }
   function grassSpot(tries = 40) {
     for (let i = 0; i < tries; i++) {
-      const x = rnd(-29, 29);
-      const z = rnd(-29, 29);
+      const x = rnd(-(HALF - 1), HALF - 1);
+      const z = rnd(-(HALF - 1), HALF - 1);
       if (onGrass(x, z)) return [x, z];
     }
     return null;
@@ -44,7 +44,7 @@ export function setupBugs(room, Bug, speedOf) {
     const s = { sp, born: Date.now(), life: rnd(150, 300) * 1000, h: Math.random() * Math.PI * 2, fly: 0 };
     if (sp.move === 'fly') {
       if (sp.where === 'river') {
-        const x = rnd(-28, 28);
+        const x = rnd(-(HALF - 2), HALF - 2);
         s.hx = x;
         s.hz = riverCenterZ(x) + rnd(-1.5, 1.5);
         s.base = rnd(0.6, 1.1);
@@ -153,7 +153,7 @@ export function setupBugs(room, Bug, speedOf) {
         for (let i = 0; i < 10; i++) {
           const gx = s.hx + rnd(-5, 5);
           const gz = s.sp.where === 'river' ? riverCenterZ(gx) + rnd(-1.5, 1.5) : s.hz + rnd(-5, 5);
-          if (s.sp.where === 'river' ? Math.abs(gx) < 30 : onGrass(gx, gz)) { s.gx = gx; s.gz = gz; break; }
+          if (s.sp.where === 'river' ? Math.abs(gx) < HALF : onGrass(gx, gz)) { s.gx = gx; s.gz = gz; break; }
         }
       }
       const step = Math.min(1, (0.3 * dt) / (Math.hypot(s.gx - s.hx, s.gz - s.hz) || 1));

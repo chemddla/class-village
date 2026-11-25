@@ -9,7 +9,7 @@ import {
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
 import { buildField } from './field.js';
 import { Character, actTime, LAND, BOW_SLAM_LAND } from './character.js';
-import { BOW_PITCH, DIVE, DASH_RATE, bowDrawn } from './villager/actions.js';
+import { BOW_PITCH, BOW_STRIKE, DIVE, DASH_RATE, DAGGER_CHARGE, bowDrawn } from './villager/actions.js';
 import { LIFE, findTarget, findLife, findFruit, buildLifeSpots, fruitLeft, bugSpots } from './life.js';
 import { createLookEditor } from './look-editor.js';
 import { createMinimap } from './minimap.js';
@@ -149,7 +149,7 @@ const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 390, [
   [ANIM.SLASH_AIR]: 190, [ANIM.SLASH_SLAM]: 400, [ANIM.SLASH_DASH]: 300, // 목검 공중·내려베기·대시 (몽둥이와 같은 때)
   [ANIM.DAGGER1]: 184, [ANIM.DAGGER2]: 136, [ANIM.DAGGER3]: 207, [ANIM.DAGGER5]: 168, [ANIM.DAGGER4]: 184, // 나무 단검: 짧고 빠르게
   [ANIM.DAGGER_AIR]: 150, [ANIM.DAGGER_AIR2]: 120, [ANIM.DAGGER_DASH2]: 120 / DASH_RATE, [ANIM.DAGGER_SLAM]: (DIVE.raise + DIVE.time / DIVE.rate) * 1000 + 20, [ANIM.DAGGER_DASH]: 360 / DASH_RATE, // 단검 점프 베기 · 내려가며 베기(착지 때) · 대시 베기
-  [ANIM.STRIKE_CLUB]: 546, [ANIM.STRIKE_SWORD]: 462, [ANIM.STRIKE_DAGGER]: 260 }; // 강타: 몽둥이(1.02초 × 0.535) · 목검(1.1초 × 0.42) · 단검(0.62초 × 0.42)
+  [ANIM.STRIKE_CLUB]: 546, [ANIM.STRIKE_SWORD]: 500, [ANIM.STRIKE_DAGGER]: 260 + DAGGER_CHARGE.sec * 1000 }; // 강타: 몽둥이(1.02초 × 0.535) · 목검(1초 × 0.5) · 단검(0.62초 × 0.42 + 아래에서 기 모으는 시간)
 // 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 4타 → 2타 → 3타 → …
 // (3타는 야구 배트처럼 수평으로 크게 휘두르고, 4타는 3타에서 이어지도록 만든 1타. 서로의 끝 자세에서 시작해 끊기지 않는다)
 const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH4, [ANIM.SMASH4]: ANIM.SMASH2,
@@ -176,10 +176,10 @@ const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH,
   ANIM.BOW_AIR, ANIM.BOW_SLAM, ANIM.BOW_BACK, ANIM.STAFF_CAST, ANIM.STAFF_CHARGE, ANIM.STAFF_FIRE, ANIM.STAFF_BIG, // 활 점프·더블 점프·달리기 공격 · 지팡이
   ANIM.DAGGER1, ANIM.DAGGER2, ANIM.DAGGER3, ANIM.DAGGER4, ANIM.DAGGER5, ANIM.DAGGER_AIR, ANIM.DAGGER_SLAM, ANIM.DAGGER_DASH, ANIM.DAGGER_AIR2, ANIM.DAGGER_DASH2,
-  ANIM.STRIKE_CLUB, ANIM.STRIKE_SWORD, ANIM.STRIKE_DAGGER]); // 강타 스킬
+  ANIM.STRIKE_CLUB, ANIM.STRIKE_SWORD, ANIM.STRIKE_DAGGER, ANIM.STRIKE_BOW, ANIM.STRIKE_BOW_SHOT, ANIM.STRIKE_STAFF]); // 강타 스킬
 // 강타: 휘두르는 동안 보는 쪽으로 힘차게 나아간다 ([시작, 끝](초), 가장 빠를 때 m/초. 서버 이동 검사 0.1초에 1.3m 안쪽)
-// 몽둥이 0.6m쯤 · 목검 1.5m쯤(온몸을 던져 찌른다) · 단검 0.5m쯤(뛰어오르며)
-const STRIKE_STEP = { [ANIM.STRIKE_CLUB]: [[0.42, 0.62], 4.5], [ANIM.STRIKE_SWORD]: [[0.36, 0.58], 11], [ANIM.STRIKE_DAGGER]: [[0.16, 0.36], 4] };
+// 몽둥이 0.6m쯤 · 목검 0.65m쯤(숙이며 크게 베어 내린다) · 단검 0.5m쯤(뛰어오르며)
+const STRIKE_STEP = { [ANIM.STRIKE_CLUB]: [[0.42, 0.62], 4.5], [ANIM.STRIKE_SWORD]: [[0.42, 0.6], 5], [ANIM.STRIKE_DAGGER]: [[0.2 + DAGGER_CHARGE.sec, 0.38 + DAGGER_CHARGE.sec], 4] }; // 단검은 웅크려 기를 모으는 동안은 제자리, 일어서며 베어 올릴 때 뛰어나간다
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
 const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Space 회피 구르기: 방향키 쪽(없으면 정면)으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
@@ -208,7 +208,7 @@ const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, 
 const SWING_STEP = 0.3;
 // 체력·마나 (내 화면에서만 셈)
 // 마나: 대시 공격·더블 점프 내리찍기에 쓰고 천천히 찬다
-const STAT = { max: 100, hit: 10, skill: 20 }; // 회복·치명타 같은 나머지는 레벨에 따른 능력치(ab)
+const STAT = { max: 100, hit: 10 }; // 회복·치명타 같은 나머지는 레벨에 따른 능력치(ab)
 const BASE_AB = abilitiesOf(statsOf(1)); // 다른 학생이 친 것은 기본값으로 보여 준다
 let ab = BASE_AB; // 내 능력치 (레벨이 오르면 다시 계산: showXp)
 const stats = { hp: STAT.max, mp: STAT.max };
@@ -332,11 +332,18 @@ function hitFx(char, action) {
   // 활: 시위를 놓는 순간 화살이 날아간다 (맞는 건 arrowHit). 점프·더블 점프 공격은 대각선 아래로
   // 조준했다 쏘는 화살(bowRelease)만 시위를 당긴 정도를 따른다: 덜 당기면 가다가 떨어지고 덜 정확하다 (점프·달리기 공격은 늘 끝까지 당겨 쏜다)
   if (action === 'bowRelease' || action === 'bowAir' || action === 'bowSlam' || action === 'bowBack') { arrows.shoot(char, char === me, BOW_PITCH[action] ?? 0, false, action === 'bowRelease' ? char.bowPower ?? 1 : 1); return; }
+  if (action === 'bowStrikeShot') { // 활 강타: 끝까지 당겨 곧게 쏘고, 더 아프며 하나를 꿰뚫는다
+    arrows.shoot(char, char === me, 0, false, 1, { pierce: SKILLS.strike.pierce, dmg: SKILLS.strike.power });
+    const fx = Math.sin(char.targetRot);
+    const fz = Math.cos(char.targetRot);
+    FX.burst('star', 10, char.x + fx * 0.7, char.groundY + 1.2, char.z + fz * 0.7, { floor: char.groundY, dir: [fx, fz], spread: 0.9, power: 1.1 });
+    return;
+  }
   if (action === 'staffBolt' || action === 'staffFire' || action === 'staffBig') { arrows.shoot(char, char === me, 0, true, action === 'staffBig' ? BOLT.big : 1); return; } // 지팡이 끝에서 에너지 볼 (다 모아 쏘면 크게)
   const slam = action === 'clubSlam' || action === 'swordSlam';
   const strike = /^(club|sword|dagger)Strike$/.test(action) ? SKILLS.strike : null; // 강타 스킬: 더 멀리·넓게, 더 세게
   const power = strike?.power ?? 1;
-  const thrust = action === 'swordSlash3' || action === 'swordStrike'; // 찌르기는 앞으로 길고 좁게 맞는다
+  const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
   const dive = action === 'daggerSlam'; // 단검 더블 점프 공격: 내려온 길 전체가 맞는다
   if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$|^daggerStab\d$|^daggerAir2?$|^daggerSlam$|^daggerDash2?$|Strike$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
   if (action === 'chopAgain' || action === 'chopAgain2') action = 'chop';
@@ -352,10 +359,10 @@ function hitFx(char, action) {
 
   if (action === 'clubSmash' || action === 'chop') {
     // 몽둥이: 사람 → 바위 → 나무 → 땅 순서로 맞은 것을 찾는다 · 도끼: 나무
-    const reach = thrust ? (strike ? 2.3 : 1.9) : dive ? 0.6 : strike ? 1.15 : 0.95;
+    const reach = thrust ? 1.9 : dive ? 0.6 : strike ? 1.15 : 0.95;
     const hx = char.x + fx * reach;
     const hz = char.z + fz * reach;
-    const hits = strike ? (ax, az, rot, bx, bz) => inStrike(ax, az, rot, bx, bz, thrust) : thrust ? inThrust : dive ? inDive : inSwing;
+    const hits = strike ? inStrike : thrust ? inThrust : dive ? inDive : inSwing;
     const victims = action === 'clubSmash' ? [me, ...[...others.values()].map((o) => o.char)].filter((c) => c && c !== char && hits(char.x, char.z, char.targetRot, c.x, c.z)) : [];
     const rock = action === 'clubSmash' ? village.nearRock(hx, hz, 0.7) : -1;
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
@@ -368,7 +375,7 @@ function hitFx(char, action) {
     if (victims.length || monHits.length) {
       for (const v of victims) {
         v.shake();
-        if (v !== me) { predictOuch(v); FX.damage(Math.round(STAT.hit * power), v.x, v.groundY + 1.9, v.z, '#ffffff'); }
+        if (v !== me) predictOuch(v); // 사람끼리는 데미지 없이 움찔만
         burst('star', 9, at(v.x, v.z, 1.35), { spread: Math.PI, power: 0.9 });
         burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
         if (v === me) strong = true;
@@ -463,22 +470,32 @@ function arrowHit(a, from, mine) {
   const bx = x - a.dir.x; // 날아온 쪽 (맞은 쪽이 그 반대로 밀리고, 그쪽을 돌아본다)
   const bz = z - a.dir.z;
   const burst = (kind, n, px, py, pz, opts = {}) => FX.burst(kind, n, px, py, pz, { floor: py - 1, dir: [a.dir.x, a.dir.z], spread: Math.PI, ...opts });
+  // 꿰뚫는 화살(활 강타)은 맞힌 대상을 기억해 두고 그대로 날아가, 꿰뚫는 횟수를 다 쓴 다음 대상에서 멈춘다
+  const done = () => { if (a.pierce > 0) { a.pierce--; return false; } return true; };
   for (const c of [me, ...[...others.values()].map((o) => o.char)]) {
-    if (!c || c === from || Math.hypot(c.x - x, c.z - z) > ARROW_HIT_R || y > c.groundY + 1.7) continue;
+    if (!c || c === from || a.struck.has(c) || Math.hypot(c.x - x, c.z - z) > ARROW_HIT_R || y > c.groundY + 1.7) continue;
+    a.struck.add(c);
     c.shake();
     burst('star', 8, c.x, c.groundY + 1.3, c.z, { power: 0.8 });
-    if (c !== me) FX.damage(STAT.hit, c.x, c.groundY + 1.9, c.z, '#ffffff');
-    if (c === me && local.dodge <= 0 && local.hurt <= 0) { getHit(bx, bz); FX.hitstop(0.05); } // 구르는 중에는 피한다
-    return true;
+    // 사람끼리는 데미지 없이 움찔만 (체력은 그대로)
+    if (c !== me) predictOuch(c);
+    else if (local.dodge <= 0 && local.hurt <= 0) { ouch(bx, bz); FX.hitstop(0.05); } // 구르는 중에는 피한다
+    return done();
   }
   const k = rollHit(mine);
-  const m = hereMonsters().map((mon) => mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine, k * atkMul(mine, 'dex'))).find(Boolean);
+  const dmg = atkMul(mine, 'dex') * a.dmg;
+  let m = null;
+  for (const mon of hereMonsters()) {
+    if (a.struck.has(mon)) continue;
+    m = mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine, k * dmg);
+    if (m) { a.struck.add(mon); break; }
+  }
   if (!m) return false;
   if (mine && m.dead) room?.send('kill');
-  if (k) burst('star', 8, m.x, from.groundY + m.y, m.z, { power: 0.8 });
-  showDamage(STAT.hit * atkMul(mine, 'dex'), k, m.x, from.groundY + m.y + 0.5, m.z);
-  if (mine && k) FX.hitstop(0.04);
-  return true;
+  if (k) burst('star', a.dmg > 1 ? 14 : 8, m.x, from.groundY + m.y, m.z, { power: a.dmg > 1 ? 1.2 : 0.8 });
+  showDamage(STAT.hit * dmg, k, m.x, from.groundY + m.y + 0.5, m.z);
+  if (mine && k) FX.hitstop(a.dmg > 1 ? 0.08 : 0.04);
+  return done();
 }
 // 마법 볼이 사람·몬스터에 닿았는지만 본다 (몬스터는 맞는지 묻기만 하고 맞히지는 않는다: hits 가 늘 false)
 function boltTouches(a, from) {
@@ -511,8 +528,9 @@ function boltBurst(a, at) {
     if (!c || c === from || Math.hypot(c.x - at.x, c.z - at.z) > R || at.y > c.groundY + 1.7 + R) continue;
     c.shake();
     star(c.x, c.groundY + 1.3, c.z, c.x - at.x, c.z - at.z);
-    if (c !== me) FX.damage(Math.round(STAT.hit * a.size), c.x, c.groundY + 1.9, c.z, '#ffffff');
-    if (c === me && local.dodge <= 0 && local.hurt <= 0) { getHit(at.x, at.z, a.size); FX.hitstop(0.05); } // 구르는 중에는 피한다
+    // 사람끼리는 데미지 없이 움찔만 (체력은 그대로)
+    if (c !== me) predictOuch(c);
+    else if (local.dodge <= 0 && local.hurt <= 0) { ouch(at.x, at.z); FX.hitstop(0.05); } // 구르는 중에는 피한다
   }
   let any = false;
   for (const mon of hereMonsters()) {
@@ -1007,7 +1025,9 @@ const STRIKE_ANIMS = new Set(Object.values(SKILLS.strike.weapons));
 const skillCool = {}; // 스킬 id → 다시 쓸 수 있기까지 남은 시간(초)
 // 배운 스킬: 레벨이 되고, 모험가 스킬이거나 내 직업 스킬
 const knowsSkill = (s) => levelOf(myXp).lv >= s.lv && (!s.job || s.job === myJob);
-const WEAPON_NAMES = { club: '몽둥이', woodSword: '목검', dagger: '단검' };
+const WEAPON_NAMES = { club: '몽둥이', woodSword: '목검', dagger: '단검', bow: '활', staff: '지팡이' };
+// 지팡이 강타는 치지 않고 가만히 기를 모아 마나를 채운다: 마나가 들지 않는다 (가득해도 쓸 수 있다)
+const skillCost = (s, anim) => (anim === ANIM.STRIKE_STAFF ? 0 : s.mp);
 const weaponList = (s) => Object.keys(s.weapons).map((w) => WEAPON_NAMES[w]).join('·');
 function useSkill(id) {
   const s = SKILLS[id];
@@ -1016,27 +1036,44 @@ function useSkill(id) {
   const anim = s.weapons[TOOLS[local.tool]];
   if (!anim) { toast(`${s.name}은(는) ${weaponList(s)}을 들고 써요`); return; }
   if ((skillCool[id] ?? 0) > 0) { toast(`${s.name}: ${Math.ceil(skillCool[id])}초 뒤에 다시 쓸 수 있어요`); return; }
+  const bow = anim === ANIM.STRIKE_BOW;
   if (local.actLeft > 0) {
     // 땅에서 이어 치는 중이면 휘두른 끝(이어지는 때)부터 바로 넘어간다. 그 밖의 동작(점프·구르기·생활 등) 중에는 못 쓴다
+    // 활은 조준하는 중(아직 화살을 쓰지 않음)이나 쏜 시위가 다 떨린 뒤에 바로 넘어간다
     const el = actTime(local.act) - local.actLeft;
-    if (!NEXT_SWING[local.act] || el < COMBO_AT[local.act]) return;
+    const bowReady = bow && (local.act === ANIM.BOW_AIM || (local.act === ANIM.BOW_SHOT && el >= REDRAW_AT));
+    if (!bowReady && (!NEXT_SWING[local.act] || el < COMBO_AT[local.act])) return;
   }
+  if (bow && local.arrows <= 0) { toast('화살통이 비었어요! 화살이 있어야 쏠 수 있어요'); return; }
   if (local.fishing) stopFishing();
-  if (!useMana(s.mp)) return;
+  if (!useMana(skillCost(s, anim))) return; // 활은 화살을 놓을 때 꺼낸다 (updateMe)
   skillCool[id] = s.cool;
   local.act = anim;
   local.actLeft = actTime(anim);
   local.charged = false;
+  local.meditateGain = 0;
+  local.meditateT = 0;
   input.stopRun();
 }
-// 몽둥이 강타: 기 모으기 연출을 시작하는 때(초). 꼭대기에서 짧게 버티는 동안(actions.js CLUB_STYLES.strike.hold: 0.31~0.4초)
-// 빛줄기가 모여들어, 마지막 줄기가 휘두르기 직전에 몽둥이 끝에 닿는다
-const STRIKE_CHARGE_AT = 0.27;
-// 기 모으기 연출: 둘레 여기저기에서 노란 빛줄기들이 몽둥이의 가장 뭉툭한 끝(둥근 끝마개)으로 쭉 빨려 들어간다 (몽둥이가 떨려도 따라간다)
-function chargeFx(char) {
-  const socket = char.villager.rig.rightSocket;
-  const tip = socket.getObjectByName('몽둥이끝') ?? socket; // equipment.js club() 의 둥근 끝
-  FX.gather((out) => tip.getWorldPosition(out), { dur: 0.09, rate: 140, life: 0.13, radius: [0.9, 1.5], alive: () => char.anim === ANIM.STRIKE_CLUB });
+// 강타 기 모으기 연출: at 시작하는 때(초) · tip 빛줄기가 모이는 장비 부분 · dur 줄기가 새로 나오는 동안(초)
+// 몽둥이: 꼭대기에서 짧게 버티는 동안(actions.js CLUB_STYLES.strike.hold: 0.31~0.4초) 빛줄기가 모여들어, 마지막 줄기가 휘두르기 직전에 몽둥이 끝에 닿는다
+// 단검: 다 웅크려 부르르 떠는 동안(actions.js DAGGER_CHARGE: 0.14~0.42초쯤) 날로 모여들고, 마지막 줄기가 뛰어오르기 직전에 닿는다
+const STRIKE_CHARGE = {
+  [ANIM.STRIKE_CLUB]: { at: 0.27, tip: '몽둥이끝', dur: 0.09, rate: 140 }, // equipment.js club() 의 둥근 끝
+  // 목검: 높이 들어 올린 꼭대기에서 버티는 동안(actions.js SWORD_STYLES.strike.hold: 0.28~0.42초) 칼끝으로 모여든다
+  [ANIM.STRIKE_SWORD]: { at: 0.25, tip: '목검', off: [-0.02, 0.42, 0], dur: 0.14, rate: 140 }, // off: 목검 안에서 칼끝 자리
+  [ANIM.STRIKE_DAGGER]: { at: DAGGER_CHARGE.at[0] * 0.62, tip: '단검날', dur: DAGGER_CHARGE.sec * 0.7, rate: 110 },
+  // 활: 시위를 다 당긴 뒤 기를 다 모을 때까지(actions.js BOW_STRIKE: 0.3~0.95초)만 메긴 화살촉으로 모여든다. 그 뒤로는 뗄 때까지 살짝 떨기만 한다
+  [ANIM.STRIKE_BOW]: { at: BOW_STRIKE.draw, socket: 'leftSocket', tip: '화살촉', dur: BOW_STRIKE.rel - BOW_STRIKE.draw - 0.13, rate: 120 },
+  // 지팡이: 자세를 다 잡은 뒤로 모으는 내내 둘레에서 파란 빛줄기가 천천히 지팡이 끝으로 모여든다 (마나 기운)
+  [ANIM.STRIKE_STAFF]: { at: 0.4, tip: '끝마개', dur: 600, rate: 26, life: 0.45, radius: [0.8, 1.4], colors: [0x7dd6ff, 0xbfeaff, 0x4fb4ff] },
+};
+// 기 모으기 연출: 둘레 여기저기에서 노란 빛줄기들이 무기 끝으로 쭉 빨려 들어간다 (무기가 떨려도 따라간다)
+function chargeFx(char, anim) {
+  const C = STRIKE_CHARGE[anim];
+  const socket = char.villager.rig[C.socket ?? 'rightSocket'];
+  const tip = socket.getObjectByName(C.tip) ?? socket;
+  FX.gather((out) => (C.off ? tip.localToWorld(out.set(...C.off)) : tip.getWorldPosition(out)), { dur: C.dur, rate: C.rate, life: C.life ?? 0.13, radius: C.radius ?? [0.9, 1.5], colors: C.colors, alive: () => char.anim === anim });
 }
 // 매 장면: 대기 시간을 줄이고, A 버튼에 남은 시간과 지금 쓸 수 있는지를 보여 준다
 const skillBtn = $id('skill-btn');
@@ -1045,7 +1082,8 @@ function updateSkills(dt) {
   for (const k in skillCool) skillCool[k] = Math.max(0, skillCool[k] - dt);
   const s = SKILLS.strike;
   const left = skillCool.strike ?? 0;
-  const ready = !!s.weapons[TOOLS[local.tool]] && stats.mp >= s.mp && left <= 0;
+  const anim = s.weapons[TOOLS[local.tool]];
+  const ready = !!anim && left <= 0 && (anim === ANIM.STRIKE_STAFF || stats.mp >= s.mp) && (local.tool !== BOW || local.arrows > 0);
   const state = `${Math.ceil(left * 20)}|${ready}`;
   if (state === skillBtnState) return;
   skillBtnState = state;
@@ -1579,8 +1617,8 @@ const input = createInput({
       // 나무 단검도 같은 흐름: 점프 중이면 공중에서 베기, 더블 점프 중이면 앞 아래로 내려가며 베기, 달리는 중이면 숙여 달려들며 베기
       const sword = TOOLS[local.tool] === 'woodSword';
       if (!sword && TOOLS[local.tool] !== 'club' && local.tool !== DAGGER) return;
-      // free: 마나를 쓰지 않는 무기 (단검은 대시·더블 점프 공격에도 마나를 쓰지 않는다)
-      const A = local.tool === DAGGER ? { air: ANIM.DAGGER_AIR, slam: ANIM.DAGGER_SLAM, dash: ANIM.DAGGER_DASH, first: ANIM.DAGGER1, free: true }
+      // 점프·더블 점프·대시 공격은 어느 무기든 마나를 쓰지 않는다
+      const A = local.tool === DAGGER ? { air: ANIM.DAGGER_AIR, slam: ANIM.DAGGER_SLAM, dash: ANIM.DAGGER_DASH, first: ANIM.DAGGER1 }
         : sword ? { air: ANIM.SLASH_AIR, slam: ANIM.SLASH_SLAM, dash: ANIM.SLASH_DASH, first: ANIM.SLASH1 }
           : { air: ANIM.SMASH_AIR, slam: ANIM.SMASH_SLAM, dash: ANIM.SMASH_DASH, first: ANIM.SMASH };
       const el = actTime(local.act) - local.actLeft; // 지금 동작이 흐른 시간
@@ -1593,11 +1631,10 @@ const input = createInput({
         // 더블 점프 뒤 공격: 착지하며 땅을 내리찍는다 (목검은 내려벤다)
         // 단검은 공중제비를 막 시작했을 때 누르면 기억해 두었다가 DIVE.from 초에 시작한다 (아래 매 장면 처리)
         if (local.tool === DAGGER && el < DIVE.from) { local.diveQueued = true; return; }
-        if (!A.free && !useMana(STAT.skill)) return;
         startSlam(A.slam, el);
       } else if (local.actLeft <= 0) {
         const inp = input.read();
-        if (inp.run && inp.mag > 0 && (A.free || useMana(STAT.skill))) { startAct(A.dash); input.stopRun(); } // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
+        if (inp.run && inp.mag > 0) { startAct(A.dash); input.stopRun(); } // 달리던 방향 그대로 뛰어들며 내리친다 (목검은 가로로 벤다)
         else startAct(A.first);
       }
     } else if (name === 'pick') {
@@ -2039,7 +2076,7 @@ function updateMe(dt) {
   if (local.hurt > 0) local.hurt -= dt;
   updateStats(dt);
   updateSkills(dt);
-  if (local.act === ANIM.STRIKE_CLUB && local.actLeft > 0 && !local.charged && actTime(local.act) - local.actLeft >= STRIKE_CHARGE_AT) { local.charged = true; chargeFx(me); }
+  if (STRIKE_CHARGE[local.act] && local.actLeft > 0 && !local.charged && actTime(local.act) - local.actLeft >= STRIKE_CHARGE[local.act].at) { local.charged = true; chargeFx(me, local.act); }
   local.dodge -= dt; // 0 아래로 내려간 만큼이 쿨타임이 지난 시간
   // 잠자리채: 휘두르기 전에 곤충과의 거리를 맞추는 한 발
   if (local.netStep?.left > 0) {
@@ -2092,6 +2129,7 @@ function updateMe(dt) {
     // 활 달리기 공격: 뒤를 보고 쏘면서 달리던 쪽으로 미끄러지다 멈춘다
     else if (local.act === ANIM.BOW_BACK) { speed = RUN_SPEED * (1 - THREE.MathUtils.smoothstep(sec / actTime(local.act), 0.05, 0.7)); moveRot = local.backRot; }
     if (local.act === ANIM.STAFF_CHARGE) aimTurn(inp, dt); // 지팡이 기 모으기: 활 조준처럼 방향키로 천천히 돌아선다
+    if (local.act === ANIM.STRIKE_BOW) aimTurn(inp, dt); // 활 강타: 기를 모으는 동안 쏠 쪽을 맞춘다
     if (speed > 0 && local.hurt <= 0) {
       const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
       for (const m of hereMonsters()) extra.push(...m.colliders()); // 날개콩은 지나갈 수 없음
@@ -2163,6 +2201,39 @@ function updateMe(dt) {
       local.act = ANIM.BOW_SHOT;
       local.actLeft = actTime(ANIM.BOW_SHOT);
     }
+  }
+  // 활 강타: A를 떼면 (기를 다 모은 뒤에) 쏜다. 짧게 눌렀다 떼도 다 모은 뒤에 쏜다. 활을 내려놓았으면 그만둔다
+  if (local.act === ANIM.STRIKE_BOW && local.actLeft > 0) {
+    const el = actTime(ANIM.STRIKE_BOW) - local.actLeft;
+    if (local.tool !== BOW) local.actLeft = 0;
+    else if (!input.holding('skill1') && el >= BOW_STRIKE.rel) {
+      if (local.arrows > 0) {
+        setArrows(local.arrows - 1);
+        local.act = ANIM.STRIKE_BOW_SHOT;
+        local.actLeft = actTime(ANIM.STRIKE_BOW_SHOT);
+      } else local.actLeft = 0; // 모으는 사이에 화살이 없어졌다
+    }
+  }
+  // 지팡이 강타: A를 누르고 있는 동안 마나가 차는 빠르기가 2배(SKILLS.strike.meditate)가 된다. 떼거나, 움직이거나, 맞거나, 지팡이를 내려놓으면 그만둔다 (마나가 가득해도 계속 모을 수 있다)
+  // 찬 만큼은 1초마다 머리 위에 파란 숫자로 보여 준다
+  if (local.act === ANIM.STRIKE_STAFF && local.actLeft > 0) {
+    const el = actTime(ANIM.STRIKE_STAFF) - local.actLeft;
+    const stop = local.tool !== STAFF || local.hurt > 0 || !input.holding('skill1') || inp.mag > 0;
+    if (!stop && el >= STRIKE_CHARGE[ANIM.STRIKE_STAFF].at) {
+      // 평소 회복(updateStats)은 이미 했으니 나머지 배수만큼 더한다. 머리 위 숫자는 모으는 동안 찬 전부(평소 회복 포함)
+      const add = Math.min(ab.mpMax - stats.mp, ab.mpRegen * (SKILLS.strike.meditate - 1) * dt);
+      stats.mp += add;
+      local.meditateGain += ab.mpRegen * SKILLS.strike.meditate * dt;
+      local.meditateT = (local.meditateT ?? 0) + dt;
+    }
+    const full = stats.mp >= ab.mpMax - 0.01;
+    if (full) local.meditateGain = 0; // 가득 찬 뒤로는 더 차지 않으니 숫자도 띄우지 않는다
+    if (local.meditateGain >= 1 && (stop || local.meditateT >= 1)) {
+      FX.damage(`+${Math.round(local.meditateGain)} MP`, me.x, me.groundY + 2.2, me.z, '#7dd6ff');
+      local.meditateGain = 0;
+      local.meditateT = 0;
+    }
+    if (stop) local.actLeft = 0;
   }
   // 지팡이: 공격키를 꾹 누르고 있으면 지팡이를 다 들어 올린 때 기 모으기로 넘어간다 (짧게 누르면 보통 공격 그대로)
   // 모으는 동안 마나가 든다. 다 모은 뒤에는 마나 없이 그대로 들고 있다가 떼면 큰 볼을 쏘고, 다 모으기 전에 떼거나 마나가 떨어지면 보통 볼을 쏜다
@@ -2261,21 +2332,24 @@ function updateOthers(now) {
       char.setAnim(a.a);
     }
     // 휘두르기 시작을 보면 내려찍는 순간에 내가 앞에 있는지 확인
-    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) { o.hitAt = now + HIT_DELAY[char.anim]; o.hitAnim = char.anim; o.chargeAt = char.anim === ANIM.STRIKE_CLUB ? now + STRIKE_CHARGE_AT * 1000 : 0; }
-    if (o.chargeAt && now >= o.chargeAt) { o.chargeAt = 0; if (char.anim === ANIM.STRIKE_CLUB) chargeFx(char); }
+    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) { o.hitAt = now + HIT_DELAY[char.anim]; o.hitAnim = char.anim; }
+    // 강타 기 모으기 연출 (활 강타는 화살이 맞히므로 휘두르기 맞음 검사는 없다)
+    if (STRIKE_CHARGE[char.anim] && char.anim !== prevAnim) { o.chargeAt = now + STRIKE_CHARGE[char.anim].at * 1000; o.chargeAnim = char.anim; }
+    if (o.chargeAt && now >= o.chargeAt) { o.chargeAt = 0; if (char.anim === o.chargeAnim) chargeFx(char, o.chargeAnim); }
     if (o.hitAt && now >= o.hitAt) {
       o.hitAt = 0;
       const strike = STRIKE_ANIMS.has(o.hitAnim); // 강타: 더 넓게 맞고 더 아프다
-      const test = strike ? (ax, az, rot, bx, bz) => inStrike(ax, az, rot, bx, bz, o.hitAnim === ANIM.STRIKE_SWORD)
+      const test = strike ? inStrike
         : o.hitAnim === ANIM.SLASH3 ? inThrust : o.hitAnim === ANIM.DAGGER_SLAM ? inDive : inSwing;
-      if (me && test(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z, strike ? SKILLS.strike.power : 1);
+      // 다른 학생에게 맞으면 데미지 없이 움찔만 (체력은 그대로)
+      if (me && local.dodge <= 0 && local.hurt <= 0 && test(char.x, char.z, char.targetRot, me.x, me.z)) ouch(char.x, char.z);
     }
   }
 }
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
 // step: 화면이 가려져 그리기가 멈춘 동안에도 내 캐릭터만 정해진 시간만큼 움직여 보는 점검용
-if (import.meta.env.DEV) window.__game = { field, renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
+if (import.meta.env.DEV) window.__game = { field, renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, stats, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
@@ -2414,7 +2488,10 @@ function frame() {
   arrows.update(dt);
   // 활을 당기는 동안: 지금 놓으면 화살이 날아갈 길을 희미하게 보여 준다 (당긴 만큼 길어진다)
   const aiming = me && local.act === ANIM.BOW_AIM && local.actLeft > 0 && me.anim === ANIM.BOW_AIM && me.aimAt != null;
-  arrows.aimGuide(aiming ? me : null, aiming ? bowDrawn(me.time - me.aimAt) : 0, arrowWouldHit);
+  // 활 강타: 끝까지 당긴 뒤 기를 모으는 동안에도 (끝까지 당긴 길로) 보여 준다
+  const striking = me && local.act === ANIM.STRIKE_BOW && me.anim === ANIM.STRIKE_BOW && local.actLeft > 0
+    && actTime(local.act) - local.actLeft >= BOW_STRIKE.draw;
+  arrows.aimGuide(aiming || striking ? me : null, aiming ? bowDrawn(me.time - me.aimAt) : 1, arrowWouldHit);
   FX.update(dt);
   updateShows(dt);
 

@@ -1524,6 +1524,7 @@ export const EXPRESSIONS = {
   surprised: { label: '놀람', eyes: ['round', 'round'], mouth: 'o', blush: 0.8 },
   wink: { label: '윙크', eyes: ['closed', 'open'], mouth: 'smile', blush: 1.2 },
   angry: { label: '화남', eyes: ['angry', 'angry'], mouth: 'pout', blush: 1.15 },
+  calm: { label: '명상', eyes: ['happy', 'happy'], mouth: 'smile', blush: 1.1, hidden: true }, // 지팡이 강타로 기를 모을 때 (액션 전용)
   ko: { label: '기절', eyes: ['closed', 'closed'], mouth: 'o', blush: 0.6, hidden: true }, // 액션 전용
   hurt: { label: '아파함', eyes: ['wince', 'wince'], mouth: 'wince', blush: 1.45, hidden: true }, // 맞았을 때 (액션 전용)
 };

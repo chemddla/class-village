@@ -68,14 +68,14 @@ const ACTS = {
   [ANIM.STAFF_CAST]: 'staffBolt', [ANIM.STAFF_CHARGE]: 'staffCharge', [ANIM.STAFF_FIRE]: 'staffFire', [ANIM.STAFF_BIG]: 'staffBig',
   [ANIM.DAGGER1]: 'daggerStab1', [ANIM.DAGGER2]: 'daggerStab2', [ANIM.DAGGER3]: 'daggerStab3', [ANIM.DAGGER4]: 'daggerStab4',
   [ANIM.DAGGER_AIR]: 'daggerAir', [ANIM.DAGGER_SLAM]: 'daggerSlam', [ANIM.DAGGER_DASH]: 'daggerDash', [ANIM.DAGGER_AIR2]: 'daggerAir2', [ANIM.DAGGER5]: 'daggerStab5', [ANIM.DAGGER_DASH2]: 'daggerDash2',
-  [ANIM.STRIKE_CLUB]: 'clubStrike', [ANIM.STRIKE_SWORD]: 'swordStrike', [ANIM.STRIKE_DAGGER]: 'daggerStrike', // 강타 스킬
+  [ANIM.STRIKE_CLUB]: 'clubStrike', [ANIM.STRIKE_SWORD]: 'swordStrike', [ANIM.STRIKE_DAGGER]: 'daggerStrike', [ANIM.STRIKE_BOW]: 'bowStrike', [ANIM.STRIKE_BOW_SHOT]: 'bowStrikeShot', [ANIM.STRIKE_STAFF]: 'staffMeditate', // 강타 스킬
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
 const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP, [ANIM.DAGGER_AIR]: ANIM.JUMP, [ANIM.DAGGER_SLAM]: ANIM.FLIP, [ANIM.DAGGER_AIR2]: ANIM.DAGGER_AIR,
   [ANIM.BOW_AIR]: ANIM.JUMP, [ANIM.BOW_SLAM]: ANIM.FLIP };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 // 입질 기다리기는 낚시가 끝날 때까지 (main.js 가 다시 이어 줌), 활 조준은 공격키를 뗄 때까지 (main.js 가 끝낸다)
-const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60, staffCharge: 60 }; // 기 모으기도 떼거나 다 모을 때까지 (main.js 가 끝낸다)
+const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60, staffCharge: 60, bowStrike: 60, staffMeditate: 600 }; // 기 모으기도 떼거나 다 모을 때까지 (main.js 가 끝낸다)
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
 export const BOW_SLAM_LAND = 0.85; // 활 더블 점프 공격은 쏠 틈을 두려고 조금 더 떠 있다가 내려앉는다
 export const LAND = { jump: 0.78 * ACTIONS.jump.duration + 0.015, flip: 0.74 * ACTIONS.flip.duration };

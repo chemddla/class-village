@@ -1,11 +1,11 @@
 // 우측 하단 미니맵: 섬 전체를 한눈에. 카메라가 보는 쪽이 늘 위로 오게 돌아간다
 import {
-  WORLD, COLORS, PLAZA, PLOTS, BRIDGE, RIVER_HALF_WIDTH, BEACH, islandN, shoreN, riverCenterZ,
+  WORLD, HALF, COLORS, PLAZA, PLOTS, BRIDGE, RIVER_HALF_WIDTH, BEACH, islandN, shoreN, riverCenterZ,
   FIELD, FIELD_MAP, FIELD_POND, PORTALS, fieldEdge, inField,
 } from '../../shared/world.js';
 
-const RANGE = 42; // 가운데에서 이만큼(m)까지 보여 줌 (섬 바닷가가 약 41m)
-const RES = 168; // 배경 그림 크기 (px)
+const RANGE = HALF + 12; // 가운데에서 이만큼(m)까지 보여 줌 (섬 바닷가가 약 HALF + 11m)
+const RES = 240; // 배경 그림 크기 (px)
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
 
 // 배경(바다·모래·풀·강·나무)은 지도가 늘 같으니 한 번만 그린다
@@ -45,7 +45,7 @@ function drawBackground() {
 }
 
 // 들판 미니맵 (가운데가 FIELD): 숲·풀밭·연못·흙길·나무·바위·포탈
-const FIELD_RANGE = 32;
+const FIELD_RANGE = FIELD.r + 5;
 function drawFieldBackground() {
   const bg = document.createElement('canvas');
   bg.width = bg.height = RES;

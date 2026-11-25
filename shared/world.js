@@ -1,7 +1,7 @@
 // 마을 지도 데이터 (화면과 서버가 함께 사용)
 // 같은 시드로 만들기 때문에 지도 자체를 네트워크로 보낼 필요가 없다.
 
-export const WORLD_SIZE = 60; // 한 변 60m
+export const WORLD_SIZE = 120; // 한 변 120m (넓이는 처음 60m 마을의 4배)
 export const HALF = WORLD_SIZE / 2;
 export const EDGE = HALF - 1.2; // 마을(숲) 가장자리. 그 바깥은 모래 해변이 둘러싼 섬이다
 export const PLAYER_RADIUS = 0.35;
@@ -12,7 +12,7 @@ export const PLAYER_RADIUS = 0.35;
 export const islandN = (x, z) => (x ** 4 + z ** 4) ** 0.25;
 export function shoreN(x, z) {
   const a = Math.atan2(z, x);
-  return 38.5 + 1.4 * Math.sin(3 * a + 0.5) + 0.9 * Math.sin(5 * a + 2) + 0.5 * Math.sin(9 * a + 1);
+  return HALF + 8.5 + 1.4 * Math.sin(3 * a + 0.5) + 0.9 * Math.sin(5 * a + 2) + 0.5 * Math.sin(9 * a + 1);
 }
 // 방향(cos, sin) 으로 가운데에서 islandN 이 n 이 되는 곳까지의 실제 거리
 export const islandRadius = (n, c, s) => n / (c ** 4 + s ** 4) ** 0.25;
@@ -49,7 +49,9 @@ export const ANIM = {
   DAGGER5: 53, // 나무 단검 4타: 내려찍은 자세에서 그대로 올려 베기 (DAGGER4 는 4타에 이어 치는 1타)
   DAGGER_DASH2: 54, // 나무 단검 대시 공격 2타 (팔꿈치를 펴며 되베기)
   STAFF_CHARGE: 55, STAFF_FIRE: 56, STAFF_BIG: 57, // 마법 지팡이: 꾹 눌러 기 모으기 · 다 모으기 전에 떼어 보통 볼 쏘기 · 다 모아 큰 볼 쏘기
-  STRIKE_CLUB: 58, STRIKE_SWORD: 59, STRIKE_DAGGER: 60, // 강타 스킬: 몽둥이 · 목검 · 나무 단검 (기본 공격 마지막 타를 더 크고 세게)
+  STRIKE_CLUB: 58, STRIKE_SWORD: 59, STRIKE_DAGGER: 60, // 강타 스킬: 몽둥이 · 목검 · 나무 단검 (기본 공격 한 타를 더 크고 세게: 몽둥이·단검은 마지막 타, 목검은 2타 사선 베기)
+  STRIKE_BOW: 61, STRIKE_BOW_SHOT: 62, // 강타 스킬 · 활: A를 누르고 있는 동안 시위를 끝까지 당긴 채 기를 모으고, 떼면 쏜다 (화살이 하나를 꿰뚫고 다음 것까지 맞힌다)
+  STRIKE_STAFF: 63, // 강타 스킬 · 지팡이: A를 누르고 있는 동안 제자리에서 눈을 감고 기를 모아 마나를 빠르게 채운다
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
@@ -128,18 +130,15 @@ export function abilitiesOf(s) {
 export const SKILL_TYPES = { active: '액티브', passive: '패시브' };
 export const SKILLS = {
   strike: { name: '강타', icon: '💥', type: 'active', job: '', lv: 1, mp: 15, cool: 3, power: 2.2, key: 'A',
-    weapons: { club: ANIM.STRIKE_CLUB, woodSword: ANIM.STRIKE_SWORD, dagger: ANIM.STRIKE_DAGGER },
-    desc: '들고 있는 무기의 마지막 타를 온몸으로 크게 휘둘러 세게 친다. 이어 치는 중에 써도 바로 나간다' },
+    weapons: { club: ANIM.STRIKE_CLUB, woodSword: ANIM.STRIKE_SWORD, dagger: ANIM.STRIKE_DAGGER, bow: ANIM.STRIKE_BOW, staff: ANIM.STRIKE_STAFF },
+    pierce: 1, // 활 강타: 화살이 이만큼 꿰뚫고 지나가 다음 대상까지 맞는다
+    meditate: 2, // 지팡이 강타: 마나는 들지 않고, 모으는 동안 마나가 차는 빠르기가 이만큼 배가 된다
+    desc: '들고 있는 무기를 온몸으로 크게 휘둘러 세게 친다. 이어 치는 중에 써도 바로 나간다. 활은 기를 모아 쏘고, 화살이 하나를 꿰뚫는다. 지팡이는 누르고 있는 동안 가만히 기를 모아 마나가 2배로 빠르게 찬다(마나가 들지 않는다)' },
 };
-// 강타에 맞는지: 몽둥이·단검은 보통 휘두르기보다 멀리·넓게 (앞쪽 1.8m · 좌우 약 69°), 목검은 찌르기를 더 길게 (앞으로 3m, 옆으로 0.6m)
-export function inStrike(ax, az, rot, bx, bz, thrust = false) {
+// 강타에 맞는지: 보통 휘두르기보다 멀리·넓게 (앞쪽 1.8m · 좌우 약 69°)
+export function inStrike(ax, az, rot, bx, bz) {
   const dx = bx - ax;
   const dz = bz - az;
-  if (thrust) {
-    const ahead = dx * Math.sin(rot) + dz * Math.cos(rot);
-    const side = dx * Math.cos(rot) - dz * Math.sin(rot);
-    return ahead > -0.1 && ahead < 3 && Math.abs(side) < 0.6;
-  }
   if (Math.hypot(dx, dz) > 1.8) return false;
   const d = Math.atan2(dx, dz) - rot;
   return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < 1.2;
@@ -319,7 +318,7 @@ export function generateWorld(seed = 20261118) {
   };
 
   // 가장자리를 두르는 나무
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 280; i++) {
     const side = Math.floor(rand() * 4);
     const t = (rand() * 2 - 1) * (HALF - 1);
     const inset = HALF - 1 - rand() * 3;
@@ -329,7 +328,7 @@ export function generateWorld(seed = 20261118) {
     if (ok(x, z, 0.6, trees)) trees.push({ x, z, s, r: 0.55 * s, kind: rand() < 0.35 ? 1 : 0 });
   }
   // 안쪽 숲
-  for (let i = 0; i < 160 && trees.length < 110; i++) {
+  for (let i = 0; i < 640 && trees.length < 440; i++) {
     const x = (rand() * 2 - 1) * (HALF - 4);
     const z = (rand() * 2 - 1) * (HALF - 4);
     const s = 0.75 + rand() * 0.55;
@@ -337,7 +336,7 @@ export function generateWorld(seed = 20261118) {
   }
   // 바위
   const all = [...trees];
-  for (let i = 0; i < 80 && rocks.length < 18; i++) {
+  for (let i = 0; i < 320 && rocks.length < 72; i++) {
     const x = (rand() * 2 - 1) * (HALF - 3);
     const z = (rand() * 2 - 1) * (HALF - 3);
     const s = 0.5 + rand() * 0.6;
@@ -348,7 +347,7 @@ export function generateWorld(seed = 20261118) {
     }
   }
   // 꽃 (부딪히지 않는 장식). 강둑(강가에서 3m)에는 피지 않는다: 낚시할 때 가리지 않게
-  for (let i = 0; i < 260 && flowers.length < 140; i++) {
+  for (let i = 0; i < 1040 && flowers.length < 560; i++) {
     const x = (rand() * 2 - 1) * (HALF - 2);
     const z = (rand() * 2 - 1) * (HALF - 2);
     if (ok(x, z, 0.3, all) && !nearRiver(x, z, RIVER_BANK_CLEAR)) flowers.push({ x, z, c: Math.floor(rand() * 4), s: 0.7 + rand() * 0.5 });
@@ -373,17 +372,21 @@ export function generateWorld(seed = 20261118) {
 
 // ── 들판(저렙 사냥터, 가명): 마을 섬과 멀리 떨어진 곳에 따로 있는 맵. 걸어서는 못 가고 포탈로만 오간다 ──
 // 같은 방·같은 좌표계 안이라 접속을 바꾸지 않고 순간이동만 하면 된다 (z는 int16 cm 라 327m 안쪽이어야 함)
-export const FIELD = { x: 0, z: 220, r: 27 }; // 가운데 · 걸어 다닐 수 있는 대략의 반지름 (가장자리는 물결 모양 숲)
+export const FIELD = { x: 0, z: 220, r: 54 }; // 가운데 · 걸어 다닐 수 있는 대략의 반지름 (가장자리는 물결 모양 숲)
 export const inField = (x, z) => z > 120;
 // 그 방향의 들판 가장자리까지 거리 (이보다 멀면 숲이라 못 감)
 export function fieldEdge(x, z) {
   const a = Math.atan2(z - FIELD.z, x - FIELD.x);
-  return FIELD.r + 1.8 * Math.sin(3 * a + 1) + 1.1 * Math.sin(5 * a + 0.3) + 0.5 * Math.sin(11 * a);
+  return FIELD.r + 3.6 * Math.sin(3 * a + 1) + 2.2 * Math.sin(5 * a + 0.3) + 1.0 * Math.sin(11 * a);
 }
-export const FIELD_POND = { x: FIELD.x - 12, z: FIELD.z - 5, r: 3.4 }; // 작은 연못 (못 들어감)
+export const FIELD_POND = { x: FIELD.x - 24, z: FIELD.z - 10, r: 3.4 }; // 작은 연못 (못 들어감)
 // 날개콩이 돌아다니는 자리 (가운데 x,z 를 반지름 r 로 빙 돈다). 나무·바위는 이 둘레를 피해 놓는다
 export const FIELD_MONSTERS = [
-  [6, -2, 2.6], [-4, 6, 2.2], [10, 9, 2.2], [-2, -12, 3], [13, -11, 2.4], [-15, 8, 2.2],
+  [12, -4, 2.6], [-8, 12, 2.2], [20, 18, 2.2], [-4, -24, 3], [26, -22, 2.4], [-30, 16, 2.2],
+  // 들판을 넓히며(넓이 4배) 더한 자리: 처음과 같은 빽빽함이 되게 18곳
+  [-20, -28, 2.4], [8, -36, 2.6], [30, -6, 2.4], [36, 10, 2.2], [-36, -6, 2.4], [-14, 30, 2.2],
+  [14, 31, 2.4], [30, 26, 2.2], [-27, 31, 2.2], [-36, -20, 2.4], [21, -33, 2.2], [-9, -38, 2.4],
+  [38, -16, 2.2], [-24, 2, 2.6], [7, 20, 2.2], [-17, -14, 2.2], [16, 6, 2.4], [-40, 6, 2],
 ].map(([x, z, r]) => ({ x: FIELD.x + x, z: FIELD.z + z, r }));
 
 // 포탈: 이 자리를 지나가면 to 번 포탈 앞(그 포탈이 바라보는 쪽 ARRIVE m)으로 순간이동
@@ -391,7 +394,7 @@ export const FIELD_MONSTERS = [
 export const PORTAL = { reach: 0.7, arrive: 2.0, half: 0.85, pillar: 0.22 };
 export const PORTALS = [
   { name: '들판', x: 5.4, z: 8.4, rot: Math.atan2(SPAWN.x - 5.4, SPAWN.z - 8.4), to: 1 }, // 광장 남동쪽, 분수를 바라봄
-  { name: '마을', x: FIELD.x, z: FIELD.z + 21, rot: Math.PI, to: 0 }, // 들판 남쪽 끝, 들판 안쪽(-z)을 바라봄
+  { name: '마을', x: FIELD.x, z: FIELD.z + 42, rot: Math.PI, to: 0 }, // 들판 남쪽 끝, 들판 안쪽(-z)을 바라봄
 ];
 export const portalArrive = (p) => ({ x: p.x + Math.sin(p.rot) * PORTAL.arrive, z: p.z + Math.cos(p.rot) * PORTAL.arrive, rot: p.rot });
 const portalPillars = (p) => [-1, 1].map((k) => ({ x: p.x + Math.cos(p.rot) * PORTAL.half * k, z: p.z - Math.sin(p.rot) * PORTAL.half * k, r: PORTAL.pillar }));
@@ -411,14 +414,14 @@ function generateField(seed = 20261123) {
   };
   const rnd = () => (rand() * 2 - 1) * FIELD.r;
   // 들판 안에 띄엄띄엄 선 나무 몇 그루 (넓게 트여 사냥하기 좋게)
-  for (let i = 0; i < 200 && trees.length < 14; i++) {
+  for (let i = 0; i < 800 && trees.length < 56; i++) {
     const x = FIELD.x + rnd();
     const z = FIELD.z + rnd();
     const s = 0.85 + rand() * 0.5;
     if (ok(x, z, 2.5, trees)) trees.push({ x, z, s, r: 0.55 * s, kind: rand() < 0.3 ? 1 : 0 });
   }
   const all = [...trees];
-  for (let i = 0; i < 200 && rocks.length < 16; i++) {
+  for (let i = 0; i < 800 && rocks.length < 64; i++) {
     const x = FIELD.x + rnd();
     const z = FIELD.z + rnd();
     const s = 0.45 + rand() * 0.7;
@@ -573,7 +576,7 @@ export const BUG_SHY = {
 };
 export const NET_CATCH = 0.42; // 그물 테가 지나간 길에서 이만큼 안에 있던 곤충이 잡힌다 (m)
 export const NET_ROOM = 3.2; // 휘두른 길은 캐릭터 둘레 이만큼 안이어야 믿는다 (m)
-export const BUG_COUNT = 11; // 마을에 늘 있는 곤충 수
+export const BUG_COUNT = 44; // 마을에 늘 있는 곤충 수
 // 곤충이 머무를 수 있는 풀밭: 갈 수 있는 곳이면서 광장·길·모래사장·강에서 떨어진 곳
 export function onGrass(x, z) {
   if (isBlocked(x, z, 0.3)) return false;

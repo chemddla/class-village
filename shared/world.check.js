@@ -14,7 +14,7 @@ import { isBlocked, PORTALS, portalArrive, FIELD, FIELD_POND, FIELD_MONSTERS, wa
 for (const p of PORTALS) assert.ok(!isBlocked(portalArrive(p).x, portalArrive(p).z), `${p.name} 포탈 도착 자리`);
 for (const p of PORTALS) assert.ok(!isBlocked(p.x, p.z), `${p.name} 포탈 가운데는 지나갈 수 있음`);
 assert.ok(!isBlocked(FIELD.x, FIELD.z));
-assert.ok(isBlocked(FIELD.x, FIELD.z - 40)); // 들판 바깥 숲
+assert.ok(isBlocked(FIELD.x, FIELD.z - 80)); // 들판 바깥 숲
 assert.ok(isBlocked(FIELD_POND.x, FIELD_POND.z));
 for (const m of FIELD_MONSTERS) assert.ok(!isBlocked(m.x + m.r, m.z), '날개콩 길');
 assert.equal(waterNear(FIELD.x, FIELD.z), null);
