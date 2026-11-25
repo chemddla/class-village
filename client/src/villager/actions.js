@@ -36,7 +36,7 @@ function crouch(P, c) {
 
 // 키프레임: kf(u, [u0, v0], [u1, v1], ...) — 구간마다 smoothstep으로 이어 붙인 값
 // 세 번째 값으로 그 구간의 빠르기 곡선을 바꿀 수 있다: 'in' 점점 빨라짐(내려찍기) · 'out' 확 나갔다가 느려짐(관성)
-const EASE = { in: (s) => s * s * s, out: (s) => 1 - (1 - s) ** 3 };
+const EASE = { in: (s) => s * s * s, out: (s) => 1 - (1 - s) ** 3, lin: (s) => s }; // lin: 고르게 (시간 늘이기용)
 function kf(u, ...pts) {
   if (u <= pts[0][0]) return pts[0][1];
   for (let i = 1; i < pts.length; i++) {
@@ -462,6 +462,23 @@ export const CLUB_STYLES = {
     posBack: BACK_R.pos, posHit: [-0.035, 0.135, 0.13], posEnd: [-0.01, 0.13, 0.15],
     twist: [-0.85, 0.15, 0.82], lean: [-0.2, 0.26, 0.34], crouch: 0.4, stance: 1,
     from: 'homerun', duration: 0.62, via: { dir: CLUB_SIDE[1], pos: CLUB_SIDE[0] } },
+  // 강타(스킬): 준비 자세에서 바로, 3타보다 허리를 훨씬 깊이 감고 골반까지 크게 돌린다. 무릎을 더 높이 들고, 내딛는 순간 더 낮게 주저앉는다
+  // 야구 풀스윙 (참고 연속 그림 5장면): ① 오른 어깨 옆에 세워 듦 → ② 몽둥이 끝을 뒤로 눕혀 힘을 실음(back) →
+  // ③ 두 손을 배 앞으로 끌어내리고 몽둥이 끝은 땅을 향함(dip) → ④ 두 팔을 쭉 펴며 끝을 수평까지 올려 앞을 맞힘(hit) →
+  // ⑤ 몸을 돌려 몽둥이가 머리 뒤로 수평으로 넘어감(end → 한 손으로 far)
+  // oneAt 부터는 실제 야구처럼 위쪽 손(오른손)을 놓아 옆으로 펴고, 아래쪽 손(왼손) 하나로 몽둥이를 왼 어깨 너머 등 뒤까지 더 넘긴다
+  // (far: 몽둥이 방향 · posFar: 왼손 자리). 끝에는 왼손이 몽둥이를 몸 앞 오른쪽으로 내려 오른손에 돌려준다
+  strike: { label: '강타 · 야구 풀스윙', back: [-0.3, 0.84, -0.45], elbowDown: true, hit: [-0.15, -0.04, 0.99], end: [0.6, 0.42, 0.68],
+    dip: { pos: [-0.04, 0.065, 0.15], dir: [-0.12, -0.96, 0.25] },
+    posBack: [-0.11, 0.215, 0.1], posHit: [-0.03, 0.1, 0.22], posEnd: [0.03, 0.17, 0.15],
+    oneAt: 0.6, far: [0.35, 0.3, -0.89], posFar: [0.07, 0.19, 0.06],
+    grip: -0.056, // grip: 왼손이 쥐는 자루 자리 (equipment.js club.twoHand)
+    reach: [0.015, -0.035], charge: true,
+    twist: [-2.2, 0.42, 1.9], lean: [-0.42, 0.3, 0.1], crouch: 0.62, stance: 1, kick: 1.15, hips: 0.6, coil: 0.85, power: 1,
+    // hold: 다 감아 든 꼭대기에서 [이때부터, 이때까지] 기를 모으듯 부르르 떨며 짧게 버티다가 단숨에 내리친다 (강타는 1.02초 중 0.09초쯤)
+    hold: [0.3, 0.39], duration: 1.02,
+    hitAt: 0.535, // 맞는 순간: 관절이 늦게 따라와 몽둥이가 실제로 수평에 닿는 때 (곡선은 0.5 에 수평)
+    via: { dir: CLUB_SIDE[1], pos: CLUB_SIDE[0] } },
   upper: { label: '아래에서 올려치기', back: [-0.62, -0.55, -0.56], hit: [-0.25, 0.5, 0.83],
     posBack: [-0.09, 0.07, 0.1], posHit: [-0.03, 0.15, 0.155], twist: [-0.6, 0.2, 0.45], lean: [0.3, -0.12, -0.2], crouch: 0.2, follow: 1.3 },
 };
@@ -575,6 +592,22 @@ const SWORD_STYLES = {
     elbowL: [[0, -0.55], [0.173, -0.6], [0.293, -1.1, 'in'], [0.62, -1.0]],
     fwdL: [[0, -0.5], [0.173, -0.55], [0.293, 0.3, 'in'], [0.62, 0.3]] },
 };
+// 강타(스킬): 3타(찌르기)를 준비 자세에서 바로, 더 크고 세게. 칼을 더 오래 겨누며 허리를 깊이 감아 오른 어깨를 뒤로 빼고 몸을 낮췄다가,
+// 더 크게 내디디며 온몸을 앞으로 던져 찌른다 (마을에서는 1.5m쯤 미끄러져 나가고 더 길게 맞는다: main.js)
+{
+  // 시각 바꾸기: 3타의 키 시각(0.173 당김 · 0.22 겨눔 · 0.293 찌름 · 0.4 · 0.62)을 강타 시각으로. 준비 자세에서 바로 시작하므로 당기는 데 더 오래 걸린다
+  const T = { 0.173: 0.26, 0.22: 0.34, 0.293: 0.42, 0.4: 0.52, 0.62: 0.7 };
+  const S3 = SWORD_STYLES.slash3;
+  SWORD_STYLES.strike = { ...S3, from: undefined, duration: 1.1, hitAt: 0.42, trail: [0.34, 0.46], lunge: 0.3, release: 0.82, level: [0.26, 0.38],
+    lungeLegs: [[-1.3, 1.25], [0.8, 0.15]],
+    keys: S3.keys.map((k, i) => ({ ...k, u: T[k.u], ...(i < 2 ? { reach: 0.115, arm: [-0.25, -0.5, 0.2] } : {}) })), // 더 뒤로 당겨 겨눈다
+    twist: [[0, 0], [0.26, -1.3], [0.34, -1.35], [0.42, 0.5, 'in'], [0.7, 0.4]],
+    lean: [[0, 0], [0.26, -0.1], [0.42, 0.38, 'in'], [0.52, 0.42], [0.7, 0.34]],
+    sink: [[0, 0.1], [0.26, 0.5], [0.34, 0.55], [0.42, 0.55, 'in'], [0.82, 0.45], [1, 0]],
+    armL: [[0, ARM_REST], [0.26, 0.85], [0.42, 1.45], [0.7, 1.4]],
+    elbowL: [[0, -0.3], [0.26, -0.55], [0.42, -1.25, 'in'], [0.7, -1.1]],
+    fwdL: [[0, 0], [0.26, -0.65], [0.42, 0.45, 'in'], [0.7, 0.4]] };
+}
 // 3타에 이어 치는 1타: 찌른 끝 자세에서 다시 어깨 위로 치켜든다 (1 → 2 → 3 → 1' → 2 → 3 …)
 SWORD_STYLES.slash1b = { ...SWORD_STYLES.slash1, from: 'slash3' };
 const WRIST_ONE = 1.3; // 한 손 쥐기의 기본 손목 한계 (equipment.js 의 WRIST_BEND 와 같게)
@@ -612,11 +645,13 @@ function swordSwing(name) {
       P['spine.ry'] = tw * 0.6;
       P['pelvis.ry'] = tw * 0.4;
       P['head.ry'] = -tw * 0.75; // 몸을 틀어도 눈은 앞을
-      crouch(P, kf(u, [0, prev ? 0.3 : 0.1], [Math.min(0.3, S.hitAt - 0.08), 0.25], [S.hitAt, 0.42, 'in'], [rel, 0.35], [1, 0]));
+      const sink = S.sink ? k(u, S.sink) : kf(u, [0, prev ? 0.3 : 0.1], [Math.min(0.3, S.hitAt - 0.08), 0.25], [S.hitAt, 0.42, 'in'], [rel, 0.35], [1, 0]);
+      crouch(P, sink);
       if (S.lunge) {
-        // 찌를 때 오른발을 앞으로 크게 내딛고 왼발은 뒤로 버틴다
+        // 찌를 때 오른발을 앞으로 크게 내딛고 왼발은 뒤로 버틴다 (강타는 더 크게: lungeLegs)
         const l = kf(u, [S.lunge, 0], [S.hitAt, 1, 'in'], [rel, 1], [1, 0]);
-        legs(P, l, [-1.0, 0.95], [0.5, 0.2]);
+        const [lr, ll] = S.lungeLegs ?? [[-1.0, 0.95], [0.5, 0.2]];
+        legs(P, l, lr, ll, S.sink ? sink : 0);
         P['head.rx'] = -k(u, S.lean) * 0.55 * (1 - back); // 숙여도 고개는 들어 앞을 본다
       } else wideStance(P, kf(u, [0, prev ? 0.8 : 0], [0.3, 0.9], [rel, 0.9], [1, 0]));
       P['spine.rx'] += k(u, S.lean) * (1 - back); // 다리 자세(legs)가 상체 숙임을 새로 쓰므로 그 뒤에 더한다
@@ -707,6 +742,14 @@ const SIDE4 = -0.42; // 4타 끝에서 상체를 왼쪽으로 기울이는 각 (
     sink: [[0, 0.55], [0.1, 0.65], [0.26, 0.6], [0.42, 0.25, 'in'], [0.6, 0, 'out'], [1, 0]],
     twist: [[0, 0.6], [0.1, 0.7], [0.26, 0.6], [0.42, 0.1, 'in'], [0.6, -0.9, 'out']] };
 }
+// 강타(스킬): 4타(올려 베기)를 준비 자세에서 바로, 더 크고 세게. 훨씬 깊이 웅크려 허리를 감았다가
+// 발 앞 낮은 곳에서 몸 전체를 펴며 살짝 뛰어올라 오른쪽 위 끝까지 베어 올린다 (hop: 몸이 뜨는 높이)
+DAGGER_STYLES.strike = { ...DAGGER_STYLES.stab4, from: undefined, duration: 0.62, tail: 0.3,
+  lean: [[0, 0.05], [0.18, 0.8], [0.3, 0.75], [0.42, 0.05, 'in'], [0.6, -0.34, 'out'], [0.8, -0.16], [1, 0]],
+  side: [[0, 0], [0.3, 0], [0.6, SIDE4 * 1.15, 'out'], [0.8, SIDE4 * 0.6], [1, 0]],
+  sink: [[0, 0.1], [0.18, 0.9], [0.3, 0.85], [0.42, 0.15, 'in'], [0.6, 0, 'out'], [1, 0]],
+  twist: [[0, 0], [0.18, 0.95], [0.3, 0.9], [0.42, 0.1, 'in'], [0.6, -1.25, 'out']],
+  hop: [[0.36, 0], [0.5, 0.12, 'out'], [0.66, 0, 'in']] };
 // 4타에 이어 치는 1타: 올려 벤 오른쪽 위 자세에서 팔을 오른쪽 옆으로 내리며, 아래를 향한 날을 아래 뒤로 돌려 눕혀 당긴다
 // (날이 앞 아래에서 뒤로 거의 반 바퀴 돌아야 해서, 곧장 가면 주먹이 한 장면 만에 뒤집힌다)
 DAGGER_STYLES.stab1b = { ...DAGGER_STYLES.stab1, from: 'stab4',
@@ -737,6 +780,7 @@ function daggerSwing(name) {
       wideStance(P, kf(u, [0, prev ? 0.8 : 0], [0.2, 0.9], [rel, 0.9], [1, 0]));
       P['spine.rx'] += S.lean ? kf(u, ...S.lean) : kf(u, [0, 0.05], [S.hitAt, 0.15], [rel, 0.12], [1, 0]) * (1 - back);
       if (S.lean) P['head.rx'] = -kf(u, ...S.lean) * 0.5; // 깊이 숙여도 고개는 들어 앞을 본다
+      if (S.hop) P['root.py'] = (P['root.py'] ?? 0) + kf(u, ...S.hop); // 베어 올리며 살짝 뛰어오른다
       if (S.side) { // 상체·머리를 옆으로 기울인다 (팔을 머리 위쪽으로 올릴 자리를 낸다)
         const z = kf(u, ...S.side);
         P['spine.rz'] = (P['spine.rz'] ?? 0) + z;
@@ -887,9 +931,13 @@ function clubSwing(S) {
   const startDir = prev ? (prev.end ? unit(prev.end) : slerpDir(unit(prev.back), unit(prev.hit), prev.follow ?? 1.22)) : CLUB_READY;
   const END = S.end ? unit(S.end) : null;
   // 젖힘 → 타격 → 관성 끝을 한 줄의 곡선으로: 타격(q = 1)에서 방향이 꺾이지 않고 그대로 지나간다
+  // dip: 젖힘과 타격 사이에 거쳐 가는 낮은 자세 (타격 뒤 곡선도 거기서 이어지는 방향으로)
+  const DIP = S.dip ? unit(S.dip.dir) : null;
+  const preP = S.dip ? S.dip.pos : S.posBack;
+  const preD = DIP ?? BACK;
   const sweep = (q) => (q <= 1
     ? { pos: curve(S.posBack, S.posBack, S.posHit, S.posEnd, q), dir: unit(curve(BACK, BACK, HIT, END, q)) }
-    : { pos: curve(S.posBack, S.posHit, S.posEnd, S.posEnd, q - 1), dir: unit(curve(BACK, HIT, END, END, q - 1)) });
+    : { pos: curve(preP, S.posHit, S.posEnd, S.posEnd, q - 1), dir: unit(curve(preD, HIT, END, END, q - 1)) });
   const wide = S.stance ?? 0;
   const ws = prev ? (prev.stance ?? 0) : 0;
   // 이어 치는 동작은 몸(허리 비틀기·숙임·무릎)도 앞 동작이 끝난 자세에서 시작한다: 0에서 시작하면 넘어가는 순간 몸이 홱 풀렸다 다시 감긴다
@@ -901,11 +949,15 @@ function clubSwing(S) {
   const lns = prev ? prev.lean[2] : 0;
   const cs = prev ? (prev.crouch ?? 0.5) * 0.9 : 0;
   return {
-    duration: S.duration ?? 0.72, hitAt: 0.5, equip: S.equip ?? 'club', rate: 36, trail: [0.42, 0.68],
-    fn(u, P, fx) {
-      twoHand(P, fx, u < 0.7);
+    duration: S.duration ?? 0.72, hitAt: S.hitAt ?? 0.5, equip: S.equip ?? 'club', rate: 36, trail: [0.42, 0.68],
+    fn(u0, P, fx) {
+      // 기 모으기(hold): 동작 시간을 늘려 감아 든 꼭대기(원래 시각 0.34~0.37)에서 몸 전체가 감긴 채 멈춰 있게 한다.
+      // 그 앞은 조금 빨리 감고, 그 뒤는 원래 시각 0.37 → 타격 0.5 를 그대로 단숨에 휘두른다
+      const u = S.hold ? kf(u0, [0, 0], [S.hold[0], 0.34, 'lin'], [S.hold[1], 0.37, 'lin'], [0.5, 0.5, 'lin'], [1, 1, 'lin']) : u0;
+      const one = S.oneAt != null && u > S.oneAt; // 한 손으로 넘기는 구간
+      twoHand(P, fx, !one && u < 0.7);
       // 되튐은 작고 느리게: 크게 떨면 내리친 뒤 몸 전체가 덜컥거린다
-      const shake = u > 0.5 ? Math.sin((u - 0.5) * 40) * Math.exp(-(u - 0.5) * 16) * 0.5 : 0;
+      const shake = u > 0.5 ? Math.sin((u - 0.5) * 40) * Math.exp(-(u - 0.5) * 16) * (S.power ? 1.1 : 0.5) : 0;
       crouch(P, kf(u, [0, cs], [0.3, 0.15], [0.42, 0.1], [0.5, deep * 0.8, 'in'], [0.62, deep, 'out'], [0.82, deep * 0.6], [1, 0]));
       // 준비 → 젖힘까지 한 번(back), 젖힌 데서 타격을 지나 관성까지는 같은 원호 위를 한 번에(swing: 0 → 타격 1 → 관성) 간다.
       // 타격에서 다른 원호로 갈아타면 가장 빠른 순간에 방향이 꺾여 덜컥거린다
@@ -916,15 +968,17 @@ function clubSwing(S) {
         // 이어 치기: 시작 → 거쳐 가는 자세 → 젖힘 → 타격을 한 줄의 부드러운 곡선으로 잇고, 멈추지 않고 점점 빨라지며 지나간다
         // (젖힌 꼭대기에서도 속도가 남아 있어 채찍처럼 이어진다). 타격 뒤는 같은 방향으로 조금 더 나가며 느려진다
         // charge: 젖힌 자세(p = 2) 바로 앞까지 점점 느려지며 올라가 꼭대기에서 아주 천천히 마저 감기다가, 거기서 단숨에 휘두른다
-        const p = S.charge ? kf(u, [0, 0], [0.26, 1.9, 'out'], [0.35, 2.04], [0.5, 3, 'in'])
+        // dip: 젖힘(p = 2) → 낮은 자세(3)로 떨어뜨렸다가 → 타격(4)으로 퍼 올린다
+        const p = S.dip ? kf(u, [0, 0], [0.26, 1.9, 'out'], [0.35, 2.04], [0.45, 3, 'in'], [0.5, 4, 'lin'])
+          : S.charge ? kf(u, [0, 0], [0.26, 1.9, 'out'], [0.35, 2.04], [0.5, 3, 'in'])
           : u < 0.5 ? 3 * (u / 0.5) ** 2.2 : 3;
-        const i = Math.min(2, Math.floor(p));
+        const posPts = [startPos, S.via.pos, S.posBack, ...(S.dip ? [S.dip.pos] : []), S.posHit, ...(END ? [S.posEnd] : [])];
+        const dirPts = [startDir, VIA, BACK, ...(DIP ? [DIP] : []), HIT, ...(END ? [END] : [])];
+        const last = S.dip ? 3 : 2; // 마지막으로 쓰는 구간 (타격까지)
+        const i = Math.min(last, Math.floor(p));
         const t = p - i;
         const at = (pts) => curve(pts[Math.max(0, i - 1)], pts[i], pts[i + 1], pts[Math.min(pts.length - 1, i + 2)], t);
-        fx.grip = u < 0.5
-          ? { pos: at(END ? [startPos, S.via.pos, S.posBack, S.posHit, S.posEnd] : [startPos, S.via.pos, S.posBack, S.posHit]),
-            dir: unit(at(END ? [startDir, VIA, BACK, HIT, END] : [startDir, VIA, BACK, HIT])) }
-          : after(swing);
+        fx.grip = u < 0.5 ? { pos: at(posPts), dir: unit(at(dirPts)) } : after(swing);
       } else if (S.side) {
         // 준비 자세 → 오른쪽 옆으로 눕힘 → 어깨 너머로 젖힘 (머리 위를 지나지 않게)
         fx.grip = u < 0.4 ? gripPath(u, [0, startPos, startDir], [0.2, ...CLUB_SIDE], [0.4, S.posBack, S.back]) : after(swing);
@@ -932,6 +986,23 @@ function clubSwing(S) {
         fx.grip = u < 0.4
           ? { pos: mix(startPos, S.posBack, back), dir: slerpDir(startDir, BACK, back) }
           : after(swing);
+      }
+      if (S.hold) {
+        // 기 모으기: 꼭대기에서 몽둥이 끝이 잘게 떨리고, 몸을 꾹 눌러 낮추며 숨을 들이쉬듯 어깨가 살짝 솟는다
+        const q = kf(u0, [S.hold[0] - 0.03, 0], [S.hold[0] + 0.02, 1], [S.hold[1], 1], [S.hold[1] + 0.03, 0]);
+        const tr = Math.sin(u0 * S.duration * 95) * 0.035 * q;
+        fx.grip = { ...fx.grip, dir: unit([fx.grip.dir[0] + tr, fx.grip.dir[1], fx.grip.dir[2] - tr * 0.6]) };
+      }
+      if (one) {
+        // 오른손을 놓고 왼손 하나로: 두 손으로 쥐던 자리(왼손이 쥔 자루)에서 출발해 몽둥이를 왼 어깨 너머 등 뒤로 더 넘긴다.
+        // 끝(0.8~)에는 몽둥이를 오른 허리 앞으로 내려 오는 동안 서서히 오른손에 돌려준다 (w → 0)
+        const d0 = unit(fx.grip.dir);
+        const from = fx.grip.pos.map((x, n) => x + d0[n] * S.grip);
+        const k = kf(u, [S.oneAt, 0], [S.oneAt + 0.15, 1, 'out']);
+        const back = kf(u, [0.8, 0], [0.97, 1]);
+        const pos = mix(mix(from, S.posFar, k), [-0.04, 0.06, 0.13], back);
+        const dir = slerpDir(slerpDir(d0, unit(S.far), k), unit([-0.15, 0.6, 0.78]), back);
+        fx.leftLead = { pos, dir, w: kf(u, [S.oneAt, 0], [S.oneAt + 0.03, 1], [0.84, 1], [0.97, 0]) };
       }
       if (S.elbowDown) {
         // 팔꿈치 방향: 기본(바깥 옆) → 아래 → 휘두르며 다시 기본으로. 방향만 부드럽게 바꿔 팔이 튀지 않게 한다
@@ -1008,6 +1079,20 @@ function clubSwing(S) {
         }
       } else {
         P['root.sy'] = kf(u, [0.2, 0], [0.42, 0.04], [0.53, -0.05], [0.78, 0]);
+      }
+      if (S.oneAt != null) {
+        // 놓은 오른팔: 휘두르던 힘 그대로 앞쪽 오른편으로 쭉 펴서 균형을 잡았다가, 몽둥이를 돌려받으러 내려온다
+        const r = kf(u, [S.oneAt, 0], [S.oneAt + 0.08, 1, 'out'], [0.8, 1], [0.95, 0]);
+        P['shoulderR.rz'] += (-1.1 - P['shoulderR.rz']) * r;
+        P['shoulderR.rx'] += (-0.8 - P['shoulderR.rx']) * r;
+        P['elbowR.rx'] += (-0.15 - P['elbowR.rx']) * r;
+      }
+      if (S.hold) {
+        // 기 모으는 동안: 몸을 꾹 웅크려 힘을 누르고(살짝 납작), 고개를 숙여 앞을 노려본다. 온몸이 잘게 떨린다
+        const q = kf(u0, [S.hold[0] - 0.03, 0], [S.hold[0] + 0.02, 1], [S.hold[1], 1], [S.hold[1] + 0.03, 0]);
+        P['root.sy'] -= 0.035 * q;
+        P['head.rx'] += 0.1 * q;
+        P['spine.rz'] += Math.sin(u0 * S.duration * 80) * 0.02 * q;
       }
     },
   };
@@ -1224,6 +1309,9 @@ Object.assign(ACTIONS, {
   swordSlash2: swordSwing('slash2'),
   swordSlash3: swordSwing('slash3'),
   swordSlash4: swordSwing('slash1b'), // 3타에 이어 치는 1타
+  clubStrike: clubSwing(CLUB_STYLES.strike), // 강타(스킬): 몽둥이 3타를 더 크게
+  swordStrike: swordSwing('strike'), // 강타(스킬): 목검 찌르기를 더 크게
+  daggerStrike: daggerSwing('strike'), // 강타(스킬): 단검 4타(올려 베기)를 뛰어오르며 더 크게
   daggerStab1: daggerSwing('stab1'),
   daggerStab2: daggerSwing('stab2'),
   daggerStab3: daggerSwing('stab3'),

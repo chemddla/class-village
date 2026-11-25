@@ -68,6 +68,7 @@ const ACTS = {
   [ANIM.STAFF_CAST]: 'staffBolt', [ANIM.STAFF_CHARGE]: 'staffCharge', [ANIM.STAFF_FIRE]: 'staffFire', [ANIM.STAFF_BIG]: 'staffBig',
   [ANIM.DAGGER1]: 'daggerStab1', [ANIM.DAGGER2]: 'daggerStab2', [ANIM.DAGGER3]: 'daggerStab3', [ANIM.DAGGER4]: 'daggerStab4',
   [ANIM.DAGGER_AIR]: 'daggerAir', [ANIM.DAGGER_SLAM]: 'daggerSlam', [ANIM.DAGGER_DASH]: 'daggerDash', [ANIM.DAGGER_AIR2]: 'daggerAir2', [ANIM.DAGGER5]: 'daggerStab5', [ANIM.DAGGER_DASH2]: 'daggerDash2',
+  [ANIM.STRIKE_CLUB]: 'clubStrike', [ANIM.STRIKE_SWORD]: 'swordStrike', [ANIM.STRIKE_DAGGER]: 'daggerStrike', // 강타 스킬
 };
 // 앞 동작을 이어받는 동작: 뛰어오른 도중의 공중 공격은 점프가 흐른 만큼 지난 자리에서 시작해 높이가 끊기지 않는다
 const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [ANIM.SLASH_AIR]: ANIM.JUMP, [ANIM.SLASH_SLAM]: ANIM.FLIP, [ANIM.DAGGER_AIR]: ANIM.JUMP, [ANIM.DAGGER_SLAM]: ANIM.FLIP, [ANIM.DAGGER_AIR2]: ANIM.DAGGER_AIR,
@@ -295,12 +296,15 @@ export class Character {
     const cur = this.current;
     const M = this.marks;
     if (cur === 'jump' || cur === 'clubAir' || cur === 'swordAir' || cur === 'bowAir' || cur === 'daggerAir' || cur === 'daggerAir2') {
-      if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); this.footPuff(5, 0.7); }
+      // 공격(점프 공격)일 때는 발밑 먼지를 내지 않는다 (그냥 점프만)
+      const puff = cur === 'jump';
+      if (!M.up && this.actSec >= 0.07) { M.up = 1; this.squash(0.88, 1.15, 0.88); if (puff) this.footPuff(5, 0.7); }
       // 발이 땅에 닿는 순간(진행도 0.78 = 0.74초)에 맞춘다: 더 이르면 아직 공중에서 납작해지고 먼지가 난다
-      if (!M.down && this.actSec >= LAND.jump) { M.down = 1; this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
+      if (!M.down && this.actSec >= LAND.jump) { M.down = 1; if (puff) this.footPuff(10, 1, true); } // 착지는 먼지만 (몸을 납작하게 튕기면 머리가 출렁인다)
     } else if (cur === 'flip' || cur === 'clubSlam' || cur === 'swordSlam' || cur === 'bowSlam' || cur === 'daggerSlam') {
-      if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
-      if (!M.down && this.actSec >= (cur === 'bowSlam' ? BOW_SLAM_LAND : cur === 'daggerSlam' ? (this.actStart || 0.2) + DIVE.raise + DIVE.time / DIVE.rate : LAND.flip)) { M.down = 1; this.footPuff(12, 1.2, true); }
+      const puff = cur === 'flip'; // 공격(더블 점프 공격)일 때는 먼지를 내지 않는다 (그냥 공중제비만)
+      if (!M.up) { M.up = 1; this.squash(0.86, 1.18, 0.86); if (puff) FX.burst('dust', 8, this.x, this.groundY + 0.6, this.z, { ring: true, floor: this.groundY, power: 0.8 }); }
+      if (puff && !M.down && this.actSec >= (cur === 'bowSlam' ? BOW_SLAM_LAND : cur === 'daggerSlam' ? (this.actStart || 0.2) + DIVE.raise + DIVE.time / DIVE.rate : LAND.flip)) { M.down = 1; this.footPuff(12, 1.2, true); }
       // 공중제비 잔상: 머리~골반을 잇는 띠가 몸이 돈 자리를 따라 남는다
       if (cur === 'flip' && this.actSec < 0.55) {
         rig.head.getWorldPosition(vB);
@@ -312,7 +316,7 @@ export class Character {
     // 활 달리기 공격: 뒤돌아 미끄러지는 동안 발밑에서 먼지가 인다
     if (cur === 'bowBack' && this.actSec < 0.55) {
       this.stepT -= dt;
-      if (this.stepT <= 0) { this.stepT = 0.07; this.footPuff(2, 0.8); }
+      if (this.stepT <= 0) this.stepT = 0.07; // 공격이라 발밑 먼지는 내지 않는다
     }
 
     // 달리기: 발이 땅을 찰 때마다 뒤로 먼지 퐁퐁

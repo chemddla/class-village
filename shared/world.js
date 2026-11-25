@@ -49,6 +49,7 @@ export const ANIM = {
   DAGGER5: 53, // 나무 단검 4타: 내려찍은 자세에서 그대로 올려 베기 (DAGGER4 는 4타에 이어 치는 1타)
   DAGGER_DASH2: 54, // 나무 단검 대시 공격 2타 (팔꿈치를 펴며 되베기)
   STAFF_CHARGE: 55, STAFF_FIRE: 56, STAFF_BIG: 57, // 마법 지팡이: 꾹 눌러 기 모으기 · 다 모으기 전에 떼어 보통 볼 쏘기 · 다 모아 큰 볼 쏘기
+  STRIKE_CLUB: 58, STRIKE_SWORD: 59, STRIKE_DAGGER: 60, // 강타 스킬: 몽둥이 · 목검 · 나무 단검 (기본 공격 마지막 타를 더 크고 세게)
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
@@ -119,6 +120,29 @@ export function abilitiesOf(s) {
     miss: Math.max(0.01, 0.05 - 0.001 * b('dex')),
     dodgeCool: 0.3 * Math.max(0.5, 1 - 0.01 * b('luk') - 0.005 * b('dex')),
   };
+}
+// ── 스킬 ──
+// type: 'active' 는 키를 눌러 쓰고 마나·대기 시간이 든다, 'passive' 는 배우면 늘 저절로 효과가 붙는다
+// job: 배우는 직업 ('' = 모험가 시절 스킬, 전직해도 그대로 쓴다) · lv: 배우는 레벨
+// 액티브: mp 마나 · cool 다시 쓸 수 있기까지(초) · power 피해 배수 · weapons 들고 쓸 수 있는 무기 · key 단축키
+export const SKILL_TYPES = { active: '액티브', passive: '패시브' };
+export const SKILLS = {
+  strike: { name: '강타', icon: '💥', type: 'active', job: '', lv: 1, mp: 15, cool: 3, power: 2.2, key: 'A',
+    weapons: { club: ANIM.STRIKE_CLUB, woodSword: ANIM.STRIKE_SWORD, dagger: ANIM.STRIKE_DAGGER },
+    desc: '들고 있는 무기의 마지막 타를 온몸으로 크게 휘둘러 세게 친다. 이어 치는 중에 써도 바로 나간다' },
+};
+// 강타에 맞는지: 몽둥이·단검은 보통 휘두르기보다 멀리·넓게 (앞쪽 1.8m · 좌우 약 69°), 목검은 찌르기를 더 길게 (앞으로 3m, 옆으로 0.6m)
+export function inStrike(ax, az, rot, bx, bz, thrust = false) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  if (thrust) {
+    const ahead = dx * Math.sin(rot) + dz * Math.cos(rot);
+    const side = dx * Math.cos(rot) - dz * Math.sin(rot);
+    return ahead > -0.1 && ahead < 3 && Math.abs(side) < 0.6;
+  }
+  if (Math.hypot(dx, dz) > 1.8) return false;
+  const d = Math.atan2(dx, dz) - rot;
+  return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) < 1.2;
 }
 export const PICK_REACH = 2.2; // 과일나무 둘레에서 이만큼 안이면 흔들 수 있음 (m)
 export const SHAKE_DROP = [3, 4]; // 과일나무를 흔들면 떨어지는 개수 (이 사이에서 무작위, 남은 것보다 많이는 안 떨어짐)

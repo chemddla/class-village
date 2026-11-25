@@ -139,6 +139,8 @@ const COMBAT_ACTIONS = {
   daggerAir: '단검 점프 베기', daggerAir2: '단검 점프 2타', daggerSlam: '단검 내려가며 베기(더블 점프)', daggerDash: '단검 대시 베기', daggerDash2: '단검 대시 2타',
   // 몽둥이 휘두르기 시안 (비교용)
   clubSmash: '몽둥이 A · 대각선(1타)', clubSmash2: '몽둥이 2타', clubSmash3: '몽둥이 3타(야구 스윙)', clubSmash4: '몽둥이 4타(이어 치는 1타)', clubAir: '몽둥이 공중 공격', clubSlam: '몽둥이 내리찍기(더블 점프)', clubDash: '몽둥이 대시 공격', clubOverhead: '몽둥이 B · 내려찍기', clubSide: '몽둥이 C · 옆으로', clubUpper: '몽둥이 D · 올려치기',
+  // 스킬
+  clubStrike: '강타 · 몽둥이', swordStrike: '강타 · 목검', daggerStrike: '강타 · 단검',
 };
 // 타격 시점 콜백을 눈으로 확인할 수 있도록 잠깐 띄우는 문구
 const HIT_TEXT = {

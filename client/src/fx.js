@@ -167,6 +167,68 @@ const KINDS = {
   sparkle: { colors: [0xffffff, 0xfff6c2, 0xd8f4ff], glow: true, size: [0.05, 0.09], g: -0.8, drag: 3, life: [0.5, 0.8], speed: [0.4, 1.2], up: [0.4, 1.4] },
 };
 
+// ── 기 모으기 빛줄기: 둘레 여기저기에서 가는 노란 선이 한 점(몽둥이)으로 쭉 빨려 들어간다 ──
+// 선 하나는 길쭉한 막대: 바깥에서 출발해 점점 빨라지며 가운데로 모이고, 다가갈수록 짧고 가늘어진다
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const gv = new THREE.Vector3();
+const STREAK_COLORS = [0xffe14d, 0xfff3a0, 0xffc21a];
+class Streaks {
+  constructor(scene) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false });
+    this.mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, 200);
+    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(200 * 3), 3);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 2;
+    scene.add(this.mesh);
+    this.list = [];
+    this.gathers = [];
+  }
+
+  // target(out): 모이는 자리를 out 에 담아 돌려준다 (매 장면 다시 물어 움직이는 몽둥이를 따라간다). alive(): false 가 되면 그만
+  start(target, { dur = 0.16, rate = 70, radius = [0.8, 1.3], life = 0.16, alive = () => true } = {}) {
+    this.gathers.push({ target, dur, rate, radius, life, alive, t: 0, acc: 0 });
+  }
+
+  update(dt) {
+    this.gathers = this.gathers.filter((g) => {
+      if (!g.alive()) return false;
+      g.t += dt;
+      g.acc += g.rate * dt;
+      for (; g.acc >= 1; g.acc -= 1) {
+        // 방향은 둘레 아무 데나, 다만 땅속에서 올라오지 않게 아래쪽은 덜
+        const a = Math.random() * Math.PI * 2;
+        const y = Math.random() * 1.5 - 0.5;
+        const d = new THREE.Vector3(Math.cos(a), y, Math.sin(a)).normalize();
+        this.list.push({ g, d, r0: rnd(...g.radius), age: 0, life: g.life * rnd(0.85, 1.15), color: STREAK_COLORS[Math.floor(Math.random() * STREAK_COLORS.length)] });
+      }
+      return g.t < g.dur;
+    });
+    let n = 0;
+    const L = this.list;
+    for (let i = 0; i < L.length && n < 200; i++) {
+      const s = L[i];
+      s.age += dt;
+      const k = s.age / s.life;
+      if (k >= 1 || !s.g.alive()) continue;
+      const r = s.r0 * (1 - k * k); // 점점 빨라지며 모인다
+      const len = Math.min(0.6, 0.15 + r * 0.5);
+      const w = 0.045 * (1 - k * 0.6);
+      s.g.target(gv);
+      pv.copy(s.d).multiplyScalar(r + len / 2).add(gv);
+      qq.setFromUnitVectors(Y_AXIS, s.d);
+      m4.compose(pv, qq, sv.set(w, len, w));
+      this.mesh.setMatrixAt(n, m4);
+      this.mesh.setColorAt(n, cc.setHex(s.color));
+      L[n++] = s;
+    }
+    L.length = n;
+    this.mesh.count = n;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.mesh.instanceColor.needsUpdate = true;
+  }
+}
+
 export const FX = {
   pools: null,
   scene: null,
@@ -182,6 +244,7 @@ export const FX = {
       solid: new Pool(scene, new THREE.IcosahedronGeometry(1, 0), solid),
       glow: new Pool(scene, starGeo, glow),
     };
+    this.streaks = new Streaks(scene);
   },
 
   // kind 종류를 n개 (x,y,z)에서 터뜨림. dir: [dx, dz] 쪽으로 더 많이 · floor: 바닥 높이 · spread: 흩어지는 각
@@ -207,6 +270,9 @@ export const FX = {
   },
 
   trail(opts) { return new Trail(this.scene, opts); },
+
+  // 기 모으기: 노란 빛줄기들이 target 자리로 모여든다 (Streaks.start 참고)
+  gather(target, opts) { this.streaks?.start(target, opts); },
 
   // 히트스톱: 이 시간만큼 캐릭터·파티클을 멈춘다 (카메라는 계속 움직임)
   hitstop(sec) { this.stop = Math.max(this.stop, sec); },
@@ -253,6 +319,7 @@ export const FX = {
     if (!this.pools) return;
     this.pools.solid.update(dt);
     this.pools.glow.update(dt);
+    this.streaks.update(dt);
     this.nums = this.nums.filter((d) => {
       d.t += dt;
       const k = d.t / 0.8;

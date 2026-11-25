@@ -4,6 +4,7 @@ import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
   ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL,
+  SKILLS, SKILL_TYPES, inStrike,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
 import { buildField } from './field.js';
@@ -147,7 +148,8 @@ const HIT_DELAY = { [ANIM.SMASH]: 360, [ANIM.SMASH2]: 310, [ANIM.SMASH3]: 390, [
   [ANIM.SLASH1]: 282, [ANIM.SLASH2]: 232, [ANIM.SLASH3]: 264, [ANIM.SLASH4]: 282, // 목검: 동작 길이 × hitAt
   [ANIM.SLASH_AIR]: 190, [ANIM.SLASH_SLAM]: 400, [ANIM.SLASH_DASH]: 300, // 목검 공중·내려베기·대시 (몽둥이와 같은 때)
   [ANIM.DAGGER1]: 184, [ANIM.DAGGER2]: 136, [ANIM.DAGGER3]: 207, [ANIM.DAGGER5]: 168, [ANIM.DAGGER4]: 184, // 나무 단검: 짧고 빠르게
-  [ANIM.DAGGER_AIR]: 150, [ANIM.DAGGER_AIR2]: 120, [ANIM.DAGGER_DASH2]: 120 / DASH_RATE, [ANIM.DAGGER_SLAM]: (DIVE.raise + DIVE.time / DIVE.rate) * 1000 + 20, [ANIM.DAGGER_DASH]: 360 / DASH_RATE }; // 단검 점프 베기 · 내려가며 베기(착지 때) · 대시 베기
+  [ANIM.DAGGER_AIR]: 150, [ANIM.DAGGER_AIR2]: 120, [ANIM.DAGGER_DASH2]: 120 / DASH_RATE, [ANIM.DAGGER_SLAM]: (DIVE.raise + DIVE.time / DIVE.rate) * 1000 + 20, [ANIM.DAGGER_DASH]: 360 / DASH_RATE, // 단검 점프 베기 · 내려가며 베기(착지 때) · 대시 베기
+  [ANIM.STRIKE_CLUB]: 546, [ANIM.STRIKE_SWORD]: 462, [ANIM.STRIKE_DAGGER]: 260 }; // 강타: 몽둥이(1.02초 × 0.535) · 목검(1.1초 × 0.42) · 단검(0.62초 × 0.42)
 // 연속 공격: 휘두르는 중에 또 누르면(또는 누르고 있으면) 다음 타로 이어진다. 1타 → 2타 → 3타 → 4타 → 2타 → 3타 → …
 // (3타는 야구 배트처럼 수평으로 크게 휘두르고, 4타는 3타에서 이어지도록 만든 1타. 서로의 끝 자세에서 시작해 끊기지 않는다)
 const NEXT_SWING = { [ANIM.SMASH]: ANIM.SMASH2, [ANIM.SMASH2]: ANIM.SMASH3, [ANIM.SMASH3]: ANIM.SMASH4, [ANIM.SMASH4]: ANIM.SMASH2,
@@ -173,7 +175,11 @@ const AIRBORNE = new Set([ANIM.JUMP, ANIM.FLIP, ANIM.SMASH_AIR, ANIM.SMASH_SLAM,
 const ATTACKS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, ANIM.SMASH_AIR, ANIM.SMASH_SLAM, ANIM.SMASH_DASH,
   ANIM.SLASH1, ANIM.SLASH2, ANIM.SLASH3, ANIM.SLASH4, ANIM.SLASH_AIR, ANIM.SLASH_SLAM, ANIM.SLASH_DASH,
   ANIM.BOW_AIR, ANIM.BOW_SLAM, ANIM.BOW_BACK, ANIM.STAFF_CAST, ANIM.STAFF_CHARGE, ANIM.STAFF_FIRE, ANIM.STAFF_BIG, // 활 점프·더블 점프·달리기 공격 · 지팡이
-  ANIM.DAGGER1, ANIM.DAGGER2, ANIM.DAGGER3, ANIM.DAGGER4, ANIM.DAGGER5, ANIM.DAGGER_AIR, ANIM.DAGGER_SLAM, ANIM.DAGGER_DASH, ANIM.DAGGER_AIR2, ANIM.DAGGER_DASH2]);
+  ANIM.DAGGER1, ANIM.DAGGER2, ANIM.DAGGER3, ANIM.DAGGER4, ANIM.DAGGER5, ANIM.DAGGER_AIR, ANIM.DAGGER_SLAM, ANIM.DAGGER_DASH, ANIM.DAGGER_AIR2, ANIM.DAGGER_DASH2,
+  ANIM.STRIKE_CLUB, ANIM.STRIKE_SWORD, ANIM.STRIKE_DAGGER]); // 강타 스킬
+// 강타: 휘두르는 동안 보는 쪽으로 힘차게 나아간다 ([시작, 끝](초), 가장 빠를 때 m/초. 서버 이동 검사 0.1초에 1.3m 안쪽)
+// 몽둥이 0.6m쯤 · 목검 1.5m쯤(온몸을 던져 찌른다) · 단검 0.5m쯤(뛰어오르며)
+const STRIKE_STEP = { [ANIM.STRIKE_CLUB]: [[0.42, 0.62], 4.5], [ANIM.STRIKE_SWORD]: [[0.36, 0.58], 11], [ANIM.STRIKE_DAGGER]: [[0.16, 0.36], 4] };
 const DASH_SPEED = RUN_SPEED * 1.55; // 대시 공격으로 뛰어드는 빠르기 (내리친 뒤에는 멈춘다)
 const DODGE = { speed: RUN_SPEED * 1.05, time: 0.4, cool: 0.3 }; // Space 회피 구르기: 방향키 쪽(없으면 정면)으로 구르며 나아가는 빠르기·시간 (speed는 서버 허용 거리 1.6배 안으로)
 // 목검 3타(찌르기): 칼을 내지르는 동안(초) 앞으로 미끄러져 나간다. 가장 빠를 때 THRUST_SPEED, 모두 1m쯤 (팔을 쭉 펴고 크게 내디딘다)
@@ -227,6 +233,7 @@ function showXp(total, prev) {
   myXp = total;
   ab = abilitiesOf(statsOf(lv, myJob));
   renderInfo();
+  renderSkills();
   ui.xp.querySelector('i').style.width = `${(xp / need) * 100}%`;
   ui.xp.querySelector('em').textContent = lv;
   ui.xp.title = `경험치 ${xp} / ${need}`;
@@ -327,9 +334,11 @@ function hitFx(char, action) {
   if (action === 'bowRelease' || action === 'bowAir' || action === 'bowSlam' || action === 'bowBack') { arrows.shoot(char, char === me, BOW_PITCH[action] ?? 0, false, action === 'bowRelease' ? char.bowPower ?? 1 : 1); return; }
   if (action === 'staffBolt' || action === 'staffFire' || action === 'staffBig') { arrows.shoot(char, char === me, 0, true, action === 'staffBig' ? BOLT.big : 1); return; } // 지팡이 끝에서 에너지 볼 (다 모아 쏘면 크게)
   const slam = action === 'clubSlam' || action === 'swordSlam';
-  const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
+  const strike = /^(club|sword|dagger)Strike$/.test(action) ? SKILLS.strike : null; // 강타 스킬: 더 멀리·넓게, 더 세게
+  const power = strike?.power ?? 1;
+  const thrust = action === 'swordSlash3' || action === 'swordStrike'; // 찌르기는 앞으로 길고 좁게 맞는다
   const dive = action === 'daggerSlam'; // 단검 더블 점프 공격: 내려온 길 전체가 맞는다
-  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$|^daggerStab\d$|^daggerAir2?$|^daggerSlam$|^daggerDash2?$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
+  if (/^clubSmash\d|^clubAir$|^clubSlam$|^clubDash$|^swordSlash\d$|^swordAir$|^swordSlam$|^swordDash$|^daggerStab\d$|^daggerAir2?$|^daggerSlam$|^daggerDash2?$|Strike$/.test(action)) action = 'clubSmash'; // 이어 치는 타·공중·대시 공격·목검도 타격 연출은 같다
   if (action === 'chopAgain' || action === 'chopAgain2') action = 'chop';
   const fx = Math.sin(char.targetRot);
   const fz = Math.cos(char.targetRot);
@@ -343,29 +352,29 @@ function hitFx(char, action) {
 
   if (action === 'clubSmash' || action === 'chop') {
     // 몽둥이: 사람 → 바위 → 나무 → 땅 순서로 맞은 것을 찾는다 · 도끼: 나무
-    const reach = thrust ? 1.9 : dive ? 0.6 : 0.95;
+    const reach = thrust ? (strike ? 2.3 : 1.9) : dive ? 0.6 : strike ? 1.15 : 0.95;
     const hx = char.x + fx * reach;
     const hz = char.z + fz * reach;
-    const hits = thrust ? inThrust : dive ? inDive : inSwing;
+    const hits = strike ? (ax, az, rot, bx, bz) => inStrike(ax, az, rot, bx, bz, thrust) : thrust ? inThrust : dive ? inDive : inSwing;
     const victims = action === 'clubSmash' ? [me, ...[...others.values()].map((o) => o.char)].filter((c) => c && c !== char && hits(char.x, char.z, char.targetRot, c.x, c.z)) : [];
     const rock = action === 'clubSmash' ? village.nearRock(hx, hz, 0.7) : -1;
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
     // 몬스터: 휘두른 범위 안에 있는 것은 모두 맞는다 (한 번 휘둘러 여럿)
-    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => { const k = rollHit(char === me); const h = m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me, k * atkMul(char === me, meleeStat())); return h && { ...h, k }; }).filter(Boolean) : [];
+    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => { const k = rollHit(char === me); const h = m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me, k * atkMul(char === me, meleeStat()) * power); return h && { ...h, k }; }).filter(Boolean) : [];
     if (char === me) for (const m of monHits) if (m.dead) room?.send('kill');
     // 곤충: 휘두른 범위 안에 있으면 놀라 날아간다 (내가 휘둘렀을 때만 서버에 알림)
     if (action === 'clubSmash' && char === me) spookBugs((b) => b.y - gy < 2.2 && hits(char.x, char.z, char.targetRot, b.x, b.z));
     if (victims.length || monHits.length) {
       for (const v of victims) {
         v.shake();
-        if (v !== me) { predictOuch(v); FX.damage(STAT.hit, v.x, v.groundY + 1.9, v.z, '#ffffff'); }
+        if (v !== me) { predictOuch(v); FX.damage(Math.round(STAT.hit * power), v.x, v.groundY + 1.9, v.z, '#ffffff'); }
         burst('star', 9, at(v.x, v.z, 1.35), { spread: Math.PI, power: 0.9 });
         burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
         if (v === me) strong = true;
       }
       // 깃털이 빠지고 찌부되는 건 몬스터가 직접 하고, 여기서는 맞은 자리마다 별만 튀긴다
-      for (const m of monHits) { if (m.k) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 }); showDamage(STAT.hit * atkMul(char === me, meleeStat()), m.k, m.x, gy + m.y + 0.5, m.z); }
+      for (const m of monHits) { if (m.k) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 }); showDamage(STAT.hit * atkMul(char === me, meleeStat()) * power, m.k, m.x, gy + m.y + 0.5, m.z); }
     } else if (rock >= 0) {
       const r = WORLD.rocks[rock];
       village.shakeRock(rock, fx, fz);
@@ -385,7 +394,6 @@ function hitFx(char, action) {
       burst('wood', 9, at(t.x - fx * t.r, t.z - fz * t.r, 0.6), { dir: [-fx, -fz] });
       burst('leaf', 7, at(t.x, t.z, 1.9 * t.s), { spread: Math.PI, power: 0.8 });
     } else {
-      burst('dust', 10, at(hx, hz, 0.05), { ring: true, power: 1.1 });
       burst('stone', 4, at(hx, hz, 0.05), { spread: Math.PI, power: 0.6 });
     }
   } else if (action === 'netSwing' || action === 'netHigh' || action === 'netLow') {
@@ -423,12 +431,15 @@ function hitFx(char, action) {
     burst('splash', 14, at(t.x, t.z, 0), { spread: Math.PI, floor: gy - 0.1 });
     burst('star', 6, at(t.x, t.z, 0.8), { spread: Math.PI, power: 0.6 });
   }
-  if (slam) { // 땅을 내리찍으면 발밑에서 먼지가 둥글게 퍼진다
-    burst('dust', 14, at(char.x + fx * 0.6, char.z + fz * 0.6, 0.05), { ring: true, power: 1.5 });
+  if (strike) { // 강타: 맞은 자리에서 별이 크게 터진다
+    const r = thrust ? 1.6 : 1.0;
+    burst('star', 14, at(char.x + fx * r, char.z + fz * r, 0.9), { spread: Math.PI, power: 1.3 });
+  }
+  if (slam) { // 땅을 내리찍으면 돌 조각이 튄다 (먼지는 내지 않는다)
     burst('stone', 6, at(char.x + fx * 0.6, char.z + fz * 0.6, 0.05), { spread: Math.PI, power: 0.9 });
   }
   // 멈칫(히트스톱)은 무언가를 세게 때리는 동작(몽둥이·목검·도끼)에만: 잠자리채·낚시·채집·줍기에 넣으면 렉처럼 보인다
-  if ((char === me || strong) && (action === 'clubSmash' || action === 'chop')) FX.hitstop(slam ? 0.08 : 0.05);
+  if ((char === me || strong) && (action === 'clubSmash' || action === 'chop')) FX.hitstop(strike ? 0.11 : slam ? 0.08 : 0.05);
 }
 Character.onHit = (char, action) => hitFx(char, action);
 
@@ -990,6 +1001,83 @@ function renderDex() {
 }
 renderDex();
 
+// ── 스킬: 액티브(키를 눌러 쓰고 마나·대기 시간이 듦)와 패시브(배우면 늘 저절로) ──
+// 지금은 모험가 시절 액티브 스킬 '강타'(A) 하나. 이어 치는 중에 쓰면 휘두른 끝 자세에서 곧장 강타로 넘어간다
+const STRIKE_ANIMS = new Set(Object.values(SKILLS.strike.weapons));
+const skillCool = {}; // 스킬 id → 다시 쓸 수 있기까지 남은 시간(초)
+// 배운 스킬: 레벨이 되고, 모험가 스킬이거나 내 직업 스킬
+const knowsSkill = (s) => levelOf(myXp).lv >= s.lv && (!s.job || s.job === myJob);
+const WEAPON_NAMES = { club: '몽둥이', woodSword: '목검', dagger: '단검' };
+const weaponList = (s) => Object.keys(s.weapons).map((w) => WEAPON_NAMES[w]).join('·');
+function useSkill(id) {
+  const s = SKILLS[id];
+  if (!me || !s || s.type !== 'active' || local.hurt > 0) return;
+  if (!knowsSkill(s)) { toast(`${s.name}은(는) 아직 배우지 않았어요`); return; }
+  const anim = s.weapons[TOOLS[local.tool]];
+  if (!anim) { toast(`${s.name}은(는) ${weaponList(s)}을 들고 써요`); return; }
+  if ((skillCool[id] ?? 0) > 0) { toast(`${s.name}: ${Math.ceil(skillCool[id])}초 뒤에 다시 쓸 수 있어요`); return; }
+  if (local.actLeft > 0) {
+    // 땅에서 이어 치는 중이면 휘두른 끝(이어지는 때)부터 바로 넘어간다. 그 밖의 동작(점프·구르기·생활 등) 중에는 못 쓴다
+    const el = actTime(local.act) - local.actLeft;
+    if (!NEXT_SWING[local.act] || el < COMBO_AT[local.act]) return;
+  }
+  if (local.fishing) stopFishing();
+  if (!useMana(s.mp)) return;
+  skillCool[id] = s.cool;
+  local.act = anim;
+  local.actLeft = actTime(anim);
+  local.charged = false;
+  input.stopRun();
+}
+// 몽둥이 강타: 기 모으기 연출을 시작하는 때(초). 꼭대기에서 짧게 버티는 동안(actions.js CLUB_STYLES.strike.hold: 0.31~0.4초)
+// 빛줄기가 모여들어, 마지막 줄기가 휘두르기 직전에 몽둥이 끝에 닿는다
+const STRIKE_CHARGE_AT = 0.27;
+// 기 모으기 연출: 둘레 여기저기에서 노란 빛줄기들이 몽둥이의 가장 뭉툭한 끝(둥근 끝마개)으로 쭉 빨려 들어간다 (몽둥이가 떨려도 따라간다)
+function chargeFx(char) {
+  const socket = char.villager.rig.rightSocket;
+  const tip = socket.getObjectByName('몽둥이끝') ?? socket; // equipment.js club() 의 둥근 끝
+  FX.gather((out) => tip.getWorldPosition(out), { dur: 0.09, rate: 140, life: 0.13, radius: [0.9, 1.5], alive: () => char.anim === ANIM.STRIKE_CLUB });
+}
+// 매 장면: 대기 시간을 줄이고, A 버튼에 남은 시간과 지금 쓸 수 있는지를 보여 준다
+const skillBtn = $id('skill-btn');
+let skillBtnState = '';
+function updateSkills(dt) {
+  for (const k in skillCool) skillCool[k] = Math.max(0, skillCool[k] - dt);
+  const s = SKILLS.strike;
+  const left = skillCool.strike ?? 0;
+  const ready = !!s.weapons[TOOLS[local.tool]] && stats.mp >= s.mp && left <= 0;
+  const state = `${Math.ceil(left * 20)}|${ready}`;
+  if (state === skillBtnState) return;
+  skillBtnState = state;
+  skillBtn.style.setProperty('--cd', `${(left / s.cool) * 360}deg`);
+  skillBtn.classList.toggle('dim', !ready);
+  skillBtn.querySelector('b').textContent = left > 0 ? Math.ceil(left) : '';
+}
+// 스킬 창 (K): 액티브·패시브로 나눠 보여 준다
+const skillPanel = $id('skill-panel');
+function toggleSkillPanel() {
+  skillPanel.classList.toggle('hidden');
+  infoPanel.classList.add('hidden');
+  renderSkills();
+}
+function renderSkills() {
+  if (skillPanel.classList.contains('hidden')) return;
+  const card = (s) => {
+    const on = knowsSkill(s);
+    const meta = s.type === 'active'
+      ? `<span>마나 ${s.mp}</span><span>대기 ${s.cool}초</span><span>피해 ${s.power}배</span><span>${weaponList(s)}</span>`
+      : '';
+    return `<div class="skill-card${on ? '' : ' locked'}">
+      <div class="skill-ico">${s.icon}${s.key ? `<kbd>${s.key}</kbd>` : ''}</div>
+      <div class="skill-body"><div class="skill-name">${s.name} <small>${JOBS[s.job].name} · Lv ${s.lv}${on ? '' : ' · 아직 못 배움'}</small></div>
+        <div class="skill-desc">${s.desc}</div>${meta ? `<div class="skill-meta">${meta}</div>` : ''}</div></div>`;
+  };
+  skillPanel.innerHTML = `<h3>⚡ 스킬 <small>(K)</small></h3>${Object.entries(SKILL_TYPES).map(([type, label]) => {
+    const list = Object.values(SKILLS).filter((s) => s.type === type);
+    return `<h4>${label} 스킬 <small>${type === 'active' ? '(키를 눌러 써요)' : '(배우면 늘 저절로)'}</small></h4>${list.length ? list.map(card).join('') : '<p class="inv-help">아직 없어요</p>'}`;
+  }).join('')}`;
+}
+
 // ── 내 정보 (P): 레벨·직업·스텟·능력치·생활 기록. 스텟과 능력치는 레벨(과 직업)로 계산한 값 ──
 const infoPanel = $id('info-panel');
 const JOB_ICON = { warrior: '🗡️', archer: '🏹', mage: '🪄', thief: '🥷' };
@@ -1390,9 +1478,9 @@ chatInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChat
 chatInput.addEventListener('blur', () => { if (!chatForm.classList.contains('hidden')) setTimeout(closeChat, 0); });
 $id('chat-btn').addEventListener('click', openChat);
 addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') for (const p of [ui.inv, dexPanel, infoPanel, $id('look-panel')]) p.classList.add('hidden');
+  if (e.key === 'Escape') for (const p of [ui.inv, dexPanel, infoPanel, skillPanel, $id('look-panel')]) p.classList.add('hidden');
 });
-for (const panel of [ui.inv, dexPanel, infoPanel, $id('look-panel')]) { // 인벤토리·도감·꾸미기 창: 제목줄을 잡고 끌면 옮겨진다 (칸 안 물건 끌기와 안 겹치게 제목줄만)
+for (const panel of [ui.inv, dexPanel, infoPanel, skillPanel, $id('look-panel')]) { // 인벤토리·도감·꾸미기 창: 제목줄을 잡고 끌면 옮겨진다 (칸 안 물건 끌기와 안 겹치게 제목줄만)
   let drag = null;
   const key = `panelPos:${panel.id}`;
   const saved = store.get(localStorage, key)?.split(',').map(Number);
@@ -1436,6 +1524,8 @@ const input = createInput({
     if (!me) return;
     if (name === 'attack') name = clickAction();
     if (!name) return;
+    if (name === 'skill1') { useSkill('strike'); return; } // A: 강타
+    if (name === 'skills') { toggleSkillPanel(); return; } // K: 스킬 창
     if (name === 'behind') { local.recenter = me.targetRot + Math.PI; return; } // V: 누른 순간 보던 쪽의 등 뒤로 스르르 (그 뒤에 돌아도 따라가지 않음)
     if (name === 'jump') {
       // 더블 점프: 떠 있는 동안 한 번 더 누르면 앞으로 공중제비
@@ -1469,6 +1559,7 @@ const input = createInput({
       dexPanel.classList.add('hidden'); // 가방과 도감은 같은 자리에 열려서 하나만
     } else if (name === 'info') {
       infoPanel.classList.toggle('hidden');
+      skillPanel.classList.add('hidden'); // 내 정보와 스킬 창은 같은 자리에 열려서 하나만
       renderInfo();
     } else if (name === 'dex') {
       renderDex();
@@ -1893,6 +1984,7 @@ function enterGame() {
   $id('behind-btn').classList.remove('hidden');
   $id('dex-btn').classList.remove('hidden');
   $id('info-btn').classList.remove('hidden');
+  $id('skills-btn').classList.remove('hidden');
   $id('chat-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
   $id('minimap').classList.remove('hidden');
@@ -1946,6 +2038,8 @@ function updateMe(dt) {
   let anim = ANIM.IDLE;
   if (local.hurt > 0) local.hurt -= dt;
   updateStats(dt);
+  updateSkills(dt);
+  if (local.act === ANIM.STRIKE_CLUB && local.actLeft > 0 && !local.charged && actTime(local.act) - local.actLeft >= STRIKE_CHARGE_AT) { local.charged = true; chargeFx(me); }
   local.dodge -= dt; // 0 아래로 내려간 만큼이 쿨타임이 지난 시간
   // 잠자리채: 휘두르기 전에 곤충과의 거리를 맞추는 한 발
   if (local.netStep?.left > 0) {
@@ -1979,6 +2073,7 @@ function updateMe(dt) {
       speed = DIVE.rate * (t < 0 ? 0 : t < DIVE.time ? DIVE_SPEED : DIVE_SPEED * 0.4 * (1 - THREE.MathUtils.smoothstep(t, DIVE.time, DIVE.time + 0.15)));
     }
     else if (local.act === ANIM.SLASH3) speed = glide(THRUST_STEP, THRUST_SPEED);
+    else if (STRIKE_STEP[local.act]) speed = glide(...STRIKE_STEP[local.act]);
     else if (STEP_SWINGS.has(local.act)) {
       const h = HIT_DELAY[local.act] / 1000;
       speed = glide([h - 0.2, h + 0.05], SWING_STEP * Math.PI / (2 * 0.25)); // sin 한 봉우리의 넓이 = 최고 속도 × 길이 × 2/π
@@ -2166,10 +2261,14 @@ function updateOthers(now) {
       char.setAnim(a.a);
     }
     // 휘두르기 시작을 보면 내려찍는 순간에 내가 앞에 있는지 확인
-    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) { o.hitAt = now + HIT_DELAY[char.anim]; o.hitAnim = char.anim; }
+    if (HIT_DELAY[char.anim] && char.anim !== prevAnim) { o.hitAt = now + HIT_DELAY[char.anim]; o.hitAnim = char.anim; o.chargeAt = char.anim === ANIM.STRIKE_CLUB ? now + STRIKE_CHARGE_AT * 1000 : 0; }
+    if (o.chargeAt && now >= o.chargeAt) { o.chargeAt = 0; if (char.anim === ANIM.STRIKE_CLUB) chargeFx(char); }
     if (o.hitAt && now >= o.hitAt) {
       o.hitAt = 0;
-      if (me && (o.hitAnim === ANIM.SLASH3 ? inThrust : o.hitAnim === ANIM.DAGGER_SLAM ? inDive : inSwing)(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z);
+      const strike = STRIKE_ANIMS.has(o.hitAnim); // 강타: 더 넓게 맞고 더 아프다
+      const test = strike ? (ax, az, rot, bx, bz) => inStrike(ax, az, rot, bx, bz, o.hitAnim === ANIM.STRIKE_SWORD)
+        : o.hitAnim === ANIM.SLASH3 ? inThrust : o.hitAnim === ANIM.DAGGER_SLAM ? inDive : inSwing;
+      if (me && test(char.x, char.z, char.targetRot, me.x, me.z)) getHit(char.x, char.z, strike ? SKILLS.strike.power : 1);
     }
   }
 }
