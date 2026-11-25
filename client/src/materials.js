@@ -138,7 +138,8 @@ export function swayToon(color, opts = {}) {
 }
 
 export function basic(color, opts = {}) {
-  return addCurve(new THREE.MeshBasicMaterial({ color, ...opts }));
+  // forceSinglePass: 양면 반투명은 three 가 뒷면·앞면 두 번에 나눠 그리며 그때마다 재질을 다시 검사한다(메모리·시간). 물결·빛줄기 같은 납작한 면은 한 번에 그려도 똑같다
+  return addCurve(new THREE.MeshBasicMaterial({ forceSinglePass: true, color, ...opts }));
 }
 
 // ── 외곽선: 법선 방향으로 부풀린 뒷면 껍질 (캐릭터와 같은 갈색, 둥근 지평선도 똑같이 적용) ──

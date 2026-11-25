@@ -100,7 +100,7 @@ export class Trail {
     geo.setDrawRange(0, 0);
     this.rgb = new THREE.Color(color);
     this.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true,
     }));
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 5;

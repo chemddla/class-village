@@ -151,7 +151,7 @@ function bugNet() {
     sp.setY(i, sp.getY(i) * (1 - 0.25 * k) - 0.09 * k * k); // 끝으로 갈수록 좁아지며 아래로 처짐
   }
   sack.computeVertexNormals();
-  part(sack, new THREE.MeshStandardMaterial({ color: '#f3fbf6', transparent: true, opacity: 0.42, roughness: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+  part(sack, new THREE.MeshStandardMaterial({ color: '#f3fbf6', transparent: true, opacity: 0.42, roughness: 0.9, side: THREE.DoubleSide, depthWrite: false, forceSinglePass: true }),
     g, '그물', [0, hoopY, 0]).castShadow = false;
   const netLines = new THREE.LineSegments(new THREE.WireframeGeometry(sack), new THREE.LineBasicMaterial({ color: '#d6e9df', transparent: true, opacity: 0.8 }));
   netLines.position.set(0, hoopY, 0);

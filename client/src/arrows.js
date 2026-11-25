@@ -137,7 +137,7 @@ export function createArrows(scene, hit, onBurst) {
   gGeo.setIndex(gIdx);
   gGeo.setAttribute('position', new THREE.BufferAttribute(gVerts, 3).setUsage(THREE.DynamicDrawUsage));
   gGeo.setAttribute('color', new THREE.BufferAttribute(gCols, 4).setUsage(THREE.DynamicDrawUsage));
-  const guide = new THREE.Mesh(gGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: GUIDE.opacity, depthWrite: false, side: THREE.DoubleSide }));
+  const guide = new THREE.Mesh(gGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: GUIDE.opacity, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }));
   guide.frustumCulled = false;
   guide.renderOrder = 1;
   guide.visible = false;

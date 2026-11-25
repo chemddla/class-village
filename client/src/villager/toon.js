@@ -1,6 +1,6 @@
 // 카툰 모드 (쇼룸·마을 공용): 역법선(Inverted Hull) 외곽선 + 반-툰 명암
 import * as THREE from 'three';
-import { mergeVertices, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const OUTLINE_COLOR = 0x4a3525; // 검정 대신 따뜻한 짙은 갈색
 // 눈·렌즈 같은 평면 데칼과 그물·발목 입구처럼 얇은 면에는 외곽선을 두르지 않음
@@ -17,8 +17,9 @@ toonGradient.needsUpdate = true;
 const outlineMats = new Map();
 const seamMats = new WeakMap();
 const NO_SEAM = new THREE.Vector2(1, 1);
-export function outlineMaterial(thickness, color, seam = null) {
-  const key = `${thickness.toFixed(4)}:${color}`;
+// skinned: 휘는 메시용은 따로 둔다 (한 재질을 휘는 메시와 굳은 메시가 같이 쓰면 three 가 번갈아 그릴 때마다 셰이더를 다시 고르느라 메모리·시간을 쓴다)
+export function outlineMaterial(thickness, color, seam = null, skinned = false) {
+  const key = `${thickness.toFixed(4)}:${color}${skinned ? ':s' : ''}`;
   const cache = seam ? (seamMats.get(seam) ?? seamMats.set(seam, new Map()).get(seam)) : outlineMats;
   if (!cache.has(key)) {
     const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
@@ -44,6 +45,53 @@ const seamOf = (list) => list.map((m) => m.material.userData.seam).find(Boolean)
 
 // 각진 모서리·UV 이음새는 같은 자리 꼭짓점의 법선이 갈라져 있어 껍질을 밀면 틈이 벌어진다(시점 따라 뚫리거나 떠 보임):
 // 같은 자리 꼭짓점을 합쳐 매끈한 법선으로 다시 계산한 껍질을 쓴다 (뼈 가중치·noLine 은 그대로 남김)
+// three 의 mergeVertices 와 같은 결과(같은 반올림·같은 순서)를 내되, 꼭짓점을 글자로 이어 붙여 견주지 않고 정수로 견준다:
+// 학생 한 명이 들어올 때마다 껍질 만드느라 30ms 멈추던 것을 줄인다
+export function weld(geo, tol = 1e-4) {
+  const names = Object.keys(geo.attributes);
+  const attrs = names.map((k) => geo.attributes[k]);
+  const stride = attrs.reduce((s, a) => s + a.itemSize, 0);
+  const idx = geo.index;
+  const vc = attrs[0].count;
+  const n = idx ? idx.count : vc;
+  const mul = 10 ** Math.log10(1 / tol), add = tol * 0.5 * mul;
+  // 1) 꼭짓점마다 반올림한 값이 같은 것끼리 한 무리로 (cls: 꼭짓점 → 무리 번호)
+  const rows = new Int32Array(vc * stride); // 무리마다 반올림한 값 한 줄
+  const next = new Int32Array(vc); // 같은 해시의 다음 무리 (-1 끝)
+  const cls = new Int32Array(vc);
+  const head = new Map();
+  let groups = 0;
+  for (let v = 0; v < vc; v++) {
+    const at = groups * stride;
+    let h = 0, c = at;
+    for (const a of attrs) for (let k = 0; k < a.itemSize; k++) { const q = ~~(a.getComponent(v, k) * mul + add); rows[c++] = q; h = (Math.imul(h, 31) + q) | 0; }
+    const first = head.get(h) ?? -1;
+    let j = first;
+    for (; j >= 0; j = next[j]) { let k = 0; while (k < stride && rows[j * stride + k] === rows[at + k]) k++; if (k === stride) break; }
+    if (j < 0) { j = groups++; next[j] = first; head.set(h, j); }
+    cls[v] = j;
+  }
+  // 2) 삼각형 순서대로 처음 나온 무리부터 새 번호를 매긴다 (mergeVertices 와 같은 순서, 값도 처음 나온 꼭짓점 것)
+  const id = new Int32Array(groups).fill(-1);
+  const from = new Uint32Array(groups); // 새 꼭짓점 → 원래 꼭짓점
+  const out = new Uint32Array(n);
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    const v = idx ? idx.getX(i) : i;
+    let j = id[cls[v]];
+    if (j < 0) { j = id[cls[v]] = count++; from[j] = v; }
+    out[i] = j;
+  }
+  const g = new THREE.BufferGeometry();
+  names.forEach((name, t) => {
+    const a = attrs[t], s = a.itemSize, arr = new a.array.constructor(count * s);
+    for (let j = 0; j < count; j++) for (let k = 0; k < s; k++) arr[j * s + k] = a.array[from[j] * s + k];
+    g.setAttribute(name, new a.constructor(arr, s, a.normalized));
+  });
+  g.setIndex(new THREE.BufferAttribute(count > 65535 ? out : new Uint16Array(out), 1));
+  return g;
+}
+
 const hullCache = new WeakMap();
 function hullGeometry(geo) {
   let h = hullCache.get(geo);
@@ -51,7 +99,7 @@ function hullGeometry(geo) {
     const g = new THREE.BufferGeometry();
     for (const k of ['position', 'skinIndex', 'skinWeight', 'noLine', 'armSeam']) if (geo.attributes[k]) g.setAttribute(k, geo.attributes[k]);
     if (geo.index) g.setIndex(geo.index);
-    h = mergeVertices(g, 1e-4);
+    h = weld(g);
     h.computeVertexNormals();
     hullCache.set(geo, h);
   }
@@ -63,7 +111,7 @@ function hullGeometry(geo) {
 export function addOutline(mesh, thickness = 0.012, color = OUTLINE_COLOR) {
   const geo = mesh.userData.outlineGeometry ?? hullGeometry(mesh.geometry);
   // 휘는 메시(스키닝)는 외곽선 껍질도 같은 뼈를 따라 휘어야 한다
-  const mat = outlineMaterial(thickness, color, geo.attributes.armSeam ? mesh.userData.seamHide ?? null : null);
+  const mat = outlineMaterial(thickness, color, geo.attributes.armSeam ? mesh.userData.seamHide ?? null : null, !!mesh.isSkinnedMesh);
   const o = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(geo, mat) : new THREE.Mesh(geo, mat);
   if (mesh.isSkinnedMesh) o.bind(mesh.skeleton, mesh.bindMatrix);
   o.name = '외곽선';
@@ -190,9 +238,10 @@ function sample(tex, u, v) {
   return texel.setRGB(d.data[i] / 255, d.data[i + 1] / 255, d.data[i + 2] / 255, THREE.SRGBColorSpace);
 }
 const paintMats = new Map(); // 꼭짓점 색 재질: 면 방향(side)마다 하나를 모든 캐릭터가 같이 쓴다
-function paintMaterial(side) {
-  if (!paintMats.has(side)) paintMats.set(side, new THREE.MeshToonMaterial({ vertexColors: true, side, gradientMap: toonGradient }));
-  return paintMats.get(side);
+function paintMaterial(side, skinned = false) {
+  const key = side * 2 + skinned; // 휘는 메시용은 따로 (outlineMaterial 과 같은 까닭)
+  if (!paintMats.has(key)) paintMats.set(key, new THREE.MeshToonMaterial({ vertexColors: true, side, gradientMap: toonGradient }));
+  return paintMats.get(key);
 }
 // 묶을 수 있는 재질인지, 같은 묶음에 들어갈 열쇠는 무엇인지 (꼭짓점 색으로 옮길 수 있으면 'p…', 아니면 텍스처·색이 같은 것끼리)
 const mergeable = (m) => m.material?.isMeshToonMaterial && !m.material.transparent && !m.material.emissive.getHex() && m.children.every((c) => c.userData.isOutline);
@@ -292,7 +341,7 @@ export function mergeSkinned(root, skip = () => false) {
   walk(root);
   if (outlines.length > 1) {
     const T = Math.max(...outlines.map((o) => o.userData.thickness));
-    const merged = skinnedBatch(outlines, outlineMaterial(T, outlines[0].userData.color, seamOf(outlines)), (o) => {
+    const merged = skinnedBatch(outlines, outlineMaterial(T, outlines[0].userData.color, seamOf(outlines), true), (o) => {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', o.geometry.attributes.position.clone());
       g.setAttribute('normal', o.geometry.attributes.normal.clone());
@@ -312,7 +361,7 @@ export function mergeSkinned(root, skip = () => false) {
   for (const [key, list] of groups) {
     if (list.length < 2) continue;
     const paint = key[0] === 'p';
-    const merged = skinnedBatch(list, paint ? paintMaterial(list[0].material.side) : list[0].material, (m) => mergePart(m, paint), root);
+    const merged = skinnedBatch(list, paint ? paintMaterial(list[0].material.side, true) : list[0].material, (m) => mergePart(m, paint), root);
     merged.name = '묶음';
     merged.userData.toon = true;
     merged.userData.outline = list.find((m) => m.userData.outline)?.userData.outline;
