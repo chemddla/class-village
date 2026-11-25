@@ -2523,6 +2523,13 @@ let [qStep, qRatio, qLines] = (() => {
 })();
 renderer.setPixelRatio(Math.min(renderer.getPixelRatio(), qRatio));
 let noLines = LOW || !!qLines; // 다른 학생의 외곽선을 끈 상태인지 (자동 화질 2단계, ?q=low 는 처음부터)
+// FPS 를 누르면 처음 화질로 되돌린다 (어쩌다 한 번 느렸던 기기가 계속 낮은 화질에 머물지 않게)
+ui.fps.style.cssText += ';pointer-events:auto;cursor:pointer';
+ui.fps.onclick = () => {
+  if (!qStep || !confirm('화질을 처음으로 되돌릴까요? (화면을 새로 고칩니다)')) return;
+  store.del(localStorage, 'quality');
+  location.reload();
+};
 let fpsFrames = 0;
 let fpsTime = 0;
 
