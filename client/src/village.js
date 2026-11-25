@@ -336,7 +336,7 @@ function meshFrom(verts, colors, index) {
 }
 
 // 둥근 활엽수: 공 몇 개를 겹친 몽글몽글한 구름 덩어리 [x, y, z, 반지름]
-export const ROUND_BLOBS = [
+const ROUND_BLOBS = [
   [0, 1.98, 0, 0.88], [0.66, 1.66, 0.16, 0.6], [-0.6, 1.7, -0.14, 0.62], [0.1, 1.62, 0.66, 0.58],
   [-0.12, 1.64, -0.64, 0.56], [0.34, 2.52, -0.12, 0.56], [-0.38, 2.44, 0.24, 0.5],
 ];
@@ -498,6 +498,41 @@ export function trunkGeometry() {
 const FRUIT_TREE = new Set(WORLD.fruitTrees);
 const looksLike = (t, i) => (FRUIT_TREE.has(i) ? 3 : t.kind === 1 ? 1 : i % 3 === 2 ? 2 : 0);
 
+// 나무 위 앉을 자리: 마을 둥근 나무의 잎 덩어리(공 여러 개) 겉면 중에서 평평한 곳만 고른다 (나무 기준 좌표, 크기 1)
+// 꼭대기 한가운데는 빼고(너무 눈에 띔), 기울기가 완만해 발을 딛기 좋은 둘레 자리들. 게임에서는 이 중 하나를 골라 날아가면 된다
+export function canopyPerches(blobs = ROUND_BLOBS) {
+  const height = (x, z) => {
+    let h = -Infinity;
+    for (const [bx, by, bz, r] of blobs) {
+      const d2 = (x - bx) ** 2 + (z - bz) ** 2;
+      if (d2 < r * r) h = Math.max(h, by + Math.sqrt(r * r - d2));
+    }
+    return h;
+  };
+  const out = [];
+  const e = 0.03;
+  for (const rr of [0.4, 0.55, 0.7, 0.85, 1.0, 1.1]) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2, x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+      const h = height(x, z);
+      const slope = Math.hypot(height(x + e, z) - height(x - e, z), height(x, z + e) - height(x, z - e)) / (2 * e);
+      if (Number.isFinite(slope) && slope < 0.75) out.push({ p: new THREE.Vector3(x, h, z), slope });
+    }
+  }
+  return out;
+}
+
+// 구구(비둘기)가 앉을 나무 자리 (월드 좌표, 땅 휘어짐 전): 둥근·달걀꼴 나무만, 나무마다 정해진 한 곳 (모두의 화면에서 같은 자리)
+export function treePerch(t, i) {
+  const k = looksLike(t, i);
+  if (k !== 0 && k !== 2) return null; // 뾰족한 나무·과일나무는 앉을 데가 마땅치 않음
+  const spots = canopyPerches(k ? OVAL_BLOBS : ROUND_BLOBS).filter((s) => s.slope < 0.5);
+  if (!spots.length) return null;
+  const { p } = spots[Math.floor((((t.x * 31.7 + t.z * 17.3) % 1) + 1) % 1 * spots.length)];
+  const yaw = (t.x * 13.7 + t.z) % 6.28; // buildTrees 와 같은 방향으로 돌림
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return { x: t.x + (p.x * c + p.z * s) * t.s, y: p.y * t.s, z: t.z + (-p.x * s + p.z * c) * t.s };
+}
 function buildTrees(group) {
   const kinds = [0, 1, 2, 3].map((k) => WORLD.trees.map((t, i) => ({ t, i })).filter((o) => looksLike(o.t, o.i) === k));
   const m = new THREE.Matrix4();

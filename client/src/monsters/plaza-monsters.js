@@ -1,4 +1,4 @@
-// 광장·들판에 소환하는 쪼렙 몬스터 (날개콩·몽당연필·반쪽이): 정해진 자리를 빙 돌며 걷기·쉬기·특기(날기 시도·물구나무 낙서·박박 문지르기)·두리번을 되풀이한다.
+// 광장·들판에 소환하는 쪼렙 몬스터 (날개콩·몽당연필·반쪽이·하악냥·구구): 정해진 자리를 빙 돌며 걷기·쉬기·특기(날기 시도·물구나무 낙서·박박 문지르기)·두리번을 되풀이한다.
 // 가야 할 자리와 동작을 시계(Date.now)로 정하므로, 같은 서버에 들어온 사람들 화면에서 거의 같은 자리·같은 동작으로 보인다.
 // 맞는 판정도 (모두의 화면에 똑같이 보이는) 휘두르는 사람의 자리·방향으로 정하므로, 누가 때려도 모두의 화면에서 함께 맞는다.
 // (서버가 따로 몬스터를 관리하지 않는 맛보기용. 가까이 다가가면 내 화면에서만 깜짝 놀란다)
@@ -9,6 +9,8 @@ import { createNalgaekong } from './nalgaekong.js';
 import { createMongdang } from './mongdang.js';
 import { createBanjjok } from './banjjok.js';
 import { createHaaknyang, swatTaps } from './haaknyang.js';
+import { createGugu } from './gugu.js';
+import { canvasTexture } from '../villager/textures.js';
 
 // 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격 · size(크기 배율, 없으면 1) · shadow(발밑 그림자 좌우·앞뒤 배율, 없으면 동그랗게)
 // 성격(temper): 캐릭터를 발견했을 때 어떻게 하는지
@@ -22,6 +24,9 @@ const KINDS = {
   haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', run: 1.5, size: 1.15, shadow: [0.75, 1.15], hunts: true, // 둘레 곤충을 쫓아가 툭툭 침
     // 고양이답게: 돌아다니기보다 한 자리에서 오래 낮잠 자고 그루밍하다가, 가끔 조금 걸어 자리를 옮김
     plan: [['walk', 2.5], ['idle', 2], ['special', 2.7], ['special', 2.7], ['sleep', 20], ['idle', 2.5], ['special', 2.7], ['walk', 2], ['idle', 4], ['sleep', 14], ['idle', 2]] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
+  // 구구(비둘기): 중립형이라 사람을 봐도 제 할 일만. 뒤뚱뒤뚱 걷다 모이 콕콕, 가끔 짝! 날아올랐다 내려앉음 · 하악냥보다 작게
+  gugu: { create: createGugu, r: 0.03, special: 'peck', temper: 'neutral', size: 0.75, shadow: [0.8, 1.1],
+    plan: [['walk', 4], ['idle', 2.5], ['special', 2], ['walk', 3], ['special', 2], ['fly', 3.4], ['idle', 2], ['walk', 5], ['special', 2], ['idle', 3]] },
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -62,6 +67,37 @@ const HUNT_REACH = 0.3; // 몸 가장자리에서 이만큼 안이면 툭툭 (m)
 const HUNT_SPEED = 1.3; // 곤충 쫓는 빠르기 (m/s, 종류의 run 배수를 곱함)
 const HUNT_COOL = 7; // 한 번 사냥한 뒤 다시 곤충을 노리기까지 (초)
 const RAGE_TIME = 1.0; // 나를 공격 대상으로 알아챘을 때 '화남!' 동작을 하고 이만큼 뒤에 쫓아오기 시작 (초)
+// 구구(비둘기) 나들이: 한가할 때 가끔 날아가 나무 꼭대기·가만히 선 캐릭터 머리·날개콩 머리에 앉았다 오거나, 하악냥에게 장난을 걸었다가 가볍게 피함
+const GUGU_TRIP_CHANCE = 0.06; // 한가할 때 1초마다 나들이를 떠날 확률 (평균 17초에 한 번쯤)
+const GUGU_TRIP_COOL = 10; // 다녀온 뒤 다시 떠나기까지 (초)
+const GUGU_REACH = 9; // 이만큼 안의 자리로만 날아감 (m)
+const GUGU_FLY = 2.2; // 나는 빠르기 (m/s)
+const GUGU_SIT = [3, 6]; // 나무·머리 위에 앉아 쉬는 시간 (초, 이 사이)
+const GUGU_HIGH = 0.3; // 이보다 높이 떠 있으면 휘둘러도 안 맞음 (m)
+const CAT_NEAR = 4; // 하악냥이 이만큼 안에 있어야 장난을 검 (m)
+const CAT_HOVER = 0.9; // 하악냥 머리 위에서 파닥이는 높이 (m): 폴짝 뛰면 앞발이 닿을락 말락
+const NALGAE_TOP = 0.0618; // 날개콩 몸 공 가운데에서 정수리까지 (날개콩 크기 기준)
+const sm = (x, a, b) => THREE.MathUtils.smoothstep(x, a, b);
+const TMP = new THREE.Vector3();
+// 날개콩 머리 위에 뜨는 물음표 (뭐지?)
+const questionMark = () => {
+  const q = new THREE.Sprite(new THREE.SpriteMaterial({
+    transparent: true, depthWrite: false, depthTest: false,
+    map: canvasTexture('monsterQuestion', 128, 128, (g, w, h) => {
+      g.font = `900 ${h * 0.9}px 'Pretendard', 'Malgun Gothic', sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.lineJoin = 'round';
+      g.lineWidth = 16;
+      g.strokeStyle = '#4a3525';
+      g.strokeText('?', w / 2, h * 0.54);
+      g.fillStyle = '#ffffff';
+      g.fillText('?', w / 2, h * 0.54);
+    }),
+  }));
+  q.renderOrder = 2;
+  return q;
+};
 // 발밑 그림자: 주민(character.js)과 같은 반투명 동그라미. 땅에 바짝 붙이고 겹침 깜빡임은 polygonOffset으로
 const SHADOW_MAT = new THREE.MeshBasicMaterial({
   color: 0x2a3b1a, transparent: true, opacity: 0.24, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
@@ -190,7 +226,7 @@ function endDuo(duo) {
   duo.over = true;
   duo.p.duo = duo.e.duo = null;
   duo.p.duoCool = duo.e.duoCool = DUO_COOL;
-  duo.marks.fadeOut();
+  duo.marks?.fadeOut(); // 구구 합동은 낙서가 없음
 }
 
 // 한 바퀴 일정 (동작 이름, 초)
@@ -219,8 +255,9 @@ const BUSY = new Set(['hit', 'die', 'gone', 'spawn']);
 // kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필) | 'banjjok'(반쪽이) | 'haak'(하악냥) · temper: 성격 (없으면 종류의 기본 성격)
 // onAttack(x, z): 이 몬스터의 공격이 내 캐릭터에 닿았을 때 불림 (몬스터 자리)
 // blocked(x, z, r): 반지름 r인 몸이 (x, z)에 서면 벽·분수·나무 등에 부딪히는지 (없으면 막히는 데 없음)
+// perches(): 구구가 앉을 만한 자리 [{ x, z, get() → { x, y, z } (월드, 못 앉게 되면 null) }] — 구구만 씀
 // prey(): 곤충 번호 → { x, y, z } (Map) · onSwat(id, x, z): 이 몬스터가 곤충을 툭툭 쳤을 때 불림 (몬스터 자리) — 둘 다 hunts 인 종류만 씀
-export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fountain.z, r: R = 3.0, phase = 0, kind = 'nalgae', temper, onAttack, prey, onSwat, blocked: blockedAt = () => false } = {}) {
+export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fountain.z, r: R = 3.0, phase = 0, kind = 'nalgae', temper, onAttack, prey, onSwat, perches = null, blocked: blockedAt = () => false } = {}) {
   const f = { x, z };
   const K = KINDS[kind];
   const TEMPER = temper ?? K.temper;
@@ -332,6 +369,127 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     return best;
   };
 
+  // ── 구구 나들이 ──
+  // 단계를 차례로: { fly: () => 갈 자리(월드 x·y·z, y 없으면 땅), land, dur, arc } 날아감 · { sit | hover: () => 자리 } 앉아 쉼 · 떠서 기다림
+  // · { wait, act } 땅에서 기다림 — 모두 dur 초 또는 until(T) 까지. start() 단계 시작 때 · tick(T) 매 프레임 · bail() 이면 마지막 단계(집으로)로 건너뜀
+  let trip = null;
+  let air = 0; // 땅에서 떠 있는 높이 (m)
+  let tripCool = GUGU_TRIP_COOL * 0.5;
+  let tripTick = -1;
+  let extraY = 0; // 날개콩이 방방 뛰는 높이 (m)
+  let post = null; // 이번 프레임 몬스터 자세 위에 덧씌울 것 (합동 모션 중 날개콩 고개 젖히기·물음표)
+  let duoMood = false; // 합동 모션 중 화난 얼굴
+  let qMark = null;
+  const nBody = kind === 'nalgae' ? mon.root.getObjectByName('몸') : null;
+  const core = nBody?.parent;
+  const groundAt = (x, z) => groundY(x, z) - curveDrop(x, z);
+  const home = () => { const { x, z } = target(); return { x, z }; };
+  const stopTrip = () => { trip = null; air = 0; mon.setAir?.(0); };
+  const startTrip = (steps) => { trip = { steps, i: 0, t: 0, dur: 0, from: null }; };
+  function runTrip(dt) {
+    let st = trip.steps[trip.i];
+    if (trip.i < trip.steps.length - 1 && st.bail?.()) { trip.i = trip.steps.length - 1; trip.from = null; st = trip.steps[trip.i]; }
+    if (!trip.from) { trip.from = { x: px, z: pz, h: air }; trip.t = 0; trip.dur = 0; st.start?.(); }
+    trip.t += dt;
+    const T = trip.t;
+    let mv = 0, br = 0, sh = 0, done;
+    if (st.fly) {
+      const p = st.fly();
+      const f = trip.from;
+      const toH = p.y == null ? 0 : p.y - groundAt(p.x, p.z);
+      const dist = Math.hypot(p.x - f.x, p.z - f.z);
+      if (!trip.dur) trip.dur = st.dur ?? 0.5 + Math.hypot(dist, toH - f.h) / GUGU_FLY;
+      if (mon.state !== 'air') mon.play('air');
+      const lead = f.h < 0.05 ? 0.2 : 0; // 땅에서 뜰 땐 날개를 짝! 치고 나서 출발
+      const k = THREE.MathUtils.clamp((T - lead) / trip.dur, 0, 1), e = sm(k, 0, 1);
+      px = f.x + (p.x - f.x) * e;
+      pz = f.z + (p.z - f.z) * e;
+      air = f.h + (toH - f.h) * e + (st.arc ?? Math.min(0.8, 0.15 + dist * 0.12)) * Math.sin(k * Math.PI);
+      if (dist > 0.15) heading += wrap(Math.atan2(p.x - f.x, p.z - f.z) - heading) * Math.min(1, dt * 6);
+      mv = Math.sin(k * Math.PI);
+      br = st.land ? sm(k, 0.6, 0.95) : 0;
+      done = k >= 1;
+    } else {
+      const p = (st.sit ?? st.hover)?.();
+      if (p) { px = p.x; pz = p.z; air = p.y - groundAt(p.x, p.z); }
+      if (st.sit && mon.state !== 'perch') mon.play('perch');
+      if (st.hover && mon.state !== 'air') mon.play('air');
+      if (st.wait && (mon.state === 'air' || mon.state === 'perch' || mon.state === 'walk' || (st.act && mon.state === 'idle'))) mon.play(st.act ?? 'idle');
+      if (st.face) heading += wrap(st.face() - heading) * Math.min(1, dt * 6);
+      sh = st.shake?.() ?? 0;
+      done = st.until ? st.until(T) : T >= st.dur;
+    }
+    st.tick?.(T);
+    mon.setAir(air / S, mv, br, sh, st.down ? 1 : 0);
+    if (done) {
+      trip.i++;
+      trip.from = null;
+      if (trip.i >= trip.steps.length) { stopTrip(); mon.play('idle'); tripCool = GUGU_TRIP_COOL; }
+    }
+  }
+  const faceTo = (o) => () => Math.atan2(o.x - px, o.z - pz);
+  // 나들이 떠나기: 둘레의 한가한 하악냥(장난) · 날개콩(머리에 앉기) · 나무·캐릭터 머리(perches) 중 하나를 주사위로
+  function guguTrip(r) {
+    const free = (k, near) => [...ALL].find((o) => o.kind === k && o.free && Date.now() - o.seen < 500 && Math.hypot(o.x - px, o.z - pz) < near);
+    const cat = free('haak', CAT_NEAR);
+    const nal = free('nalgae', GUGU_REACH);
+    const spots = (perches?.() ?? []).filter((o) => Math.hypot(o.x - px, o.z - pz) < GUGU_REACH && o.get());
+    const opts = [cat && 'catJump', cat && 'catPounce', nal && 'perch', spots.length && 'spot'].filter(Boolean);
+    if (!opts.length) return;
+    const pick = opts[Math.floor(r * opts.length)];
+    const homeStep = { fly: home, land: true };
+    if (pick === 'spot') {
+      const spot = spots[Math.floor(((r * 7.3) % 1) * spots.length)];
+      let last = spot.get();
+      const at = () => (last = spot.get() ?? last);
+      startTrip([
+        { fly: at, land: true, bail: () => !spot.get() },
+        { sit: at, dur: GUGU_SIT[0] + ((r * 13.1) % 1) * (GUGU_SIT[1] - GUGU_SIT[0]), bail: () => !spot.get() }, // 캐릭터가 움직이면 화들짝 날아감
+        homeStep,
+      ]);
+      return;
+    }
+    const mate = pick === 'perch' ? nal : cat;
+    const d = { type: pick, p: self, e: mate, over: false, landed: false, nT: 0, hop: 0, hovering: false, catT: -1 };
+    self.duo = mate.duo = d;
+    self.free = mate.free = false;
+    if (pick === 'perch') {
+      // 날개콩 머리에 턱 앉음 → 날개콩이 뭐지? → 깜짝 → 화내며 방방 뛰면 휘청휘청 → 화들짝 날아감
+      const head = () => ({ x: mate.x, z: mate.z, y: mate.topY ?? groundAt(mate.x, mate.z) + 0.6 });
+      let esc;
+      startTrip([
+        { fly: head, land: true, bail: () => d.over },
+        { sit: head, tick: () => (d.landed = true), shake: () => (d.nT > 1.5 ? 1 : 0), until: () => d.nT >= 3.2, bail: () => d.over },
+        { start() { const a = heading + 2; esc = { x: px + Math.sin(a) * 1.8, z: pz + Math.cos(a) * 1.8 }; esc.y = groundAt(esc.x, esc.z) + 1.4; }, fly: () => esc, dur: 0.9 },
+        homeStep,
+      ]);
+    } else if (pick === 'catJump') {
+      // 하악냥 머리 위에서 파닥파닥 → 하악냥이 밑으로 와서 폴짝! 앞발 툭 → 닿기 직전 살짝 옆으로 비켜 올라감 → 잠깐 내려다보다 돌아감
+      const a0 = Math.atan2(px - mate.x, pz - mate.z);
+      const spot = { x: mate.x + Math.sin(a0) * 0.55, z: mate.z + Math.cos(a0) * 0.55 };
+      spot.y = groundAt(spot.x, spot.z) + CAT_HOVER;
+      let esc;
+      startTrip([
+        { fly: () => spot, bail: () => d.over },
+        { hover: () => spot, down: true, face: faceTo(mate), tick: () => (d.hovering = true), until: () => d.catT >= 0.42, bail: () => d.over },
+        { start() { const a = Math.atan2(spot.x - mate.x, spot.z - mate.z) + Math.PI / 2; esc = { x: spot.x + Math.sin(a) * 0.6, z: spot.z + Math.cos(a) * 0.6, y: spot.y + 0.35 }; }, fly: () => esc, dur: 0.32, arc: 0.05, down: true },
+        { hover: () => esc, dur: 1.4, down: true, face: faceTo(mate) },
+        homeStep,
+      ]);
+    } else {
+      // 땅에서 콕콕 → 하악냥이 살금살금 다가와 웅크렸다 덮침! → 짝! 가볍게 날아올라 피함 → 옆에 사뿐 내려앉아 아무 일 없다는 듯
+      let esc, land;
+      startTrip([
+        { wait: true, act: 'peck', until: () => d.catT >= 0.18, bail: () => d.over },
+        { start() { const a = Math.atan2(px - mate.x, pz - mate.z) + 1.2; esc = { x: px + Math.sin(a) * 0.5, z: pz + Math.cos(a) * 0.5 }; esc.y = groundAt(esc.x, esc.z) + 0.75; }, fly: () => esc, dur: 0.45, arc: 0.05, down: true },
+        { hover: () => esc, dur: 1.3, down: true, face: faceTo(mate) },
+        { start() { const a = Math.atan2(esc.x - mate.x, esc.z - mate.z); land = { x: esc.x + Math.sin(a) * 0.4, z: esc.z + Math.cos(a) * 0.4 }; }, fly: () => land, land: true },
+        { wait: true, dur: 0.8 },
+        homeStep,
+      ]);
+    }
+  }
+
   const target = () => {
     const s = scheduleAt(Date.now() / 1000 + phase, K.plan);
     const th = (s.walked * SPEED) / R;
@@ -342,12 +500,12 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     root: mon.root,
     // 캐릭터가 지나가지 못하는 둥근 몸 (사라져 있을 때는 없음)
     colliders() {
-      return px === null || mon.state === 'gone' || mon.state === 'die' ? [] : [{ x: px, z: pz, r: BODY_R }];
+      return px === null || mon.state === 'gone' || mon.state === 'die' || air > 0.1 ? [] : [{ x: px, z: pz, r: BODY_R }];
     },
     // 휘두르기에 맞았는지 보고, 맞았으면 맞는 동작. hits(때린 사람 자리·방향, 맞을 자리) → 맞았으면 맞은 자리를 돌려줌
     // byMe: 내 캐릭터가 때렸는지 (도망형은 나한테 맞으면 화가 나 나를 쫓아옴) · power: 한 번에 깎는 체력 (지팡이로 기를 다 모아 쏜 큰 볼은 BOLT.big)
     tryHit(ax, az, hits, byMe = false, power = 1) {
-      if (px === null || mon.state === 'gone' || mon.state === 'die' || mon.state === 'spawn') return null;
+      if (px === null || mon.state === 'gone' || mon.state === 'die' || mon.state === 'spawn' || air > GUGU_HIGH) return null; // 높이 날고 있으면 안 닿음
       if (!hits(px, pz)) return null;
       const d = Math.hypot(px - ax, pz - az) || 1;
       kx = ((px - ax) / d) * KNOCK;
@@ -367,6 +525,9 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     // me: 내 캐릭터 (없으면 아직 입장 전)
     update(dt, me) {
       const { s, th, x: tx, z: tz } = target();
+      extraY = 0;
+      if (qMark) qMark.visible = false;
+      if (!self.duo) duoMood = false;
       if (px === null) { px = tx; pz = tz; }
       sinceHit += dt;
       let legs = 1; // 동작 빠르기 배수 (도망·쫓을 때 다리를 빨리 놀림)
@@ -434,7 +595,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           fleeRun = 0;
           fleeSide = Math.random() < 0.5 ? 1 : -1;
           mon.play('notice');
-        } else if (calm && HUNTS) {
+        } else if (calm && HUNTS && !self.duo) {
           if (mode === 'sulk') { if (mon.state !== 'sulk') { mode = 'route'; huntCool = HUNT_COOL; } }
           else if (mode === 'hunt') {
             const b = prey().get(preyId);
@@ -454,7 +615,10 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       } else mode = 'route';
       if (mode !== 'hunt' && mode !== 'sulk') preyId = null;
       // 합동 모션 중: 아무 일 없으면(제 길로 돌아갈 차례면) 계속하고, 맞거나 나를 보고 놀라는 등 다른 일이 생기면 그만둠
-      if (self.duo) {
+      if (kind === 'gugu') {
+        if (trip && busy) { stopTrip(); if (self.duo) endDuo(self.duo); } // 맞으면 나들이 그만
+        mode = trip ? 'trip' : 'route';
+      } else if (self.duo) {
         if (!busy && (mode === 'route' || mode === 'duo')) mode = 'duo';
         else { endDuo(self.duo); if (mode === 'duo') mode = 'route'; }
       } else if (mode === 'duo') mode = 'route';
@@ -464,6 +628,18 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       self.free = onRoute && !self.duo && self.duoCool <= 0;
       self.seen = Date.now();
       self.duoCool -= dt;
+      // 구구: 1초마다 주사위를 굴려 나들이를 떠남 (같은 서버 사람들 화면에서 거의 같이)
+      tripCool -= dt;
+      if (kind === 'gugu' && self.free && tripCool <= 0) {
+        const sec = Math.floor(Date.now() / 1000);
+        if (sec !== tripTick) {
+          tripTick = sec;
+          if (dice(sec, Math.round(phase * 10) + 7) < GUGU_TRIP_CHANCE) {
+            guguTrip(dice(sec, Math.round(phase * 10) + 99));
+            if (trip) mode = 'trip';
+          }
+        }
+      }
       // 몽당연필이 짝을 찾음: 1초마다 주사위를 굴려, 가까이 한가한 반쪽이가 있으면 합동 모션 시작
       if (kind === 'mongdang' && self.free) {
         const sec = Math.floor(Date.now() / 1000);
@@ -490,7 +666,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       }
       // 맞는 중(busy)이 아닌데 쫓지 않게 되면 나를 잊음: 다음에 다시 알아채면 또 '화남!'부터
       if (!busy && mode !== 'chase' && mode !== 'rage') targeting = false;
-      mon.setMood(targeting ? 'angry' : null);
+      mon.setMood(targeting || duoMood ? 'angry' : null);
 
       if (mon.state === 'gone') {
         // 쓰러져 사라졌다가 잠시 뒤 제 길 위에서 다시 나타남
@@ -503,7 +679,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           kx = kz = 0;
           mon.play('spawn');
         }
-      } else if (mon.state === 'attack') {
+      } else if (mon.state === 'attack' && mode !== 'duo') {
         // 공격하는 동안은 제자리에서 나를 바라봄
         if (me) heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 8);
       } else if (mode === 'rage') {
@@ -604,7 +780,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           duoT = 0;
           noErase = 0;
           duoStep = kind === 'mongdang' ? 'draw' : 'watch';
-          mon.play(kind === 'mongdang' ? 'doodle' : 'notice');
+          mon.play(d.type ? 'idle' : kind === 'mongdang' ? 'doodle' : 'notice');
         }
         duoT += dt;
         const turnTo = (a, k = 8) => { heading += wrap(a - heading) * Math.min(1, dt * k); };
@@ -626,7 +802,60 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           return false;
         };
         if (duoT > 30) endDuo(d); // 혹시 어딘가 끼어 끝나지 않으면 그만둠
-        else if (kind === 'mongdang') {
+        else if (d.type === 'perch') {
+          // 날개콩: 머리에 구구가 앉으면 물음표 띄우고 갸웃갸웃 "뭐지?" → 깜짝! → 위를 째려보며 화내고 방방 → 날아간 하늘에 대고 한 번 더 씩씩
+          if (mon.state === 'walk') mon.play('idle');
+          if (!d.landed) { if (duoT > 10) endDuo(d); } // 구구가 끝내 못 오면 그만
+          else {
+            d.nT += dt;
+            const c = d.nT, at = (x) => c - dt < x && c >= x;
+            if (at(1.5)) mon.play('notice');
+            if (at(1.9) || at(2.9) || at(4.2)) mon.play('angry');
+            duoMood = c > 1.9 && c < 6;
+            const huh = sm(c, 0.2, 0.4) * (1 - sm(c, 1.35, 1.5));
+            const lookUp = Math.max(huh * 0.35, sm(c, 1.5, 1.8) * (1 - sm(c, 5.5, 6.1)));
+            const hops = (c - 2.0) * 2.6; // 방방 횟수 (정수일 때 발이 땅에 닿음)
+            const hopping = hops > 0 && hops < 5;
+            extraY = hopping ? Math.abs(Math.sin(hops * Math.PI)) * (hops > 2 ? 0.045 : 0.03) * S : 0;
+            d.hop = extraY;
+            if (c > 3.4) face(d.p); // 날아가는 구구 쪽을 봄
+            post = () => {
+              if (!qMark) { qMark = questionMark(); mon.root.add(qMark); }
+              qMark.visible = huh > 0.01;
+              qMark.scale.setScalar(0.06 * huh * (1 + 0.1 * Math.sin(c * 8)));
+              qMark.position.set(0.055, 0.17 + Math.sin(c * 4) * 0.004, 0);
+              core.rotation.z += Math.sin((c - 0.2) * 3.2) * 0.22 * huh; // 갸웃갸웃
+              core.rotation.x = THREE.MathUtils.lerp(core.rotation.x, -0.45, lookUp); // 고개를 젖혀 머리 위를 째려봄
+              if (hopping) { mon.root.children[0].position.y += extraY / S; mon.root.rotation.y += Math.sin(c * 9) * 0.15; } // 몸만 띄워 그림자는 땅에 남고 작아짐
+            };
+            if (c > 6.3) endDuo(d);
+          }
+        } else if (d.type === 'catJump' || d.type === 'catPounce') {
+          // 하악냥: 머리 위 구구 밑으로 가서 폴짝 툭 / 땅의 구구에게 살금살금 다가가 덮침 → 놓치면 시무룩
+          const pig = d.p, a = Math.atan2(pig.x - px, pig.z - pz);
+          if (d.catT >= 0) {
+            d.catT += dt;
+            if (!d.sulk && mon.state !== 'swat' && mon.state !== 'attack') { d.sulk = true; mon.play('sulk'); }
+            else if (d.sulk && mon.state !== 'sulk') endDuo(d);
+            if (d.sulk) face(pig);
+          } else if (d.type === 'catJump') {
+            if (!d.hovering) { if (mon.state === 'walk') mon.play('idle'); face(pig); d.ready = 0; }
+            else {
+              d.ready += dt; // 구구가 머리 위에 자리 잡은 뒤 흐른 시간
+              if (walkTo(pig.x - Math.sin(a) * 0.28, pig.z - Math.cos(a) * 0.28, 0.8, 0.08)) {
+                if (mon.state === 'walk') mon.play('idle');
+                turnTo(a);
+                if (d.ready > 1.0 && Math.abs(wrap(a - heading)) < 0.3) { mon.setReach?.(0.6); mon.play('swat'); d.catT = 0; }
+              }
+            }
+          } else if (walkTo(pig.x - Math.sin(a) * 0.55, pig.z - Math.cos(a) * 0.55, 0.45, 0.08) && duoT > 1.2) {
+            if (mon.state === 'walk') mon.play('idle');
+            turnTo(a);
+            if (Math.abs(wrap(a - heading)) < 0.2) { mon.play('attack'); d.catT = 0; }
+          }
+          if (duoT > 15) endDuo(d);
+        }
+        else if (d.type) { /* 구구 짝은 위에서 함 */ } else if (kind === 'mongdang') {
           if (duoStep === 'draw') {
             if (mon.state !== 'doodle') mon.play('doodle');
             if (duoT > 0.55) {
@@ -712,6 +941,9 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           } else if (mon.state !== 'scrubEnd') endDuo(d); // 뿌듯 동작까지 마치면 끝
         }
         lastKey = s.key;
+      } else if (mode === 'trip') {
+        runTrip(dt);
+        lastKey = s.key; // 나들이 동안 지나간 일정은 건너뜀
       } else if (!busy) {
         const gap = Math.hypot(tx - px, tz - pz);
         if (gap > 0.05) {
@@ -761,7 +993,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       }
 
       // 그래도 겹쳐 있으면(맞고 밀려났거나 같은 자리에서 다시 나타남) 서로 조금씩 밀어냄. 벽 너머로는 밀리지 않는다
-      self.solid = mon.state !== 'gone' && mon.state !== 'die';
+      self.solid = mon.state !== 'gone' && mon.state !== 'die' && air < 0.1; // 날고 있는 구구는 다른 몬스터와 안 부딪힘
       if (self.solid) {
         for (const o of ALL) {
           if (o === self || !o.solid) continue;
@@ -780,6 +1012,13 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       mon.root.position.set(px, groundY(px, pz) - curveDrop(px, pz), pz);
       mon.root.rotation.y = heading;
       mon.update(mon.state === 'walk' ? dt * legs : dt, legs); // legs: 달리기 모션이 있는 몬스터(하악냥)는 빨리 갈 때 달림
+      post?.();
+      post = null;
+      if (nBody) { // 날개콩 정수리 높이 (구구가 머리에 앉을 때)
+        nBody.getWorldPosition(TMP);
+        const y = TMP.y;
+        self.topY = y + NALGAE_TOP * TMP.setFromMatrixScale(nBody.matrixWorld).y;
+      }
       // 그림자: 몸이 작아지면(펑 사라짐·등장) 같이 작아지고, 뛰어오르면 작아져 높이가 읽힌다
       const b = mon.root.children[0];
       const k = Math.min(1.2, Math.max(0, b.scale.x)) / (1 + b.position.y * S * 0.9);

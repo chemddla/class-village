@@ -5,7 +5,7 @@ import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
   ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
 } from '../../shared/world.js';
-import { buildVillage, fishModel, bugModel } from './village.js';
+import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
 import { buildField } from './field.js';
 import { Character, actTime, LAND, BOW_SLAM_LAND } from './character.js';
 import { BOW_PITCH, DIVE, DASH_RATE, bowDrawn } from './villager/actions.js';
@@ -555,6 +555,33 @@ const monsterOpts = {
   },
   blocked: (x, z, r) => isBlocked(x, z, r) || (lifeSpots.length > 0 && LIFE_COLLIDERS.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r)),
 };
+// 구구(비둘기)가 날아가 앉을 만한 곳: 마을 둥근 나무 꼭대기 언저리, 한동안 가만히 서 있는 캐릭터 머리 위
+// get() 은 지금 앉을 자리(월드)를, 못 앉게 되면(캐릭터가 움직이거나 떠남) null 을 돌려줌 → 앉아 있던 구구는 화들짝 날아감
+const PERCH_STILL = 3; // 캐릭터가 이만큼(초) 가만히 서 있어야 머리에 앉음
+const TREE_PERCHES = WORLD.trees.map((t, i) => treePerch(t, i)).filter(Boolean)
+  .map((p) => ({ x: p.x, z: p.z, get: () => ({ x: p.x, y: p.y - curveDrop(p.x, p.z), z: p.z }) }));
+const stillSince = new WeakMap(); // 캐릭터 → 마지막으로 움직인 자리·시각
+const headTopOff = new WeakMap(); // 캐릭터 → 머리 꼭대기가 머리 관절보다 얼마나 높은지 (m)
+const perchV = new THREE.Vector3();
+function stillFor(c) {
+  const now = performance.now() / 1000;
+  let s = stillSince.get(c);
+  if (!s || Math.hypot(c.x - s.x, c.z - s.z) > 0.05 || c.current !== 'idle') stillSince.set(c, (s = { x: c.x, z: c.z, t: now }));
+  return now - s.t;
+}
+const headPerch = (c) => ({
+  x: c.x,
+  z: c.z,
+  get() {
+    if (!c.root.parent || !c.root.visible || stillFor(c) < PERCH_STILL) return null;
+    const head = c.villager.rig.head;
+    head.getWorldPosition(perchV);
+    let off = headTopOff.get(c);
+    if (off === undefined) { off = new THREE.Box3().setFromObject(head).max.y - perchV.y; headTopOff.set(c, off); }
+    return { x: perchV.x, y: perchV.y + off - 0.03, z: perchV.z };
+  },
+});
+const guguPerches = () => [...TREE_PERCHES, ...[me, ...[...others.values()].map((o) => o.char)].filter(Boolean).map(headPerch)];
 const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
 const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
@@ -1565,9 +1592,10 @@ function attach(r) {
     if (free && !plazaMonsters.length) {
       // 하악냥은 광장 둘레 곤충을 쫓아가 툭툭 침: 두 번째 툭에 서버에 알려 곤충이 놀라 날아가게 (들판엔 곤충이 없어 광장 하악냥만)
       const preyOpts = { prey: () => bugSpots, onSwat: (id, x, z) => room?.send('catSwat', [id, toCm(x), toCm(z)]) };
-      // 몽당연필·반쪽이·하악냥은 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
+      // 몽당연필·반쪽이·하악냥·구구는 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
       plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts })];
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts }),
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches })];
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });
