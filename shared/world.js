@@ -71,6 +71,55 @@ export const VILLAGE_FRUIT = 'peach'; // 마을 과일나무에 열리는 과일
 export const FRUIT_MAX = 5; // 과일나무 한 그루에 열리는 개수
 export const FRUIT_REGROW = 45; // 딴 과일이 다시 열리기까지 (초)
 export const BAG_MAX = 99; // 가방에 넣을 수 있는 과일 한 종류의 최대 개수
+// 레벨: 생활(줍기·곤충·물고기)과 몬스터 잡기로 경험치를 얻는다. 물고기는 별 개수(RARITY.stars)만큼 곱한다
+export const XP = { grab: 1, bug: 4, fish: 3, monster: 8 };
+export const xpNeed = (lv) => lv * 10; // lv → lv+1 에 필요한 경험치
+// 모은 경험치 → { lv, xp: 이번 레벨에서 모은 만큼, need: 다음 레벨까지 필요한 만큼 }
+export function levelOf(total) {
+  let lv = 1;
+  let xp = total;
+  while (xp >= xpNeed(lv)) { xp -= xpNeed(lv); lv++; }
+  return { lv, xp, need: xpNeed(lv) };
+}
+
+// 스텟: 레벨에 따라 저절로 오른다. Lv1 은 모두 1, JOB_LEVEL 까지(모험가)는 레벨마다 모두 +1,
+// 전직한 뒤에는 레벨마다 주스텟 +3 · 부스텟 +1 (언제 전직했든 JOB_LEVEL 에 전직한 것처럼 계산 → 직업을 바꿔도 꼬이지 않음)
+export const STAT_NAMES = { str: '힘', dex: '민첩', int: '지능', luk: '운' };
+export const JOB_LEVEL = 10;
+export const JOBS = {
+  '': { name: '모험가' },
+  warrior: { name: '전사', main: 'str', sub: 'dex' },
+  archer: { name: '궁수', main: 'dex', sub: 'luk' },
+  mage: { name: '마법사', main: 'int', sub: 'luk' },
+  thief: { name: '도적', main: 'luk', sub: 'dex' },
+};
+export function statsOf(lv, job = '') {
+  const s = { str: 1, dex: 1, int: 1, luk: 1 };
+  const j = JOBS[job]?.main ? JOBS[job] : null;
+  for (let l = 2; l <= lv; l++) {
+    if (j && l > JOB_LEVEL) { s[j.main] += 3; s[j.sub] += 1; } else for (const k in s) s[k] += 1;
+  }
+  return s;
+}
+// 무기마다 공격력에 쓰는 스텟 (그 밖의 도구는 힘)
+export const WEAPON_STAT = { club: 'str', woodSword: 'str', axe: 'str', bow: 'dex', staff: 'int', dagger: 'luk' };
+// 능력치: 스텟 → 실제로 쓰는 값. Lv1(모두 1)이면 지금까지 쓰던 기본값 그대로. 몬스터와 싸울 때만 쓰고, 학생끼리는 기본값
+export function abilitiesOf(s) {
+  const b = (k) => s[k] - 1;
+  const attack = {};
+  for (const k in STAT_NAMES) attack[k] = 10 * (1 + 0.03 * b(k));
+  return {
+    hpMax: 100 + 3 * b('str') + b('dex') + b('int') + b('luk'),
+    mpMax: 100 + 3 * b('int') + b('str') + b('dex') + b('luk'),
+    hpRegen: 2 * Math.min(2, 1 + 0.02 * b('str')),
+    mpRegen: 3 * Math.min(2, 1 + 0.02 * b('int')),
+    attack, // 스텟 → 공격력 (그 스텟을 쓰는 무기로 칠 때)
+    crit: Math.min(0.3, 0.1 + 0.005 * b('luk') + 0.002 * b('dex')),
+    critMult: Math.min(2, 1.5 + 0.01 * b('luk')),
+    miss: Math.max(0.01, 0.05 - 0.001 * b('dex')),
+    dodgeCool: 0.3 * Math.max(0.5, 1 - 0.01 * b('luk') - 0.005 * b('dex')),
+  };
+}
 export const PICK_REACH = 2.2; // 과일나무 둘레에서 이만큼 안이면 흔들 수 있음 (m)
 export const SHAKE_DROP = [3, 4]; // 과일나무를 흔들면 떨어지는 개수 (이 사이에서 무작위, 남은 것보다 많이는 안 떨어짐)
 export const GRAB_REACH = 1.3; // 땅에 떨어진 과일을 주울 수 있는 거리 (m)

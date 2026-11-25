@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
 import { buildField } from './field.js';
@@ -106,7 +106,7 @@ const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
   fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
-  hp: $id('hp-bar'), mp: $id('mp-bar'),
+  hp: $id('hp-bar'), mp: $id('mp-bar'), xp: $id('xp-bar'),
   toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), pickBtn: $id('pick-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
 let toastTimer = 0;
@@ -202,7 +202,9 @@ const STEP_SWINGS = new Set([ANIM.SMASH, ANIM.SMASH2, ANIM.SMASH3, ANIM.SMASH4, 
 const SWING_STEP = 0.3;
 // 체력·마나 (내 화면에서만 셈)
 // 마나: 대시 공격·더블 점프 내리찍기에 쓰고 천천히 찬다
-const STAT = { max: 100, hit: 10, hpRegen: 2, mpRegen: 3, skill: 20 };
+const STAT = { max: 100, hit: 10, skill: 20 }; // 회복·치명타 같은 나머지는 레벨에 따른 능력치(ab)
+const BASE_AB = abilitiesOf(statsOf(1)); // 다른 학생이 친 것은 기본값으로 보여 준다
+let ab = BASE_AB; // 내 능력치 (레벨이 오르면 다시 계산: showXp)
 const stats = { hp: STAT.max, mp: STAT.max };
 const ghost = { hp: { v: STAT.max, hold: 0 }, mp: { v: STAT.max, hold: 0 } };
 // 모자라서 못 썼을 때 그 줄을 떨어 보인다
@@ -217,9 +219,27 @@ function useMana(n) {
   stats.mp -= n;
   return true;
 }
+// 경험치 줄: 오르면 머리 위에 +XP, 레벨이 오르면 알려 준다 (prev 가 없으면 처음 들어온 것)
+let myXp = 0;
+let myJob = ''; // 직업 (서버가 정함, 비어 있으면 모험가)
+function showXp(total, prev) {
+  const { lv, xp, need } = levelOf(total);
+  myXp = total;
+  ab = abilitiesOf(statsOf(lv, myJob));
+  renderInfo();
+  ui.xp.querySelector('i').style.width = `${(xp / need) * 100}%`;
+  ui.xp.querySelector('em').textContent = lv;
+  ui.xp.title = `경험치 ${xp} / ${need}`;
+  if (prev === undefined || total <= prev || !me) return;
+  FX.damage(`+${total - prev} XP`, me.x, me.groundY + 2.2, me.z, '#ffd45e');
+  if (lv > levelOf(prev).lv) {
+    toast(lv === JOB_LEVEL && !myJob ? `🎉 Lv ${lv}! 이제 전직할 수 있어요` : `🎉 레벨 업! 이제 Lv ${lv}`);
+    FX.burst('star', 14, me.x, me.groundY + 1.6, me.z, { floor: me.groundY, spread: Math.PI, power: 1 });
+  }
+}
 function updateStats(dt) {
-  stats.hp = Math.min(STAT.max, stats.hp + STAT.hpRegen * dt);
-  stats.mp = Math.min(STAT.max, stats.mp + STAT.mpRegen * dt);
+  stats.hp = Math.min(ab.hpMax, stats.hp + ab.hpRegen * dt);
+  stats.mp = Math.min(ab.mpMax, stats.mp + ab.mpRegen * dt);
   for (const k of ['hp', 'mp']) {
     // 잔상: 줄어든 자리에 잠깐(0.4초) 머물렀다가 빠르게 따라 내려온다 (차오를 때는 바로 같이)
     const g = ghost[k];
@@ -227,22 +247,42 @@ function updateStats(dt) {
     else if ((g.hold -= dt) < 0) g.v = Math.max(stats[k], g.v - 90 * dt);
     const row = ui[k];
     const fill = row.querySelector('i');
-    const w = `${(stats[k] / STAT.max) * 100}%`;
+    const max = k === 'hp' ? ab.hpMax : ab.mpMax;
+    const w = `${(stats[k] / max) * 100}%`;
     if (fill.style.width !== w) fill.style.width = w;
-    const gw = `${(g.v / STAT.max) * 100}%`;
+    const gw = `${(g.v / max) * 100}%`;
     const gb = row.querySelector('b');
     if (gb.style.width !== gw) gb.style.width = gw;
     const n = String(Math.floor(stats[k]));
     const em = row.querySelector('em');
     if (em.textContent !== n) em.textContent = n;
-    row.classList.toggle('low', stats[k] < STAT.max * 0.25);
+    row.classList.toggle('low', stats[k] < max * 0.25);
   }
+}
+// 치명타·빗나감: 맞힐 때마다 굴려 피해 배수를 정한다 (0 = 빗나감)
+// mine: 내가 친 것이면 내 능력치(빗나감·치명타), 아니면 기본값
+function rollHit(mine = false) {
+  const a = mine ? ab : BASE_AB;
+  const r = Math.random();
+  return r < a.miss ? 0 : r < a.miss + a.crit ? a.critMult : 1;
+}
+// 내가 몬스터를 칠 때 공격력 배수 (stat: 무기가 쓰는 스텟). 남이 친 것은 1
+const atkMul = (mine, stat) => (mine ? ab.attack[stat] / STAT.hit : 1);
+const meleeStat = () => WEAPON_STAT[TOOLS[local.tool]] ?? 'str';
+// 피해 숫자: 하얀색, 빗나가면 '빗나감', 치명타면 노란색 큰 숫자에 '!'
+function showDamage(base, k, x, y, z) {
+  if (!k) FX.damage('빗나감', x, y, z, '#d8d0c4');
+  else if (k > 1) FX.damage(`${Math.round(base * k)}!`, x, y, z, '#ffe14d', true);
+  else FX.damage(Math.round(base), x, y, z, '#ffffff');
 }
 // power: 피해 배수 (지팡이로 기를 다 모아 쏜 큰 볼은 BOLT.big)
 function getHit(fromX, fromZ, power = 1) {
-  stats.hp = Math.max(0, stats.hp - STAT.hit * power);
+  const k = rollHit();
+  if (me) showDamage(STAT.hit * power, k, me.x, me.groundY + 1.9, me.z);
+  if (!k) return; // 빗나가면 안 아프고 움찔하지도 않는다
+  stats.hp = Math.max(0, stats.hp - STAT.hit * power * k);
   if (stats.hp <= 0) { // 다 닳으면 벌러덩 쓰러졌다가 다시 꽉 찬다
-    stats.hp = STAT.max;
+    stats.hp = ab.hpMax;
     local.act = ANIM.FAINT;
     local.actLeft = local.hurt = actTime(ANIM.FAINT);
     return;
@@ -312,19 +352,20 @@ function hitFx(char, action) {
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
     // 몬스터: 휘두른 범위 안에 있는 것은 모두 맞는다 (한 번 휘둘러 여럿)
-    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me)).filter(Boolean) : [];
+    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => { const k = rollHit(char === me); const h = m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me, k * atkMul(char === me, meleeStat())); return h && { ...h, k }; }).filter(Boolean) : [];
+    if (char === me) for (const m of monHits) if (m.dead) room?.send('kill');
     // 곤충: 휘두른 범위 안에 있으면 놀라 날아간다 (내가 휘둘렀을 때만 서버에 알림)
     if (action === 'clubSmash' && char === me) spookBugs((b) => b.y - gy < 2.2 && hits(char.x, char.z, char.targetRot, b.x, b.z));
     if (victims.length || monHits.length) {
       for (const v of victims) {
         v.shake();
-        if (v !== me) predictOuch(v);
+        if (v !== me) { predictOuch(v); FX.damage(STAT.hit, v.x, v.groundY + 1.9, v.z, '#ffffff'); }
         burst('star', 9, at(v.x, v.z, 1.35), { spread: Math.PI, power: 0.9 });
         burst('dust', 4, at(v.x, v.z, 0.9), { spread: Math.PI, power: 0.5 });
         if (v === me) strong = true;
       }
       // 깃털이 빠지고 찌부되는 건 몬스터가 직접 하고, 여기서는 맞은 자리마다 별만 튀긴다
-      for (const m of monHits) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 });
+      for (const m of monHits) { if (m.k) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 }); showDamage(STAT.hit * atkMul(char === me, meleeStat()), m.k, m.x, gy + m.y + 0.5, m.z); }
     } else if (rock >= 0) {
       const r = WORLD.rocks[rock];
       village.shakeRock(rock, fx, fz);
@@ -415,13 +456,17 @@ function arrowHit(a, from, mine) {
     if (!c || c === from || Math.hypot(c.x - x, c.z - z) > ARROW_HIT_R || y > c.groundY + 1.7) continue;
     c.shake();
     burst('star', 8, c.x, c.groundY + 1.3, c.z, { power: 0.8 });
+    if (c !== me) FX.damage(STAT.hit, c.x, c.groundY + 1.9, c.z, '#ffffff');
     if (c === me && local.dodge <= 0 && local.hurt <= 0) { getHit(bx, bz); FX.hitstop(0.05); } // 구르는 중에는 피한다
     return true;
   }
-  const m = hereMonsters().map((mon) => mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine)).find(Boolean);
+  const k = rollHit(mine);
+  const m = hereMonsters().map((mon) => mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine, k * atkMul(mine, 'dex'))).find(Boolean);
   if (!m) return false;
-  burst('star', 8, m.x, from.groundY + m.y, m.z, { power: 0.8 });
-  if (mine) FX.hitstop(0.04);
+  if (mine && m.dead) room?.send('kill');
+  if (k) burst('star', 8, m.x, from.groundY + m.y, m.z, { power: 0.8 });
+  showDamage(STAT.hit * atkMul(mine, 'dex'), k, m.x, from.groundY + m.y + 0.5, m.z);
+  if (mine && k) FX.hitstop(0.04);
   return true;
 }
 // 마법 볼이 사람·몬스터에 닿았는지만 본다 (몬스터는 맞는지 묻기만 하고 맞히지는 않는다: hits 가 늘 false)
@@ -455,12 +500,15 @@ function boltBurst(a, at) {
     if (!c || c === from || Math.hypot(c.x - at.x, c.z - at.z) > R || at.y > c.groundY + 1.7 + R) continue;
     c.shake();
     star(c.x, c.groundY + 1.3, c.z, c.x - at.x, c.z - at.z);
+    if (c !== me) FX.damage(Math.round(STAT.hit * a.size), c.x, c.groundY + 1.9, c.z, '#ffffff');
     if (c === me && local.dodge <= 0 && local.hurt <= 0) { getHit(at.x, at.z, a.size); FX.hitstop(0.05); } // 구르는 중에는 피한다
   }
   let any = false;
   for (const mon of hereMonsters()) {
-    const m = mon.tryHit(at.x, at.z, (mx, mz) => Math.hypot(mx - at.x, mz - at.z) < R, mine, a.size);
-    if (m) { any = true; star(m.x, from.groundY + m.y, m.z, m.x - at.x, m.z - at.z); }
+    const k = rollHit(mine);
+    const m = mon.tryHit(at.x, at.z, (mx, mz) => Math.hypot(mx - at.x, mz - at.z) < R, mine, a.size * k * atkMul(mine, 'int'));
+    if (mine && m?.dead) room?.send('kill');
+    if (m) { any ||= k > 0; if (k) star(m.x, from.groundY + m.y, m.z, m.x - at.x, m.z - at.z); showDamage(STAT.hit * a.size * atkMul(mine, 'int'), k, m.x, from.groundY + m.y + 0.5, m.z); }
   }
   if (any && mine) FX.hitstop(0.04);
 }
@@ -565,7 +613,7 @@ const monsterOpts = {
 // 구구(비둘기)가 날아가 앉을 만한 곳: 마을 둥근 나무 꼭대기 언저리, 한동안 가만히 서 있는 캐릭터 머리 위
 // get() 은 지금 앉을 자리(월드)를, 못 앉게 되면(캐릭터가 움직이거나 떠남) null 을 돌려줌 → 앉아 있던 구구는 화들짝 날아감
 const PERCH_STILL = 3; // 캐릭터가 이만큼(초) 가만히 서 있어야 머리에 앉음
-const TREE_PERCHES = WORLD.trees.map((t, i) => treePerch(t, i)).filter(Boolean)
+const TREE_PERCHES = [...WORLD.trees.map((t, i) => treePerch(t, i)), ...FIELD_MAP.trees.map((t) => treePerch(t, -1, t.kind === 1 ? 1 : 0))].filter(Boolean)
   .map((p) => ({ x: p.x, z: p.z, get: () => ({ x: p.x, y: p.y - curveDrop(p.x, p.z), z: p.z }) }));
 const stillSince = new WeakMap(); // 캐릭터 → 마지막으로 움직인 자리·시각
 const headTopOff = new WeakMap(); // 캐릭터 → 머리 꼭대기가 머리 관절보다 얼마나 높은지 (m)
@@ -591,6 +639,8 @@ const headPerch = (c) => ({
 const guguPerches = () => [...TREE_PERCHES, ...[me, ...[...others.values()].map((o) => o.char)].filter(Boolean).map(headPerch)];
 const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
 const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
+// 들판 구구: 하악냥 자리(가장 넓음) 안쪽 작은 원을 돌게 해서(같은 원이면 하악냥에 막혀 줄만 섬) 하악냥과 합동 모션이 나게
+fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -895,6 +945,8 @@ const dexPanel = $id('dex-panel');
 const stars = (r) => '★'.repeat(RARITY[r].stars);
 // 이름 뒤에 받침에 맞는 '을/를' (원목을 · 꿀벌을 · 나뭇가지를)
 const eul = (name) => { const c = name.charCodeAt(name.length - 1) - 0xac00; return `${name}${c >= 0 && c <= 11171 && c % 28 ? '을' : '를'}`; };
+// 이름 뒤에 받침에 맞는 '로/으로' (전사로 · 도적으로)
+const ro = (name) => { const c = (name.charCodeAt(name.length - 1) - 0xac00) % 28; return `${name}${c > 0 && c !== 8 ? '으로' : '로'}`; };
 let dexTab = 'fish'; // 'fish' · 'bug'
 // 곤충 사는 곳 (도감에서 묶어 보여 줄 때)
 const BUG_PLACE = [['fly', '🌼 날아다니는 곤충'], ['flower', '🌸 꽃에 앉는 곤충'], ['tree', '🌳 나무에 붙는 곤충'], ['ground', '🌱 풀밭에서 뛰는 곤충']];
@@ -937,6 +989,41 @@ function renderDex() {
   }
 }
 renderDex();
+
+// ── 내 정보 (P): 레벨·직업·스텟·능력치·생활 기록. 스텟과 능력치는 레벨(과 직업)로 계산한 값 ──
+const infoPanel = $id('info-panel');
+const JOB_ICON = { warrior: '🗡️', archer: '🏹', mage: '🪄', thief: '🥷' };
+infoPanel.addEventListener('click', (e) => {
+  const job = e.target.closest('[data-job]')?.dataset.job;
+  if (job && job !== myJob) room?.send('job', job);
+});
+function renderInfo() {
+  if (infoPanel.classList.contains('hidden')) return;
+  const { lv, xp, need } = levelOf(myXp);
+  const job = JOBS[myJob];
+  const st = statsOf(lv, myJob);
+  const row = (k, v) => `<div class="info-row"><span>${k}</span><b>${v}</b></div>`;
+  const pct = (v) => `${Math.round(v * 1000) / 10}%`;
+  const tag = (k) => (k === job.main ? '<span class="tag">주</span>' : k === job.sub ? '<span class="tag sub">부</span>' : '');
+  const caught = (list) => { const got = list.filter((f) => dex.get(f.id) > 0); return `${got.reduce((n, f) => n + dex.get(f.id), 0)}마리 (${got.length}/${list.length}종)`; };
+  infoPanel.innerHTML = `<h3>📋 내 정보 <small>(P)</small></h3>
+    <div class="who">${room?.state.players.get(room.sessionId)?.name ?? ''} <small>Lv ${lv} · ${job.name}</small></div>
+    ${row('경험치', `${xp} / ${need}`)}
+    ${lv >= JOB_LEVEL ? `<p class="note">${myJob ? '다른 직업으로 바꿀 수도 있어요' : '⭐ 전직할 수 있어요! 직업을 골라요'}</p>
+      <div class="job-pick">${Object.entries(JOBS).filter(([, j]) => j.main).map(([k, j]) => `<button type="button" data-job="${k}" class="${k === myJob ? 'on' : ''}">${JOB_ICON[k]} ${j.name}<small>${STAT_NAMES[j.main]}·${STAT_NAMES[j.sub]}</small></button>`).join('')}</div>`
+    : `<p class="inv-help">Lv ${JOB_LEVEL}이 되면 전직할 수 있어요</p>`}
+    <h4>스텟 <small>(레벨이 오르면 저절로)</small></h4>
+    ${Object.entries(STAT_NAMES).map(([k, n]) => row(`${n}${tag(k)}`, st[k])).join('')}
+    <h4>능력치</h4>
+    ${row('최대 HP', Math.round(ab.hpMax))}${row('최대 MP', Math.round(ab.mpMax))}
+    ${row('HP 회복', `${ab.hpRegen.toFixed(1)} / 초`)}${row('MP 회복', `${ab.mpRegen.toFixed(1)} / 초`)}
+    ${row('공격력 (칼·몽둥이)', ab.attack.str.toFixed(1))}${row('공격력 (활)', ab.attack.dex.toFixed(1))}
+    ${row('공격력 (지팡이)', ab.attack.int.toFixed(1))}${row('공격력 (단검)', ab.attack.luk.toFixed(1))}
+    ${row('치명타 확률', pct(ab.crit))}${row('치명타 피해', `${ab.critMult.toFixed(2)}배`)}
+    ${row('빗나감', pct(ab.miss))}${row('구르기 대기', `${ab.dodgeCool.toFixed(2)}초`)}
+    <h4>생활</h4>
+    ${row('🐟 낚은 물고기', caught(FISH))}${row('🦋 잡은 곤충', caught(BUGS))}`;
+}
 
 // ── 낚시: 물가에서 G → 던지기 → 물고기가 찌로 다가와 4~5번 톡톡(찌가 까딱) → 덥석(찌가 쏙, 머리 위 ❗) → 바로 G ──
 // 톡톡 건드릴 때 누르면 놀라 도망가고, 쏙 들어간 뒤 너무 늦게 누르면 놓친다 (희귀할수록 누를 시간이 짧다)
@@ -1303,9 +1390,9 @@ chatInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChat
 chatInput.addEventListener('blur', () => { if (!chatForm.classList.contains('hidden')) setTimeout(closeChat, 0); });
 $id('chat-btn').addEventListener('click', openChat);
 addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') for (const p of [ui.inv, dexPanel, $id('look-panel')]) p.classList.add('hidden');
+  if (e.key === 'Escape') for (const p of [ui.inv, dexPanel, infoPanel, $id('look-panel')]) p.classList.add('hidden');
 });
-for (const panel of [ui.inv, dexPanel, $id('look-panel')]) { // 인벤토리·도감·꾸미기 창: 제목줄을 잡고 끌면 옮겨진다 (칸 안 물건 끌기와 안 겹치게 제목줄만)
+for (const panel of [ui.inv, dexPanel, infoPanel, $id('look-panel')]) { // 인벤토리·도감·꾸미기 창: 제목줄을 잡고 끌면 옮겨진다 (칸 안 물건 끌기와 안 겹치게 제목줄만)
   let drag = null;
   const key = `panelPos:${panel.id}`;
   const saved = store.get(localStorage, key)?.split(',').map(Number);
@@ -1360,7 +1447,7 @@ const input = createInput({
     }
     else if (name === 'dodge') {
       // 공격 중·맞는 중·쿨타임에는 못 한다. 방향키(조이스틱)를 누르고 있으면 그쪽으로, 아니면 보던 쪽(정면)으로
-      if (local.hurt > 0 || local.dodge > -DODGE.cool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
+      if (local.hurt > 0 || local.dodge > -ab.dodgeCool || ((ATTACKS.has(local.act) || AIRBORNE.has(local.act)) && local.actLeft > 0)) return;
       if (local.fishing) stopFishing();
       local.act = ANIM.ROLL;
       local.actLeft = actTime(ANIM.ROLL);
@@ -1380,6 +1467,9 @@ const input = createInput({
     } else if (name === 'inv') {
       ui.inv.classList.toggle('hidden');
       dexPanel.classList.add('hidden'); // 가방과 도감은 같은 자리에 열려서 하나만
+    } else if (name === 'info') {
+      infoPanel.classList.toggle('hidden');
+      renderInfo();
     } else if (name === 'dex') {
       renderDex();
       dexPanel.classList.toggle('hidden');
@@ -1525,7 +1615,7 @@ function attach(r) {
         renderInv();
       };
       dex.clear();
-      const setDex = (n, f) => { dex.set(f, n); renderDex(); };
+      const setDex = (n, f) => { dex.set(f, n); renderDex(); renderInfo(); };
       $(p).dex.onAdd(setDex, false);
       $(p).dex.onChange(setDex);
       p.dex.forEach((n, f) => { dex.set(f, n); announced.add(f); });
@@ -1535,6 +1625,13 @@ function attach(r) {
       $(p).bag.onRemove((_, f) => setBag(0, f));
       p.bag.forEach((n, f) => bag.set(f, n));
       renderInv();
+      $(p).listen('xp', (v, prev) => showXp(v, prev));
+      $(p).listen('job', (v, prev) => {
+        myJob = v ?? '';
+        ab = abilitiesOf(statsOf(levelOf(myXp).lv, myJob));
+        renderInfo();
+        if (prev !== undefined && v) toast(`✨ ${ro(JOBS[v].name)} ${prev ? '바꿨어요' : '전직했어요!'}`);
+      });
     } else {
       const char = new Character(p.name, p.color, parseLook(p.look));
       char.setTool(p.t);
@@ -1795,6 +1892,7 @@ function enterGame() {
   ui.invBtn.classList.remove('hidden');
   $id('behind-btn').classList.remove('hidden');
   $id('dex-btn').classList.remove('hidden');
+  $id('info-btn').classList.remove('hidden');
   $id('chat-btn').classList.remove('hidden');
   ui.quick.classList.remove('hidden');
   $id('minimap').classList.remove('hidden');

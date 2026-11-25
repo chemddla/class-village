@@ -223,10 +223,46 @@ export const FX = {
     this.shakes.push({ obj, t: 0, dx, dz, power });
   },
 
+  // 데미지 숫자: (x,y,z)에서 톡 튀어 커졌다가 위로 떠오르며 사라진다 (테두리 두른 굵은 글씨, 벽에 안 가림)
+  nums: [],
+  // big: 치명타 (더 크게 튄다)
+  damage(n, x, y, z, color = '#fff27a', big = false) {
+    if (!this.scene) return;
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 80; // '빗나감' 세 글자가 들어가는 폭
+    const ctx = c.getContext('2d');
+    ctx.font = 'bold 64px "Maplestory","Apple SD Gothic Neo","Malgun Gothic",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 10;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#3d2f22';
+    ctx.strokeText(String(n), 128, 42);
+    ctx.fillStyle = color;
+    ctx.fillText(String(n), 128, 42);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }));
+    sp.renderOrder = 12;
+    sp.position.set(x + rnd(-0.15, 0.15), y, z + rnd(-0.15, 0.15));
+    this.scene.add(sp);
+    this.nums.push({ sp, t: 0, y: sp.position.y, s: big ? 1.4 : 1 });
+  },
+
   update(dt) {
     if (!this.pools) return;
     this.pools.solid.update(dt);
     this.pools.glow.update(dt);
+    this.nums = this.nums.filter((d) => {
+      d.t += dt;
+      const k = d.t / 0.8;
+      if (k >= 1) { d.sp.material.map.dispose(); d.sp.material.dispose(); d.sp.removeFromParent(); return false; }
+      const pop = d.t < 0.12 ? 0.6 + (d.t / 0.12) * 0.6 : 1.2 - Math.min(0.2, (d.t - 0.12) * 2); // 톡 커졌다가 살짝 줄어듦
+      d.sp.scale.set(1.2 * pop * d.s, 0.375 * pop * d.s, 1);
+      d.sp.position.y = d.y + 0.7 * (1 - (1 - k) ** 2);
+      d.sp.material.opacity = k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4;
+      return true;
+    });
     this.shakes = this.shakes.filter((s) => {
       s.t += dt;
       const b = s.obj.userData.shakeBase;

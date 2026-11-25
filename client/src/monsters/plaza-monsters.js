@@ -73,6 +73,8 @@ const GUGU_TRIP_COOL = 10; // 다녀온 뒤 다시 떠나기까지 (초)
 const GUGU_REACH = 9; // 이만큼 안의 자리로만 날아감 (m)
 const GUGU_FLY = 2.2; // 나는 빠르기 (m/s)
 const GUGU_SIT = [3, 6]; // 나무·머리 위에 앉아 쉬는 시간 (초, 이 사이)
+const GUGU_FAR = 0.25; // 나들이 가운데 멀리 날아가 다른 곳에서 한동안 놀다 오는 비율
+const GUGU_FAR_DIST = [12, 20]; // 그때 날아가는 거리 (m, 이 사이)
 const GUGU_HIGH = 0.3; // 이보다 높이 떠 있으면 휘둘러도 안 맞음 (m)
 const CAT_NEAR = 4; // 하악냥이 이만큼 안에 있어야 장난을 검 (m)
 const CAT_HOVER = 0.9; // 하악냥 머리 위에서 파닥이는 높이 (m): 폴짝 뛰면 앞발이 닿을락 말락
@@ -428,8 +430,33 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     }
   }
   const faceTo = (o) => () => Math.atan2(o.x - px, o.z - pz);
+  // 멀리 나들이: 높이 날아 멀리 내려앉아 쪼고 두리번거리고 콩콩 옮겨 다니다가 다시 날아 돌아옴
+  function farTrip(r) {
+    let at = null;
+    for (let i = 0; i < 8 && !at; i++) {
+      const a = (r + i * 0.381) * Math.PI * 2;
+      const d = GUGU_FAR_DIST[0] + ((r * 7.7 + i * 0.53) % 1) * (GUGU_FAR_DIST[1] - GUGU_FAR_DIST[0]);
+      const x = px + Math.sin(a) * d, z = pz + Math.cos(a) * d;
+      if (!wall(x, z) && !wall((px + x) / 2, (pz + z) / 2)) at = { x, z }; // 맵 밖·벽 속에는 안 내림
+    }
+    if (!at) return;
+    const a = r * 9.1;
+    const hop = { x: at.x + Math.sin(a) * 1.4, z: at.z + Math.cos(a) * 1.4 };
+    const there = wall(hop.x, hop.z) ? at : hop;
+    startTrip([
+      { fly: () => at, land: true, arc: 3 },
+      { wait: true, dur: 2.5 },
+      { wait: true, act: 'peck', dur: 2 },
+      { fly: () => there, land: true, arc: 0.3 },
+      { wait: true, act: 'peck', dur: 2 },
+      { wait: true, dur: 3 + ((r * 5.3) % 1) * 4 },
+      { fly: home, land: true, arc: 3 },
+    ]);
+  }
   // 나들이 떠나기: 둘레의 한가한 하악냥(장난) · 날개콩(머리에 앉기) · 나무·캐릭터 머리(perches) 중 하나를 주사위로
   function guguTrip(r) {
+    if (r < GUGU_FAR) { farTrip(r / GUGU_FAR); return; }
+    r = (r - GUGU_FAR) / (1 - GUGU_FAR);
     const free = (k, near) => [...ALL].find((o) => o.kind === k && o.free && Date.now() - o.seen < 500 && Math.hypot(o.x - px, o.z - pz) < near);
     const cat = free('haak', CAT_NEAR);
     const nal = free('nalgae', GUGU_REACH);
@@ -507,6 +534,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     tryHit(ax, az, hits, byMe = false, power = 1) {
       if (px === null || mon.state === 'gone' || mon.state === 'die' || mon.state === 'spawn' || air > GUGU_HIGH) return null; // 높이 날고 있으면 안 닿음
       if (!hits(px, pz)) return null;
+      if (!power) return { x: px, z: pz, y: 0.07 * S }; // 빗나감: 닿았지만 밀리지도 다치지도 않는다
       const d = Math.hypot(px - ax, pz - az) || 1;
       kx = ((px - ax) / d) * KNOCK;
       kz = ((pz - az) / d) * KNOCK;
@@ -520,7 +548,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         kx *= 0.5;
         kz *= 0.5;
       } else mon.play('hit');
-      return { x: px, z: pz, y: 0.07 * S };
+      return { x: px, z: pz, y: 0.07 * S, dead: hp <= 0 };
     },
     // me: 내 캐릭터 (없으면 아직 입장 전)
     update(dt, me) {

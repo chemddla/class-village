@@ -1,7 +1,7 @@
 // 곤충 채집 (서버): 마을에 늘 BUG_COUNT 마리쯤의 곤충을 두고 움직이며, 다가오는 학생에 놀라 도망가거나
 // 잠자리채에 잡힌다. 위치는 상태(state.bugs)로 모두에게 같게 보이고, 잡혔는지·도망갔는지는 서버가 정한다.
 import {
-  ANIM, BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX,
+  ANIM, BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX, XP,
   WORLD, PLAZA, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
 } from '../shared/world.js';
 
@@ -257,6 +257,7 @@ export function setupBugs(room, Bug, speedOf) {
       if (have >= BAG_MAX) { client.send('netResult', { full: true }); return; }
       p.bag.set(s.sp.id, have + 1);
       p.dex.set(s.sp.id, Math.min(65535, (p.dex.get(s.sp.id) ?? 0) + 1));
+      p.xp += XP.bug;
       room.broadcast('bugCaught', [client.sessionId, best, s.sp.id]); // 모두의 화면에서 머리 위로 들어 보임
       remove(best, 'caught');
       return;

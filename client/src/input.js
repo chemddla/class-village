@@ -5,7 +5,7 @@ const RUN_AT = 0.8; // 이만큼 이상 밀면 달리기
 
 // 키 → 행동 이름 (화면 버튼은 data-key 로 같은 키를 누른 것처럼 동작)
 const ACTION_KEYS = {
-  KeyC: 'jump', Space: 'dodge', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyZ: 'attack', KeyV: 'behind',
+  KeyC: 'jump', Space: 'dodge', KeyQ: 'tool', KeyR: 'lifeTool', KeyG: 'life', KeyF: 'pick', KeyI: 'inv', KeyB: 'dex', KeyP: 'info', KeyZ: 'attack', KeyV: 'behind',
   Digit1: 'emote1', Digit2: 'emote2', Digit3: 'emote3', Digit4: 'emote4',
   Numpad1: 'emote1', Numpad2: 'emote2', Numpad3: 'emote3', Numpad4: 'emote4',
 };

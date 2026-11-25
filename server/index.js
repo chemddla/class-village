@@ -8,7 +8,7 @@ import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS,
-  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK,
+  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
 
@@ -33,6 +33,8 @@ const Player = schema({
   look: 'string', // 꾸민 외형(JSON), 비어 있으면 색 번호로 정한 기본 모습
   bag: { map: 'uint8' }, // 가방: 과일 이름(FRUITS)·물고기 id(FISH) → 개수. 나중에 상점에 판다
   dex: { map: 'uint16' }, // 도감: 잡아 본 물고기 id → 지금까지 잡은 마릿수
+  xp: 'uint32', // 지금까지 모은 경험치 (레벨은 levelOf 로 계산)
+  job: 'string', // 직업 (JOBS 열쇠, 비어 있으면 모험가). 스텟은 레벨·직업으로 계산
   s: 'uint16', // 이 자리를 보낸 때 (보낸 쪽 시계, 10ms 단위로 1~65535 를 돈다. 0 = 모름): 받는 쪽이 자리 사이 간격을 고르게 잡는 데 쓴다
 }, 'Player');
 
@@ -218,6 +220,7 @@ class VillageRoom extends Room {
       if (have >= BAG_MAX) { client.send('escaped', 'full'); return; }
       p.bag.set(f.fish.id, have + 1);
       p.dex.set(f.fish.id, Math.min(65535, (p.dex.get(f.fish.id) ?? 0) + 1));
+      p.xp += XP.fish * RARITY[f.fish.rarity].stars;
       this.broadcast('caught', [client.sessionId, f.fish.id]); // 모두의 화면에서 머리 위로 물고기를 들어 보임
     });
 
@@ -298,6 +301,26 @@ class VillageRoom extends Room {
       this.state.drops.delete(String(id));
       this.dropAt.delete(String(id));
       p.bag.set(d.f, have + 1);
+      p.xp += XP.grab;
+    });
+
+    // 전직: [직업 열쇠]. JOB_LEVEL 이 되어야 하고, 다른 직업으로 다시 바꿀 수도 있다 (모험가로 되돌리기는 안 됨)
+    this.onMessage('job', (client, job) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || typeof job !== 'string' || !JOBS[job]?.main || levelOf(p.xp).lv < JOB_LEVEL) return;
+      p.job = job;
+    });
+
+    // 몬스터를 쓰러뜨림: 몬스터는 화면이 판정하므로 서버는 얼마나 자주 오는지만 본다
+    // (한꺼번에 3마리까지, 그 뒤로는 2초에 1마리꼴로만 쳐 준다)
+    this.onMessage('kill', (client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      const now = Date.now();
+      const u = client.userData ?? {};
+      const b = Math.min(3, (u.killB ?? 3) + (now - (u.killAt ?? now)) / 2000);
+      client.userData = { ...u, killAt: now, killB: Math.max(0, b - 1) };
+      if (b >= 1) p.xp += XP.monster;
     });
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각
@@ -403,6 +426,8 @@ class VillageRoom extends Room {
     p.look = FREE_LOOK ? cleanLook(options.look) : '';
     if (!p.bag) p.bag = new MapSchema();
     if (!p.dex) p.dex = new MapSchema();
+    p.xp = 0; // 정하지 않으면 undefined 라서 += 하면 NaN
+    p.job = '';
     // 같은 이름으로 새로 들어오면, 연결이 끊겨 기다리던 예전 캐릭터는 바로 지운다 (새 탭·다른 기기로 다시 들어온 경우)
     for (const w of this.waiting.values()) if (w.name === p.name) w.wait.reject(false);
     this.state.players.set(client.sessionId, p);

@@ -74,6 +74,9 @@ button, input, textarea, select { font-family: inherit; }
 #stats .mp .ic { color: #3f7fd6; }
 #stats .hp i { background: linear-gradient(90deg, #e2574c, #ff8a6e); }
 #stats .mp i { background: linear-gradient(90deg, #3f7fd6, #6fb5ff); }
+#stats .xp .ic { color: #c98a12; }
+#stats .xp i { background: linear-gradient(90deg, #e0a526, #ffd45e); transition: width 0.4s ease-out; }
+#stats .xp .bar { height: 9px; }
 /* 얼마 안 남았을 때: 막대가 깜빡깜빡 */
 #stats .stat.low i { animation: stat-low 0.8s ease-in-out infinite; }
 #stats .stat.low em { color: #d9534f; }
@@ -292,3 +295,30 @@ svg.ico { width: 1.15em; height: 1.15em; vertical-align: -0.2em; }
   width: 100%; box-sizing: border-box; padding: 12px 16px; border-radius: 999px; border: 3px solid var(--accent-dark);
   background: var(--card); box-shadow: var(--shadow); font: inherit; font-size: 16px; color: var(--ink); outline: none;
 }
+
+/* 내 정보 (P): 도감 버튼 왼쪽, 창은 왼쪽에 열린다 */
+#info-btn {
+  position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); right: 112px;
+  border: none; background: var(--card); box-shadow: var(--shadow); border-radius: 999px;
+  padding: 8px 14px; font-weight: 800; font-size: 15px; color: var(--ink); cursor: pointer;
+}
+#info-panel {
+  position: fixed; top: max(144px, calc(env(safe-area-inset-top) + 132px)); left: 12px;
+  width: min(280px, calc(100% - 24px)); max-height: calc(100% - 170px); overflow: auto; padding: 14px 16px;
+}
+#info-panel h3 { margin: 0 0 6px; font-size: 14px; cursor: move; user-select: none; touch-action: none; }
+#info-panel h4 { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+#info-panel .who { font-size: 15px; font-weight: 800; }
+#info-panel .who small { color: var(--muted); font-weight: 700; margin-left: 4px; }
+#info-panel .note { margin: 6px 0 0; font-size: 12px; color: #c98a12; font-weight: 800; }
+.info-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 13px; border-bottom: 1px dashed #eee3cf; }
+.info-row b { font-variant-numeric: tabular-nums; }
+.info-row .tag { font-size: 11px; color: #fff; background: #c98a12; border-radius: 6px; padding: 0 5px; margin-left: 4px; }
+.info-row .tag.sub { background: #b9ad97; }
+.job-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.job-pick button {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 4px; border-radius: 10px;
+  border: 2px solid #e2d5bc; background: #fffaf0; color: var(--ink); font-weight: 800; font-size: 13px; cursor: pointer;
+}
+.job-pick button small { font-size: 11px; color: var(--muted); font-weight: 700; }
+.job-pick button.on { border-color: #c98a12; background: #fff1cf; }

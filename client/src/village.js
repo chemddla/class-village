@@ -523,8 +523,8 @@ export function canopyPerches(blobs = ROUND_BLOBS) {
 }
 
 // 구구(비둘기)가 앉을 나무 자리 (월드 좌표, 땅 휘어짐 전): 둥근·달걀꼴 나무만, 나무마다 정해진 한 곳 (모두의 화면에서 같은 자리)
-export function treePerch(t, i) {
-  const k = looksLike(t, i);
+// k: 나무 모양 (0 둥근 · 1 뾰족 · 2 길쭉 · 3 과일) — 들판 나무는 마을 번호가 없어 직접 넘긴다
+export function treePerch(t, i, k = looksLike(t, i)) {
   if (k !== 0 && k !== 2) return null; // 뾰족한 나무·과일나무는 앉을 데가 마땅치 않음
   const spots = canopyPerches(k ? OVAL_BLOBS : ROUND_BLOBS).filter((s) => s.slope < 0.5);
   if (!spots.length) return null;
