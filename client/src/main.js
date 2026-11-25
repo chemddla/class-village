@@ -1269,6 +1269,30 @@ chatInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChat
 chatInput.addEventListener('blur', () => { if (!chatForm.classList.contains('hidden')) setTimeout(closeChat, 0); });
 $id('chat-btn').addEventListener('click', openChat);
 addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') for (const p of [ui.inv, dexPanel, $id('look-panel')]) p.classList.add('hidden');
+});
+for (const panel of [ui.inv, dexPanel, $id('look-panel')]) { // 인벤토리·도감·꾸미기 창: 제목줄을 잡고 끌면 옮겨진다 (칸 안 물건 끌기와 안 겹치게 제목줄만)
+  let drag = null;
+  panel.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('h3') !== panel.querySelector('h3')) return; // 맨 위 제목줄만
+    e.preventDefault();
+    e.stopPropagation();
+    panel.setPointerCapture(e.pointerId);
+    const r = panel.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+  });
+  panel.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const s = panel.style;
+    s.left = `${Math.max(0, Math.min(innerWidth - panel.offsetWidth, e.clientX - drag.dx))}px`;
+    s.top = `${Math.max(0, Math.min(innerHeight - 40, e.clientY - drag.dy))}px`;
+    s.right = 'auto';
+  });
+  const end = () => { drag = null; };
+  panel.addEventListener('pointerup', end);
+  panel.addEventListener('pointercancel', end);
+}
+addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || e.isComposing || !chatForm.classList.contains('hidden')) return;
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
   e.preventDefault();

@@ -2,9 +2,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createVillager, PRESETS } from './villager/villager.js';
 import { canvasTexture } from './villager/textures.js';
 import { syncToon } from './villager/toon.js';
+import { angerMark, angerPulse } from './monsters/anger.js';
+import { createNalgaekong } from './monsters/nalgaekong.js';
+import { ROUND_BLOBS, roundCanopy, trunkGeometry } from './village.js';
 import { eraserChunk, eraserSleeve } from './monsters/banjjok.js';
 import { PINK, csm, bump, hBlink, catEars, catFace, catTail, makeHaak, HAAK_MOTIONS, HAAK_EYES } from './monsters/haaknyang.js';
 
@@ -2056,6 +2060,1169 @@ const haakEyes = Object.entries(HAAK_EYES).map(([key, st], i) => () => {
   };
 });
 
+// ── 비둘기 몬스터 (monsters.html?set=pigeon): 날아다니는데 하나같이 하찮은 비둘기들 ──
+const pigeon = [];
+
+// 기본 비둘기: fly(공중 높이) > body > head·neck·wings·tail·feet. 앞이 +z
+// 진짜 비둘기처럼: 작은 머리, 통통한 가슴, 초록·보라로 반짝이는 목, 검은 줄 두 개 있는 회색 날개,
+// 끝이 짙은 뾰족한 날개깃, 끝에 검은 띠가 있는 부채꼴 꼬리, 주황 눈, 부리 위 하얀 혹, 짧은 빨간 발
+// 날개는 팔(안쪽)·손(바깥쪽) 두 마디라 파도치듯 접혔다 펴진다
+const tmpV = new THREE.Vector3();
+function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d6470', neck = '#5f9a7e', neck2 = '#8e7ab0', fat = 1, wing = 1, eye = 'orange' } = {}) {
+  const g = new THREE.Group();
+  const fly = new THREE.Group();
+  fly.position.y = 0.13;
+  g.add(fly);
+  const body = new THREE.Group();
+  fly.add(body);
+  // 깃털처럼 말랑한 판(날개·꼬리): 2D 모양(x 바깥, y 앞)을 아주 둥글게 부풀려 뽑고,
+  // 뿌리는 두툼·끝은 얇게, 위로 살짝 불룩하게 휘게 한 뒤 무늬는 그림(텍스처)으로 얹는다
+  // smooth(): 찍은 점들을 지나는 매끈한 닫힌 곡선 위의 점들 (각진 데 없이)
+  const smooth = (pts, n = 64) => new THREE.CatmullRomCurve3(pts.map(([x, y]) => new THREE.Vector3(x, y, 0)), true, 'centripetal')
+    .getPoints(n).slice(0, -1).map((v) => [v.x, v.y]);
+  // warp(u, v): u 뿌리→끝(0~1), v 뒤→앞(0~1) 자리에서 [두께 배율, 위아래 옮김]
+  const softPlate = (pts, s, warp) => {
+    const sh = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
+    let geo = new THREE.ExtrudeGeometry(sh, { depth: 0.001, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.002, bevelSegments: 5, curveSegments: 4 })
+      .translate(0, 0, -0.0005).rotateX(PI / 2);
+    geo.deleteAttribute('uv');
+    geo.deleteAttribute('normal');
+    geo = mergeVertices(geo); // 모서리를 이어 붙여 매끈한 그늘
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox, pos = geo.attributes.position;
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      let u = (pos.getX(i) - bb.min.x) / (bb.max.x - bb.min.x);
+      if (s < 0) u = 1 - u;
+      const v = (pos.getZ(i) - bb.min.z) / (bb.max.z - bb.min.z);
+      const [sy, oy] = warp(u, v);
+      pos.setY(i, pos.getY(i) * sy + oy);
+      uv[i * 2] = u;
+      uv[i * 2 + 1] = v;
+    }
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.computeVertexNormals();
+    return geo;
+  };
+  // 날개 한 마디의 휨: t0~t1 은 날개 전체에서 이 마디가 차지하는 자리 (끝으로 갈수록 얇아지고 살짝 처짐, 앞 가장자리가 두툼)
+  const wingWarp = (t0, t1) => (u, v) => {
+    const t = t0 + (t1 - t0) * u;
+    return [(1 - 0.55 * t) * (0.65 + 0.5 * v), 0.0022 * (1 - (2 * v - 1) ** 2) - 0.004 * t * t];
+  };
+  const feather = (draw) => new THREE.MeshStandardMaterial({ roughness: 0.85, map: canvasTexture(draw[0], 128, 64, draw[1]) });
+  // 머리·목·몸통을 한 덩어리로: 꼬리 끝에서 부리 밑까지 휘어진 등뼈를 따라 둥근 단면을 이어 붙인다
+  // 뼈 셋(몸·목·머리)에 붙여서 고개를 돌리거나 목을 부풀려도 이음매 없이 같이 휜다
+  // 등뼈 점 [y, z] 와 그 자리 단면 반지름 [옆, 위아래]
+  const SPINE = [
+    [0.006, -0.062, 0.001, 0.001], // 꼬리 끝 (닫힘)
+    [0.005, -0.052, 0.012, 0.007],
+    [0.002, -0.035, 0.026 * fat, 0.022 * fat], // 엉덩이
+    [0, -0.008, 0.034 * fat, 0.031 * fat], // 몸통
+    [0.006, 0.02, 0.032 * fat, 0.031 * fat], // 불룩한 가슴
+    [0.022, 0.033, 0.021 * fat, 0.021], // 목 밑
+    [0.036, 0.039, 0.0155, 0.015], // 목
+    // 머리는 목을 위로 쭉 이어 둥글게 닫는다 (앞으로 확 꺾으면 목 앞이 접혀 눈 밑에 주름 선이 생김)
+    [0.049, 0.043, 0.0165, 0.018], // 머리
+    [0.059, 0.044, 0.012, 0.013],
+    [0.064, 0.044, 0.005, 0.005],
+    [0.0655, 0.044, 0.0005, 0.0005], // 정수리 (닫힘)
+  ];
+  const spine = new THREE.CatmullRomCurve3(SPINE.map(([y, z]) => new THREE.Vector3(0, y, z)));
+  const radii = new THREE.CatmullRomCurve3(SPINE.map(([, , rx, ry]) => new THREE.Vector3(rx, ry, 0)));
+  const NS = 60, NR = 28; // 등뼈 따라 / 둘레
+  const pos = [], uvs = [], si = [], sw = [], idx = [];
+  const X = new THREE.Vector3(1, 0, 0), U = new THREE.Vector3(), c = new THREE.Vector3(), r = new THREE.Vector3(), T = new THREE.Vector3();
+  const ease01 = (x) => { x = THREE.MathUtils.clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+  for (let i = 0; i <= NS; i++) {
+    const u = i / NS; // 등뼈 점 i 는 u = i / 10 자리 (점 사이를 고르게 나눔)
+    spine.getPoint(u, c);
+    radii.getPoint(u, r);
+    spine.getTangent(u, T);
+    U.crossVectors(T, X).normalize(); // 단면의 '위' 방향
+    const wh = ease01((u - 0.6) / 0.1); // 목 → 머리 넘어가는 자리
+    const wn = ease01((u - 0.4) / 0.1) * (1 - wh); // 가슴 → 목
+    for (let j = 0; j <= NR; j++) {
+      const a = -PI / 2 + (j / NR) * PI * 2; // 이음매는 배 밑으로 숨김
+      pos.push(c.x + Math.cos(a) * r.x, c.y + U.y * Math.sin(a) * r.y, c.z + U.z * Math.sin(a) * r.y);
+      uvs.push(j / NR, u);
+      si.push(0, 1, 2, 0);
+      sw.push(1 - wn - wh, wn, wh, 0);
+    }
+  }
+  for (let i = 0; i < NS; i++) {
+    for (let j = 0; j < NR; j++) {
+      const a = i * (NR + 1) + j, b = a + NR + 1;
+      idx.push(a, a + 1, b, b, a + 1, b + 1);
+    }
+  }
+  const bodyGeo = new THREE.BufferGeometry();
+  bodyGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  bodyGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  bodyGeo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+  bodyGeo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+  bodyGeo.setIndex(idx);
+  bodyGeo.computeVertexNormals();
+  // 몸 색: 회색 바탕에 목 둘레만 보라(아래)·초록(위)으로 반짝이는 띠가 부드럽게 번진다 (그림 위쪽이 머리 쪽)
+  const bodyTex = canvasTexture(`pigeonBody:${grey}:${neck}:${neck2}`, 8, 256, (g2, w, h) => {
+    g2.fillStyle = grey;
+    g2.fillRect(0, 0, w, h);
+    const band = (col, u0, u1) => {
+      const gr = g2.createLinearGradient(0, (1 - u1) * h, 0, (1 - u0) * h);
+      gr.addColorStop(0, 'rgba(0,0,0,0)');
+      gr.addColorStop(0.3, col);
+      gr.addColorStop(0.7, col);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g2.fillStyle = gr;
+      g2.fillRect(0, (1 - u1) * h, w, (u1 - u0) * h);
+    };
+    band(neck2, 0.42, 0.56);
+    band(neck, 0.5, 0.66);
+  });
+  const bodyBone = new THREE.Bone();
+  body.add(bodyBone);
+  const neckG = new THREE.Bone(); // 목 뼈 (화나면 빵빵하게 부풀린다)
+  neckG.position.set(0, 0.026, 0.03);
+  body.add(neckG);
+  const head = new THREE.Bone(); // 머리 뼈: 부리·눈이 여기 붙는다
+  head.position.set(0, 0.05, 0.042);
+  body.add(head);
+  const skin = new THREE.SkinnedMesh(bodyGeo, new THREE.MeshStandardMaterial({ roughness: 0.75, map: bodyTex }));
+  skin.name = '몸';
+  skin.castShadow = true;
+  body.add(skin);
+  g.updateMatrixWorld(true);
+  skin.bind(new THREE.Skeleton([bodyBone, neckG, head]));
+  const beak = mesh(new THREE.ConeGeometry(0.0042, 0.013, 12).rotateX(PI / 2).translate(0, -0.003, 0.021), mat('#3d3540', 0.5), head, '부리');
+  mesh(ball(0.0042, 12).scale(1.2, 0.75, 1.3).translate(0, 0.0005, 0.0165), mat('#f3efe8', 0.9), head, '코'); // 부리 위 하얀 혹
+  const eyes = [-1, 1].map((s) => {
+    const e = new THREE.Group();
+    e.position.set(s * 0.0145, 0.004, 0.007);
+    head.add(e);
+    if (eye === 'orange') mesh(ball(0.0055, 16).scale(1, 1, 0.5), mat('#ff7a1f', 0.35), e, '눈');
+    const p = mesh(ball(eye === 'orange' ? 0.0028 : 0.004, 12).scale(1, 1, 0.5), BLACK, e, '눈');
+    p.position.set(s * 0.0008, 0, 0.0025);
+    e.rotation.y = s * 1.15; // 비둘기 눈은 옆을 본다
+    return e;
+  });
+  // 날개 무늬: 팔은 회색 바탕에 검은 줄 두 줄 + 뒤쪽 깃털 결, 손은 끝으로 갈수록 짙어지는 날개깃 + 깃털 결
+  // (그림 아래쪽이 날개 뒤 가장자리, 왼쪽이 뿌리)
+  const ARM_MAT = feather([`pigeonArm:${wingC}`, (g, w, h) => {
+    g.fillStyle = wingC;
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(50,45,60,0.28)';
+    g.lineWidth = 2;
+    for (let i = 0; i < 8; i++) { // 뒤쪽 깃털 결
+      const x = w * (0.06 + i * 0.12);
+      g.beginPath(); g.moveTo(x, h * 0.66); g.quadraticCurveTo(x + w * 0.01, h * 0.85, x + w * 0.03, h); g.stroke();
+    }
+    g.strokeStyle = '#3f3a44';
+    g.lineCap = 'round';
+    g.lineWidth = w * 0.06;
+    for (const x of [0.42, 0.66]) { // 검은 줄 두 줄: 날개 앞에서 뒤로 가로지름 (가운데가 살짝 휘게)
+      g.beginPath(); g.moveTo(w * x, h * 0.14); g.quadraticCurveTo(w * (x + 0.05), h * 0.48, w * (x + 0.02), h * 0.8); g.stroke();
+    }
+  }]);
+  const HAND_MAT = feather([`pigeonHand:${wingC}:${tipC}`, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, w, 0);
+    gr.addColorStop(0.3, wingC);
+    gr.addColorStop(0.62, tipC);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(35,30,40,0.3)';
+    g.lineWidth = 2;
+    for (let i = 0; i < 7; i++) { // 날개깃 결: 뿌리 앞쪽에서 끝·뒤쪽으로 부채처럼
+      g.beginPath(); g.moveTo(w * 0.05, h * 0.35); g.quadraticCurveTo(w * (0.25 + i * 0.08), h * 0.5, w * (0.18 + i * 0.13), h * (1 - i * 0.07)); g.stroke();
+    }
+  }]);
+  const wings = [-1, 1].map((s) => {
+    const k = wing;
+    const arm = new THREE.Group();
+    arm.position.set(s * 0.026 * fat, 0.02, 0.006);
+    body.add(arm);
+    // 팔: 앞 가장자리는 둥글게, 뒤 가장자리는 깃털 끝이 살짝 물결치게
+    const ARM = smooth([[0, 0.011], [0.018, 0.014], [0.034, 0.012], [0.041, 0.004], [0.04, -0.02], [0.035, -0.024], [0.029, -0.022],
+      [0.023, -0.026], [0.017, -0.024], [0.01, -0.026], [0.002, -0.021], [-0.003, -0.006]]);
+    mesh(softPlate(ARM.map(([x, y]) => [s * x * k * 0.93, y * k * 0.93]), s, wingWarp(0, 0.45)), ARM_MAT, arm, '날개');
+    const hand = new THREE.Group();
+    hand.position.set(s * 0.035 * k, 0, 0);
+    arm.add(hand);
+    // 손: 팔과 겹쳐 시작해 끝이 뾰족하게 휘어지고, 뒤쪽은 날개깃 끝이 물결
+    const HAND = smooth([[-0.004, 0.009], [0.012, 0.009], [0.026, 0.005], [0.039, -0.003], [0.05, -0.013], [0.045, -0.017], [0.04, -0.015],
+      [0.035, -0.019], [0.029, -0.017], [0.023, -0.021], [0.016, -0.019], [0.008, -0.022], [-0.004, -0.02]]);
+    mesh(softPlate(HAND.map(([x, y]) => [s * x * k * 0.93, y * k * 0.93]), s, wingWarp(0.45, 1)), HAND_MAT, hand, '날개');
+    return [arm, s, hand];
+  });
+  const tail = new THREE.Group();
+  tail.position.set(0, 0.006, -0.045);
+  body.add(tail);
+  // 꼬리: 부채꼴, 끝은 깃털 끝처럼 살짝 물결 + 끝의 검은 띠와 깃털 결은 그림으로
+  const TAIL = smooth([[0, 0.007], [0.009, 0.005], [0.016, -0.016], [0.02, -0.031], [0.014, -0.037], [0.007, -0.036], [0, -0.04],
+    [-0.007, -0.036], [-0.014, -0.037], [-0.02, -0.031], [-0.016, -0.016], [-0.009, 0.005]]);
+  const TAIL_MAT = feather([`pigeonTail:${wingC}`, (g, w, h) => {
+    g.fillStyle = wingC;
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = '#3f3a44';
+    g.fillRect(0, h * 0.8, w, h * 0.2); // 끝의 검은 띠
+    g.strokeStyle = 'rgba(50,45,60,0.3)';
+    g.lineWidth = 2;
+    for (let i = 0; i < 7; i++) { // 꽁지깃 결: 뿌리에서 부채처럼
+      g.beginPath(); g.moveTo(w * 0.5, 0); g.lineTo(w * (0.08 + i * 0.14), h * 0.8); g.stroke();
+    }
+  }]);
+  mesh(softPlate(TAIL.map(([x, y]) => [x * 0.93, y * 0.93]), 1, (u, v) => [0.55 + 0.35 * v, 0.0015 * (1 - (2 * u - 1) ** 2)]), TAIL_MAT, tail, '꼬리');
+  const feet = [-1, 1].map((s) => {
+    const f = new THREE.Group();
+    f.position.set(s * 0.011, -0.024 * fat, -0.004);
+    body.add(f);
+    // 비둘기 발: 짧은 분홍빛 빨간 다리, 앞으로 쫙 벌어진 긴 발가락 셋(가운데가 제일 김) + 뒤로 난 짧은 발가락 하나, 끝엔 까만 발톱
+    const R = mat('#e0605f', 0.55);
+    const CLAW = mat('#3a3036', 0.5);
+    const leg = mesh(new THREE.CapsuleGeometry(0.0015, 0.0105, 4, 10).translate(0, -0.007, 0), R, f, '발');
+    mesh(ball(0.0019, 12).translate(0, -0.0135, 0), R, f, '발'); // 발바닥 가운데 볼록
+    const toes = [[-0.55, 0.009], [0, 0.011], [0.55, 0.009], [PI, 0.006]].map(([yaw, len]) => {
+      const tg = new THREE.Group();
+      tg.position.set(0, -0.0135, 0);
+      tg.rotation.order = 'YXZ'; // 옆으로 벌린 뒤 제 방향대로 오므린다
+      tg.rotation.y = yaw;
+      tg.userData.len = len;
+      f.add(tg);
+      mesh(new THREE.CapsuleGeometry(0.0009, len, 3, 8).rotateX(PI / 2).translate(0, 0, len / 2), R, tg, '발가락');
+      mesh(new THREE.ConeGeometry(0.0008, 0.0025, 8).rotateX(PI / 2).translate(0, -0.0002, len + 0.0017), CLAW, tg, '발톱');
+      return tg;
+    });
+    // 다리를 뒤로 접을수록(날 때) 발가락을 오므린다
+    f.userData.toes = toes;
+    f.userData.curl = () => {
+      const curl = THREE.MathUtils.clamp(f.rotation.x / 1.3, 0, 1) * 1.1;
+      toes.forEach((tg) => (tg.rotation.x = curl));
+    };
+    leg.onBeforeRender = f.userData.curl; // 그리기 직전에 다리 각도를 보고 맞춤
+    f.rotation.x = 1.3; // 날 땐 발을 뒤로 착 접는다
+    return f;
+  });
+  // 땅에 파묻히지 않게 볼 검사 점: [부품, 그 부품 안의 자리, 여유]. 몸 끝·부리·날개 끝·꼬리 끝·발가락 끝처럼 튀어나온 곳만
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const probes = [
+    [body, V(0, -0.031 * fat, -0.006)], [body, V(0, -0.024 * fat, 0.024)], [body, V(0, -0.016, -0.036)], [body, V(0, 0.031 * fat, -0.008)],
+    [body, V(0.034 * fat, 0, -0.008)], [body, V(-0.034 * fat, 0, -0.008)], [body, V(0, 0.008, -0.06)],
+    [head, V(0, -0.003, 0.028)], [head, V(0, -0.017, 0.002)], [head, V(0, 0.019, 0)], [head, V(0.017, 0, 0)], [head, V(-0.017, 0, 0)],
+    [tail, V(0, 0, -0.038)], [tail, V(0.019, 0, -0.03)], [tail, V(-0.019, 0, -0.03)],
+    ...wings.flatMap(([a, s, hd]) => [
+      [a, V(s * 0.02 * wing, -0.003, -0.025 * wing)], [a, V(s * 0.03 * wing, -0.003, 0.012 * wing)],
+      [hd, V(s * 0.047 * wing, -0.005, -0.012 * wing)], [hd, V(s * 0.025 * wing, -0.004, -0.02 * wing)], [hd, V(s * 0.02 * wing, -0.003, 0.008 * wing)],
+    ]),
+  ].map(([o, v]) => [o, v, 0.0025]); // 외곽선 두께만큼 띄움
+  for (const f of feet) for (const tg of f.userData.toes) probes.push([tg, V(0, 0, 0), 0.001], [tg, V(0, 0, tg.userData.len + 0.002), 0.001]);
+  // 동작 시안에서 매 프레임 처음 자세로 되돌리려고 움직이는 부품의 처음 값을 기억해 둔다
+  const parts = [fly, body, head, neckG, tail, ...wings.flatMap(([a, , h]) => [a, h]), ...feet, ...eyes];
+  const rest = parts.map((o) => [o.position.clone(), o.rotation.clone(), o.scale.clone()]);
+  const P = {
+    g, fly, body, head, neck: neckG, wings, tail, feet, eyes, beak,
+    reset() { parts.forEach((o, i) => { o.position.copy(rest[i][0]); o.rotation.copy(rest[i][1]); o.scale.copy(rest[i][2]); }); },
+    // 날갯짓: 아래로 세게 치고(빠르게) 위로 들 때 손마디가 늦게 따라와 접힌다
+    flap(t, speed = 14, amp = 0.9, base = 0.2) {
+      const p = t * speed;
+      const a = Math.sin(p) * amp + base;
+      const h = Math.sin(p - 0.9) * amp * 0.55 - 0.05;
+      wings.forEach(([w, s, hd]) => { w.rotation.z = s * a; hd.rotation.z = s * h; });
+      return a;
+    },
+    // 날개를 V 자로 들고 쭉 편 채 미끄러지기
+    glide(v = 0.35) { wings.forEach(([w, s, hd]) => { w.rotation.z = s * v; hd.rotation.z = -s * 0.08; }); },
+    // 날개를 뒤로 젖혀 접기 (0~1)
+    sweep(k) { wings.forEach(([w, s, hd]) => { w.rotation.y = s * k * 0.9; hd.rotation.y = s * k * 0.9; }); },
+    // 비둘기 고개 까딱: 머리를 휙 앞으로 내밀고 천천히 당긴다
+    bob(t, rate = 2.4, d = 0.01) {
+      const k = (t * rate) % 1;
+      head.position.z += (k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8) * d;
+    },
+    blink(k) { eyes.forEach((e) => (e.scale.y = 1 - k * 0.9)); },
+    // 땅 위로: 자세를 다 잡은 뒤 부르면, 어느 부분이든 높이 h(땅 0, 물체 위면 그 윗면) 밑으로 파묻혔을 때만 몸 전체를 그만큼 올린다
+    keepAbove(h = 0) {
+      feet.forEach((f) => f.userData.curl());
+      g.updateMatrixWorld(true);
+      let need = 0;
+      for (const [o, v, pad] of probes) {
+        tmpV.copy(v);
+        g.worldToLocal(o.localToWorld(tmpV));
+        need = Math.max(need, h + pad - tmpV.y);
+      }
+      fly.position.y += need;
+    },
+    // 발 딛기: 자세를 다 잡은 뒤 부르면, 제일 낮은 발가락 밑이 높이 h(땅 0, 돌·상자 같은 물체 위면 그 윗면 높이)에 딱 닿도록 몸 전체를 올리고 내린다
+    // k: 0 이면 그대로(공중), 1 이면 완전히 딛음 — 날아오르고 내려앉을 때 섞는다
+    plant(h = 0, k = 1) {
+      if (k <= 0) return;
+      feet.forEach((f) => f.userData.curl());
+      g.updateMatrixWorld(true);
+      let lo = Infinity;
+      for (const f of feet) for (const tg of f.userData.toes) for (const z of [0, tg.userData.len]) {
+        tmpV.set(0, 0, z);
+        g.worldToLocal(tg.localToWorld(tmpV));
+        lo = Math.min(lo, tmpV.y);
+      }
+      fly.position.y += (h - (lo - 0.001)) * k; // 0.001: 발가락 두께 절반
+    },
+  };
+  g.userData.pigeon = P; // 시안 화면에서 동작 뒤 땅 위로 올릴 때 씀
+  return P;
+}
+
+// 1. 구구: 엄청 열심히 파닥이는데 제자리
+pigeon.push(() => {
+  const P = makePigeon();
+  return {
+    g: P.g, name: '구구', desc: '죽어라 파닥이는데 제자리',
+    update(t) {
+      const a = P.flap(t, 22, 1.0);
+      P.fly.position.y = 0.13 + a * 0.004;
+      P.body.rotation.x = -0.15;
+      P.head.rotation.x = 0.15 + Math.sin(t * 3) * 0.05;
+      P.feet.forEach((f, i) => (f.rotation.x = 0.5 + Math.sin(t * 22 + i) * 0.3));
+      P.blink(bump(t % 3, 2.6, 2.8));
+    },
+  };
+});
+
+// 2. 까딱이: 날면서도 고개를 앞뒤로 까딱까딱
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#b7bcc6', neck: '#8b6fb0' });
+  return {
+    g: P.g, name: '까딱이', desc: '날면서도 고개 까딱은 못 참음',
+    update(t) {
+      P.flap(t, 12, 0.8);
+      const k = (t * 2.4) % 1;
+      P.head.position.z = 0.04 + (k < 0.25 ? k / 0.25 : 1 - (k - 0.25) / 0.75) * 0.016;
+      P.body.position.z = Math.sin(t * 2.4 * PI * 2) * 0.003;
+      P.fly.position.y = 0.13 + Math.sin(t * 2) * 0.008;
+      P.blink(bump(t % 4, 3.5, 3.7));
+    },
+  };
+});
+
+// 3. 통통이: 너무 뚱뚱해서 날개가 손톱만 함. 가끔 툭 떨어졌다 낑낑 올라감
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#9aa2b0', fat: 1.35, wing: 0.55 });
+  return {
+    g: P.g, name: '통통이', desc: '날개보다 몸이 세 배',
+    update(t) {
+      const drop = bump(t % 4, 2.5, 3.6);
+      P.flap(t, 34, 1.1, 0.4);
+      P.fly.position.y = 0.11 - Math.pow(drop, 0.6) * 0.07 + Math.sin(t * 34) * 0.002;
+      P.body.rotation.x = -0.3 + drop * 0.35;
+      P.body.position.x = Math.sin(t * 50) * 0.001; // 힘들어서 덜덜
+      P.blink(drop > 0.3 ? 1 : 0); // 떨어질 땐 눈 질끈
+    },
+  };
+});
+
+// 4. 꾸벅이: 날다가 졸아서 뚝 떨어지고 깜짝 깨서 다시 올라감
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#c1c4cb', wingC: '#a3a8b3', neck: '#7aa6a0' });
+  return {
+    g: P.g, name: '꾸벅이', desc: '날면서 졸다가 추락',
+    update(t) {
+      const c = t % 5;
+      const doze = c < 3.2 ? THREE.MathUtils.clamp((c - 1) / 1.5, 0, 1) : 0; // 점점 졸림
+      const wake = bump(c, 3.2, 4.2); // 화들짝
+      const fall = c > 2.5 && c < 3.2 ? (c - 2.5) / 0.7 : c >= 3.2 ? Math.max(0, 1 - (c - 3.2) / 1.5) : 0;
+      P.flap(t, 12 - doze * 9 + wake * 16, 0.9 - doze * 0.6, 0.2 + doze * 0.5);
+      P.fly.position.y = 0.13 - fall * fall * 0.08;
+      P.head.rotation.x = doze * 0.7 - wake * 0.3;
+      P.body.rotation.x = doze * 0.25;
+      P.eyes.forEach((e) => e.scale.setScalar(1 + wake * 0.6)); // 깜짝 눈 커짐
+      P.blink(doze);
+    },
+  };
+});
+
+// 5. 빵둘기: 빵 부스러기 물고 자랑하며 빙빙
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#a6a7b3' });
+  const bread = mesh(new RoundedBoxGeometry(0.018, 0.01, 0.012, 2, 0.004), mat('#e8b86a', 0.9), P.head, '빵');
+  bread.position.set(0.006, -0.006, 0.034);
+  bread.rotation.z = 0.3;
+  return {
+    g: P.g, name: '빵둘기', desc: '빵 부스러기 하나로 세상 다 가짐',
+    update(t) {
+      P.flap(t, 10, 0.7);
+      P.fly.rotation.y = t * 1.2;
+      P.fly.position.set(Math.sin(t * 1.2) * 0.03, 0.14 + Math.sin(t * 2.4) * 0.01, Math.cos(t * 1.2) * 0.03);
+      P.body.rotation.z = -0.3; // 기울여 선회
+      P.head.rotation.z = 0.25 + Math.sin(t * 4) * 0.1; // 우쭐
+      P.blink(0.55); // 거만한 반쯤 뜬 눈
+    },
+  };
+});
+
+// 6. 뱅글이: 한쪽 날개만 파닥여서 제자리에서 뱅글뱅글
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#b0a8a2', wingC: '#978e88', neck: '#9b7aa8' });
+  return {
+    g: P.g, name: '뱅글이', desc: '한쪽 날개만 써서 계속 돎',
+    update(t) {
+      P.wings[1][0].rotation.z = Math.sin(t * 18) * 1.0 + 0.3; // 오른쪽만 열심
+      P.wings[0][0].rotation.z = 0.1; // 왼쪽은 접어 둠
+      P.body.rotation.y = t * 3;
+      P.body.rotation.z = 0.35;
+      P.fly.position.y = 0.12 + Math.sin(t * 18) * 0.003;
+      P.head.rotation.z = -0.35; // 어지러워 고개 갸웃
+      P.eyes.forEach((e, i) => (e.rotation.z = t * 8 * (i ? 1 : -1))); // 눈 핑글
+    },
+  };
+});
+
+// 7. 털빠짐이: 파닥일 때마다 깃털이 빠져서 떨어짐
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#9fa6b4', wingC: '#8a91a0' });
+  const fs = [];
+  for (let i = 0; i < 5; i++) fs.push(mesh(ball(0.008, 10).scale(0.45, 0.12, 1.2), mat('#c9ced8', 0.9), P.g, '깃털'));
+  return {
+    g: P.g, name: '털빠짐이', desc: '날 때마다 깃털이 숭숭 빠짐',
+    update(t) {
+      P.flap(t, 15, 0.9);
+      P.fly.position.y = 0.13 + Math.sin(t * 1.7) * 0.006;
+      P.head.rotation.x = 0.2; // 시무룩
+      fs.forEach((f, i) => {
+        const r = (t * 0.35 + i / fs.length) % 1;
+        const side = i % 2 ? 1 : -1;
+        f.position.set(side * (0.06 + Math.sin(r * 9 + i) * 0.015), 0.14 - r * 0.14, Math.cos(r * 7 + i) * 0.02);
+        f.rotation.set(Math.sin(r * 6 + i) * 0.6, r * 4, Math.sin(r * 8) * 0.8);
+        f.visible = r < 0.97;
+      });
+      P.blink(bump(t % 3.5, 3, 3.2));
+    },
+  };
+});
+
+// 8. 뒷걸음이: 앞으로 가려는데 자꾸 뒤로 날아감
+pigeon.push(() => {
+  const P = makePigeon({ grey: '#ece9e4', wingC: '#d7d2cb', neck: '#cfc8bf', eye: 'dot' }); // 흰 비둘기인데 하찮음
+  return {
+    g: P.g, name: '뒷걸음이', desc: '흰 비둘기인데 후진만 됨',
+    update(t) {
+      const c = t % 3;
+      P.flap(t, 16, 0.9, -0.1);
+      P.fly.position.z = 0.03 - (c / 3) * 0.08; // 슬금슬금 뒤로, 그리고 다시 처음
+      P.body.rotation.x = 0.35; // 몸이 뒤로 젖혀짐
+      P.head.rotation.x = -0.25; // 당황해서 앞을 봄
+      P.tail.rotation.x = -0.3;
+      P.blink(bump(c, 1.5, 1.7));
+    },
+  };
+});
+
+// ── 구구 모션 시안 (monsters.html?set=gugu): 같은 구구로 게임에 쓸 동작을 하나씩 반복 ──
+const GUGU_MOTIONS = [];
+const gmotion = (name, desc, period, fn, extra) => GUGU_MOTIONS.push({ name, desc, period, fn, extra });
+const gseg = (c, a, b) => THREE.MathUtils.clamp((c - a) / (b - a), 0, 1);
+const gease = (x) => x * x * (3 - 2 * x);
+const gBlink = (P, t) => P.blink(bump(t % 3, 2.82, 3));
+const GROUND_Y = 0.036; // 배를 땅에 대고 있을 때 fly 높이
+// 깃털 몇 장: 맞음·쓰러짐에서 펑 흩날린다
+const featherPuff = (P, n = 6) => {
+  const fs = [];
+  for (let i = 0; i < n; i++) {
+    const f = mesh(ball(0.008, 10).scale(0.45, 0.12, 1.2), mat('#c9ced8', 0.9), P.g, '깃털');
+    f.visible = false;
+    fs.push(f);
+  }
+  return (u, at) => fs.forEach((f, i) => { // u: 펑 하고 지난 시간, at: 펑한 자리
+    f.visible = u > 0 && u < 1.6;
+    if (!f.visible) return;
+    const a = (i / n) * PI * 2;
+    const out = 1 - Math.exp(-u * 6);
+    f.position.set(at.x + Math.cos(a) * 0.05 * out, Math.max(0.003, at.y + 0.03 * out - u * u * 0.05), at.z + Math.sin(a) * 0.05 * out);
+    f.rotation.set(Math.sin(u * 5 + i) * 0.7, u * 3 + i, Math.cos(u * 6 + i) * 0.7);
+  });
+};
+
+// 1. 대기: 파닥파닥 몇 번 치고 날개를 V 자로 든 채 스르륵 미끄러지기. 한쪽 눈으로 두리번
+// 파닥이다 스르륵 미끄러지기를 gl(0 파닥 ~ 1 미끄러짐)만큼 섞음: 날개가 툭 멈추지 않고 펴지며 굳음
+const flapGlide = (P, t, gl, speed, amp, base, v) => {
+  P.flap(t, speed, amp, base);
+  P.wings.forEach(([w, s, h]) => {
+    w.rotation.z = THREE.MathUtils.lerp(w.rotation.z, s * v, gl);
+    h.rotation.z = THREE.MathUtils.lerp(h.rotation.z, -s * 0.08, gl);
+  });
+};
+gmotion('대기', '파닥파닥 하다 V 자로 스르륵, 한쪽 눈으로 두리번', 3.2, (c, P, t) => {
+  const gl = gease(gseg(c, 1.3, 1.5)) * (1 - gease(gseg(c, 2.7, 2.9))); // 미끄러지는 동안
+  flapGlide(P, t, gl, 20, 0.95, 0.15, 0.38);
+  P.fly.position.y += (c < 1.4 ? c / 1.4 : 1 - (c - 1.4) / 1.8) * 0.014 + Math.sin(t * 20) * 0.002 * (1 - gl);
+  P.body.rotation.x = -0.12 + gl * 0.12;
+  P.tail.scale.x = 1 + gl * 0.25; // 미끄러질 땐 꼬리를 펴서 균형
+  const look = Math.sin(t * 0.9) > 0 ? 1 : -1; // 이쪽저쪽 고개를 휙 돌려 한쪽 눈으로 봄
+  P.head.rotation.y = look * 0.6 * Math.min(1, Math.abs(Math.sin(t * 0.9)) * 5);
+  P.head.rotation.z = -look * 0.15;
+  gBlink(P, t);
+});
+
+// 2. 이동: 몸을 수평으로 눕히고 쌩쌩, 목은 쭉 내밀고 발은 착 접음
+gmotion('이동', '몸 쭉 펴고 쌩쌩, 가끔 스르륵', 2, (c, P, t) => {
+  const gl = gease(gseg(c, 1.25, 1.4)) * (1 - gease(gseg(c, 1.8, 1.95)));
+  flapGlide(P, t, gl, 24, 1.0, 0.05, 0.25);
+  P.body.rotation.x = 0.12;
+  P.head.position.z += 0.006;
+  P.head.position.y -= 0.004;
+  P.head.rotation.x = -0.12; // 앞을 똑바로
+  P.tail.scale.x = 0.75; // 꼬리 오므림
+  P.fly.position.y += Math.sin(t * 24) * 0.003 * (1 - gl);
+  P.fly.position.z = ((t * 0.08) % 0.16) - 0.08; // 앞으로 슬금슬금 (시안이라 제자리로 돌아옴)
+});
+
+// ── 땅에서 걷기 도우미 ──
+const STAND_Y = 0.039; // 두 발로 땅에 섰을 때 fly 높이
+// 날개 접기 (k: 0 편 날개 → 1 몸 옆에 착 붙여 뒤로 접음)
+const foldWings = (P, k) => P.wings.forEach(([w, s, h]) => {
+  w.rotation.set(0, THREE.MathUtils.lerp(w.rotation.y, s * 1.45, k), THREE.MathUtils.lerp(w.rotation.z, -s * 0.2, k));
+  w.position.x += s * 0.006 * k; // 몸에 파묻히지 않게 살짝 바깥·위로
+  w.position.y += 0.004 * k;
+  h.rotation.set(0, THREE.MathUtils.lerp(h.rotation.y, s * 0.15, k), THREE.MathUtils.lerp(h.rotation.z, 0, k));
+});
+// 뒤뚱뒤뚱 걸음: ph 는 걸음 위상(한 걸음에 PI). 발을 번갈아 앞뒤로, 든 발은 살짝 들고, 몸은 좌우로 기우뚱
+// 비둘기답게 고개는 걸음마다 휙 앞으로 내밀고 몸이 따라올 때까지 멈춰 있다
+const waddle = (P, ph, amt = 1) => {
+  P.feet.forEach((f, i) => {
+    const sw = Math.sin(ph + i * PI);
+    f.rotation.x = -sw * 0.55 * amt;
+    f.position.y += Math.max(0, Math.cos(ph + i * PI)) * 0.005 * amt;
+  });
+  P.body.rotation.z += Math.sin(ph) * 0.09 * amt;
+  P.body.position.y += Math.abs(Math.cos(ph)) * 0.002 * amt;
+  const k = ((ph / PI) % 1 + 1) % 1; // 걸음마다 0→1
+  P.head.position.z += (k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8) * 0.01 * amt;
+};
+
+// 걷기: 뒤뚱뒤뚱 고개 까딱까딱 걷다가 멈춰서 땅을 콕콕
+gmotion('걷기', '뒤뚱뒤뚱 고개 까딱, 가다 서서 콕콕', 4, (c, P, t) => {
+  foldWings(P, 1);
+  P.fly.position.y = STAND_Y;
+  P.body.rotation.x = -0.12;
+  const walking = c < 2.8;
+  if (walking) {
+    waddle(P, c * PI * 2.6);
+    P.fly.position.z = (c / 2.8) * 0.05 - 0.025; // 앞으로 아장아장 (시안이라 제자리로 돌아옴)
+  } else {
+    P.fly.position.z = 0.025;
+    const peck = Math.max(0, Math.sin((c - 2.8) * PI * 3.3)); // 콕, 콕
+    P.body.rotation.x = -0.12 + peck * 0.55;
+    P.head.rotation.x = peck * 0.6;
+    P.tail.rotation.x = peck * 0.3; // 쪼을 땐 꽁지가 들림
+  }
+  P.plant(0); // 떠 있지 않게 발끝을 땅에 붙임
+  gBlink(P, t);
+});
+
+// 걷다 날기: 아장아장 걷다가 날개를 짝! 치며 뛰어올라 한 바퀴 날고, 발 내밀고 파닥파닥 내려앉아 다시 걷기
+gmotion('걷다 날기', '아장아장 걷다 짝! 날아올랐다 다시 내려앉음', 6, (c, P, t) => {
+  const up = gseg(c, 1.8, 2.6); // 날아오름
+  const down = gseg(c, 4.2, 5.0); // 내려앉음
+  const air = up * (1 - down); // 0 땅 ~ 1 하늘
+  let bob = 0;
+  const fold = 1 - gease(gseg(c, 1.7, 1.9)) + gease(gseg(c, 4.9, 5.1)); // 땅에선 날개 접음
+  if (c < 1.8 || c > 5.0) { // 걷기
+    waddle(P, t * PI * 2.6);
+    P.body.rotation.x = -0.12;
+  } else if (c < 2.0) { // 날개 위로 짝!
+    const clap = bump(c, 1.8, 2.0);
+    P.wings.forEach(([w, s, h]) => { w.rotation.z = s * clap * 1.5; h.rotation.z = s * clap * 0.4; });
+    P.feet.forEach((f) => (f.rotation.x = -0.2));
+  } else { // 날기 + 내려앉을 땐 몸 세우고 발 앞으로 내밀며 브레이크
+    const brake = bump(c, 4.3, 5.0);
+    P.flap(t, 20 + brake * 8, 1.0, 0.2 + brake * 0.1);
+    P.body.rotation.x = 0.15 * air - brake * 0.6;
+    P.tail.scale.x = 1 + brake * 0.7;
+    P.tail.rotation.x = -brake * 0.4;
+    P.feet.forEach((f) => (f.rotation.x = brake > 0.1 ? 1.3 - brake * 1.6 : THREE.MathUtils.lerp(0, 1.3, air)));
+    bob = Math.sin(t * 20) * 0.003 * air;
+  }
+  if (fold > 0) foldWings(P, Math.min(1, fold));
+  P.fly.position.y = THREE.MathUtils.lerp(STAND_Y, 0.13, gease(air)) + bump(c, 1.95, 2.3) * 0.01 + bob; // 짝! 할 때 폴짝
+  if (c < 1.8 || c > 5.0) P.plant(0); // 걷는 동안은 발끝을 땅에 붙임
+  P.fly.position.z = Math.sin(c / 6 * PI * 2) * 0.03; // 앞뒤로 조금씩 오감
+  gBlink(P, t);
+});
+
+// 모이 먹기: 땅에 흩어진 모이를 하나씩 찾아 뒤뚱뒤뚱 가서 콕콕 쪼아 꿀꺽 (모이마다 2초, 세 알 다 먹으면 처음부터)
+const EAT_R = 0.05, EAT_N = 3;
+const eatStand = (i) => { const a = (((i % EAT_N) + EAT_N) % EAT_N) * (PI * 2 / EAT_N); return new THREE.Vector3(Math.cos(a) * EAT_R, 0, Math.sin(a) * EAT_R); };
+const eatYaw = (i) => { const d = eatStand(i).sub(eatStand(i - 1)); return Math.atan2(d.x, d.z); };
+gmotion('모이 먹기', '모이 찾아 뒤뚱뒤뚱, 콕콕 쪼아 꿀꺽', EAT_N * 2, (c, P, t, X) => {
+  const i = Math.floor(c / 2), u = c % 2;
+  foldWings(P, 1);
+  P.body.rotation.x = -0.12;
+  const from = eatStand(i - 1), to = eatStand(i);
+  const yaw0 = eatYaw(i - 1), yaw1 = eatYaw(i);
+  const turn = gease(gseg(u, 0, 0.25));
+  P.fly.rotation.y = yaw0 + Math.atan2(Math.sin(yaw1 - yaw0), Math.cos(yaw1 - yaw0)) * turn; // 짧은 쪽으로 돌기
+  if (u < 0.8) { // 다음 모이로 아장아장
+    P.fly.position.copy(from).lerp(to, gease(u / 0.8));
+    waddle(P, u * PI * 5);
+  } else {
+    P.fly.position.copy(to);
+    const peck = u < 1.4 ? Math.max(0, Math.sin((u - 0.8) * PI * 3.33)) : 0; // 콕, 콕
+    P.body.rotation.x = -0.12 + peck * 0.6;
+    P.head.rotation.x = peck * 0.6;
+    P.tail.rotation.x = peck * 0.3;
+    const gulp = bump(u, 1.45, 1.9); // 고개 들고 꿀꺽
+    P.head.rotation.x -= gulp * 0.35;
+    P.neck.scale.set(1 + gulp * 0.15, 1 + gulp * 0.2, 1 + gulp * 0.15);
+  }
+  // 모이: 먹힌 알만 사라지고, 한 바퀴 돌면 다시 뿌려짐
+  X.seeds.forEach((sd, j) => {
+    const st = eatStand(j), yw = eatYaw(j);
+    sd.position.set(st.x + Math.sin(yw) * 0.062, 0.003, st.z + Math.cos(yw) * 0.062);
+    const eaten = c > j * 2 + 1.25;
+    sd.visible = !eaten;
+    sd.scale.setScalar(Math.min(1, c * 4)); // 처음에 톡 나타남
+  });
+  P.fly.position.y = STAND_Y;
+  P.plant(0);
+  gBlink(P, t);
+}, (P) => {
+  const seeds = [];
+  for (let j = 0; j < EAT_N; j++) {
+    const sd = new THREE.Group();
+    P.g.add(sd);
+    for (const [x, z, r] of [[0, 0, 0.004], [0.006, 0.004, 0.003], [-0.005, 0.005, 0.0032]]) {
+      mesh(ball(r, 10).scale(1, 0.6, 1.4).translate(x, 0, z), mat(j === 1 ? '#e8b86a' : '#e2c27a', 0.8), sd, '모이');
+    }
+    seeds.push(sd);
+  }
+  return { seeds };
+});
+
+// 3. 발견!: 날개를 짝! 맞부딪치고 목 쭉, 고개를 옆으로 돌려 한쪽 눈으로 빤히 + 까딱까딱
+gmotion('발견!', '날개 짝! 치고 한쪽 눈으로 빤히', 2.6, (c, P, t) => {
+  const clap = bump(c, 0.2, 0.45); // 날개 위로 짝
+  const k = gease(gseg(c, 0.4, 0.55)) * (1 - gease(gseg(c, 2.2, 2.5)));
+  if (c > 0.2 && c < 0.45) P.wings.forEach(([w, s, h]) => { w.rotation.z = s * clap * 1.5; h.rotation.z = s * clap * 0.4; });
+  else P.flap(t, 20, 0.9 - k * 0.3, 0.2);
+  P.fly.position.y += clap * 0.02;
+  P.neck.scale.y = 1 + k * 0.25; // 목 쭉
+  P.head.position.y += k * 0.008;
+  P.head.position.z += k * 0.004;
+  P.head.rotation.y = k * 1.0; // 고개 옆으로: 한쪽 눈으로 빤히
+  if (c > 0.8 && c < 2.1) P.bob(t, 3.5, 0.006 * k); // 빤히 보면서 까딱까딱
+  P.eyes.forEach((e) => e.scale.setScalar(1 + k * 0.35));
+  P.feet.forEach((f) => (f.rotation.x = 1.3 - k * 0.9)); // 놀라서 발이 툭 내려옴
+});
+
+// 4. 화남: 비둘기 과시. 목을 빵빵하게 부풀리고 꼬리를 부채처럼 펴고 고개를 숙였다 들며 빙글 (구구구구)
+gmotion('화남!', '목 빵빵, 꼬리 쫙, 꾸벅꾸벅 빙글 구구구구', 3.2, (c, P, t, X) => {
+  const k = gease(gseg(c, 0.15, 0.4)) * (1 - gease(gseg(c, 2.8, 3.1)));
+  P.flap(t, 16, 0.6, 0.35); // 날갯짓은 작게
+  P.neck.scale.set(1 + k * 0.45, 1 + k * 0.3, 1 + k * 0.45); // 목 빵빵
+  P.body.scale.set(1 + k * 0.08, 1 + k * 0.08, 1);
+  const bow = Math.max(0, Math.sin(c * PI * 2.2)) * k; // 꾸벅 (고개 숙이며 구구)
+  P.body.rotation.x = -0.25 * k + bow * 0.45;
+  P.head.rotation.x = bow * 0.3;
+  P.tail.scale.x = 1 + k * 0.7; // 꼬리 부채
+  P.tail.rotation.x = -k * 0.35; // 꼬리를 아래로 끌듯이
+  P.fly.rotation.y = Math.sin(c * PI * 0.9) * 0.8 * k; // 빙글 반 바퀴씩
+  P.eyes.forEach((e) => (e.scale.y = 1 - k * 0.35));
+  X.mark.visible = k > 0.05;
+  X.mark.scale.setScalar(0.028 * angerPulse(c - 0.2, t) * Math.min(1, k * 2));
+}, (P) => {
+  const mark = angerMark();
+  mark.position.set(0.028, 0.034, 0);
+  P.head.add(mark);
+  return { mark };
+});
+
+// 5. 공격: 위로 올라 날개 접고 쑥 내리꽂기 → 날개로 찰싹찰싹 때리고 콕콕 → 다시 올라감
+gmotion('공격 (쪼기)', '내리꽂아 날개로 찰싹, 부리로 콕콕', 2.6, (c, P, t) => {
+  const up = gease(gseg(c, 0.1, 0.5));
+  const dive = gease(gseg(c, 0.5, 0.72));
+  const back = gease(gseg(c, 1.7, 2.4));
+  P.fly.position.y += up * 0.03 - dive * 0.11 + back * 0.08;
+  P.fly.position.z = dive * 0.04 * (1 - back);
+  P.body.rotation.x = -up * 0.35 * (1 - dive) + dive * 0.6 * (1 - back);
+  const hit = c > 0.72 && c < 1.7;
+  if (c > 0.5 && c <= 0.72) { P.glide(0.15); P.sweep(1); } // 날개 뒤로 접고 쑥
+  else if (hit) { // 날개를 앞으로 휘둘러 찰싹 + 콕콕
+    const sl = Math.abs(Math.sin((c - 0.72) * PI * 3));
+    P.wings.forEach(([w, s, h]) => { w.rotation.z = s * (0.9 - sl * 0.9); w.rotation.y = -s * sl * 0.9; h.rotation.z = -s * sl * 0.3; });
+    const peck = Math.abs(Math.sin((c - 0.72) * PI * 5));
+    P.head.rotation.x = peck * 0.7;
+    P.head.position.z += peck * 0.008;
+  } else P.flap(t, 22 + back * 8, 1.0, 0.2);
+  P.tail.scale.x = 1 + (hit ? 0.5 : 0);
+  P.feet.forEach((f) => (f.rotation.x = hit ? 0.2 : 1.3)); // 발도 앞으로 내밀어 할퀴는 척
+});
+
+// 6. 맞음: 깃털이 펑 빠지고 뒤로 퉁, 날개 허우적
+gmotion('맞음', '깃털 펑! 뒤로 퉁 튕겨 허우적', 1.6, (c, P, t, X) => {
+  const k = Math.exp(-c * 5) * (c > 0.1 ? 1 : 0);
+  P.fly.position.z = -k * 0.05;
+  P.fly.position.y += k * 0.02;
+  P.body.rotation.x = -k * 1.1;
+  P.body.rotation.z = Math.sin(c * 30) * k * 0.4;
+  P.wings.forEach(([w, s, h], i) => { // 양쪽이 엇박자로 허우적
+    w.rotation.z = s * (0.4 + Math.sin(t * 30 + i * 2) * (0.5 + k));
+    h.rotation.z = s * Math.sin(t * 30 + i * 2 - 1) * 0.5;
+  });
+  P.neck.scale.setScalar(1 - k * 0.2); // 움츠림
+  P.feet.forEach((f) => (f.rotation.x = 1.3 - k * 1.2));
+  P.blink(c > 0.1 && c < 0.7 ? 1 : 0);
+  X.puff(c - 0.1, P.fly.position);
+}, (P) => ({ puff: featherPuff(P) }));
+
+// 7. 쓰러짐: 허우적대다 날개가 만세로 굳고 빙글빙글 추락, 뒤집혀서 발만 파르르
+gmotion('쓰러짐', '허우적… 빙글 추락, 발 하늘로 파르르', 4, (c, P, t, X) => {
+  const stop = gease(gseg(c, 0.3, 0.6));
+  const fall = gseg(c, 0.5, 1.2);
+  const land = c > 1.2;
+  P.wings.forEach(([w, s, h], i) => {
+    const lie = gease(gseg(c, 1.0, 1.3)); // 뒤집혀 누우면 날개를 양옆으로 납작하게 (만세 그대로면 땅을 뚫음)
+    w.rotation.z = s * THREE.MathUtils.lerp(0.2 + stop * 0.9 + Math.sin(t * 28 + i * 2) * (1 - stop), -0.15, lie);
+    h.rotation.z = s * THREE.MathUtils.lerp(stop * 0.2 + Math.sin(t * 28 + i * 2 - 1) * 0.5 * (1 - stop), -0.1, lie);
+  });
+  P.fly.position.y = land ? GROUND_Y + bump(c, 1.2, 1.4) * 0.012 : 0.13 - (0.13 - GROUND_Y) * fall * fall;
+  P.body.rotation.y = land ? 3 * PI : fall * 3 * PI;
+  P.body.rotation.z = gease(gseg(c, 0.9, 1.25)) * PI;
+  P.tail.scale.x = 1 + stop * 0.5;
+  P.blink(stop);
+  P.feet.forEach((f, i) => (f.rotation.x = land ? 0.1 + Math.sin(t * 20 + i) * 0.3 * Math.max(0, 1 - (c - 1.3) * 1.2) : 1.3));
+  X.puff(c - 1.2, new THREE.Vector3(0, 0.02, 0));
+}, (P) => ({ puff: featherPuff(P, 4) }));
+
+// 8. 등장: 위에서 날개 V 자로 들고 스르륵 내려오다, 몸을 세우고 발 내밀며 파닥파닥 브레이크
+gmotion('등장', 'V 자로 스르륵 내려와 파닥파닥 브레이크', 2.2, (c, P, t) => {
+  const k = gseg(c, 0, 0.8);
+  const brake = bump(c, 0.6, 1.3);
+  P.fly.scale.setScalar(c < 0.05 ? 0 : 1);
+  P.fly.position.y += (1 - gease(k)) * 0.22;
+  P.fly.position.z = (1 - gease(k)) * -0.08;
+  if (c < 0.6) P.glide(0.4);
+  else P.flap(t, 26, 1.1, 0.3);
+  P.body.rotation.x = 0.15 * (1 - k) - brake * 0.6; // 브레이크 땐 몸을 세움
+  P.tail.scale.x = 1 + brake * 0.7;
+  P.tail.rotation.x = -brake * 0.4;
+  P.feet.forEach((f) => (f.rotation.x = 1.3 - brake * 1.6)); // 발 앞으로 쭉
+  gBlink(P, t);
+});
+
+const gugu = GUGU_MOTIONS.map((m) => () => {
+  const P = makePigeon();
+  const X = m.extra?.(P) ?? {};
+  return { g: P.g, name: m.name, desc: m.desc, update(t) { P.reset(); m.fn(t % m.period, P, t, X); P.keepAbove(0); } };
+});
+
+// ── 구구 어울림 시안 (monsters.html?set=guguWith): 날개콩·나무·주민 같은 다른 것과 함께하는 동작 ──
+const guguWith = [];
+
+// 합동: 구구가 날아와 날개콩 머리에 턱 앉음 → 날개콩이 물음표 띄우고 "뭐지?" 갸웃갸웃 → 깜짝 눈치채고(!)
+// → 위를 째려보며 화내고 방방 뜀 → 구구는 화들짝 날아가고, 날개콩은 하늘을 보며 한 번 더 씩씩
+// (구구는 중립형: 먼저 공격하지 않고 그냥 앉을 데를 찾았을 뿐)
+const questionMark = () => {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    transparent: true, depthWrite: false, depthTest: false, // 머리 위 구구에 가려지지 않게
+    map: canvasTexture('monsterQuestion', 128, 128, (g, w, h) => {
+      g.font = `900 ${h * 0.9}px 'Pretendard', 'Malgun Gothic', sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.lineJoin = 'round';
+      g.lineWidth = 16;
+      g.strokeStyle = '#4a3525';
+      g.strokeText('?', w / 2, h * 0.54);
+      g.fillStyle = '#ffffff';
+      g.fillText('?', w / 2, h * 0.54);
+    }),
+  }));
+  s.renderOrder = 2;
+  return s;
+};
+guguWith.push(() => {
+  const g = new THREE.Group();
+  const N = createNalgaekong();
+  N.root.userData.smoothPose = true; // 날개콩 동작이 바뀔 때도 부드럽게
+  g.add(N.root);
+  const P = makePigeon();
+  g.add(P.g);
+  const q = questionMark();
+  N.root.add(q);
+  const START = new THREE.Vector3(-0.35, 0.3, -0.12); // 왼쪽 뒤 하늘에서 옴
+  const END = new THREE.Vector3(0.38, 0.36, -0.2); // 오른쪽 하늘로 도망
+  const AT = new THREE.Vector3(0, 0, -0.004);
+  const nBody = N.root.getObjectByName('몸');
+  const core = nBody.parent;
+  // 날개콩 정수리 높이 (구구 좌표로): 몸 공 가운데 + 반지름(찌부·부풀기까지 따라감)
+  const sc = new THREE.Vector3();
+  const headTop = () => {
+    g.updateMatrixWorld(true);
+    nBody.getWorldPosition(tmpV);
+    tmpV.y += 0.0618 * sc.setFromMatrixScale(nBody.matrixWorld).y;
+    return P.g.worldToLocal(tmpV).y;
+  };
+  let last = 0;
+  const T = 9;
+  return {
+    g, name: '날개콩이랑', desc: '머리에 앉자 "뭐지?" → 눈치채고 방방, 구구는 도망',
+    update(t) {
+      const c = t % T, pc = last % T;
+      const dt = Math.min(0.1, Math.max(0, t - last));
+      const at = (x) => (pc < x && c >= x) || (c < pc && x <= c); // 이번 프레임에 x 초를 지났나
+      last = t;
+      // ── 날개콩 ──
+      if (at(0.05)) { N.play('idle'); N.setMood(null); }
+      if (at(3.6)) N.play('notice'); // 깜짝! (느낌표)
+      if (at(4.0)) { N.play('angry'); N.setMood('angry'); }
+      if (at(5.0)) N.play('angry');
+      if (at(6.3)) N.play('angry'); // 날아간 하늘에 대고 한 번 더
+      if (at(8.2)) N.setMood(null);
+      N.update(dt);
+      // 뭐지?: 물음표가 뿅 뜨고, 고개를 이쪽저쪽 갸웃하며 눈을 위로 굴림
+      const huh = gease(gseg(c, 2.3, 2.5)) * (1 - gease(gseg(c, 3.45, 3.6)));
+      q.visible = huh > 0.01;
+      q.scale.setScalar(0.06 * huh * (1 + 0.1 * Math.sin(c * 8)));
+      q.position.set(-0.085, 0.135 + Math.sin(c * 4) * 0.004, 0.02); // 머리 옆 (위는 구구 자리)
+      core.rotation.z += Math.sin((c - 2.3) * 3.2) * 0.22 * huh;
+      // 화남: 고개(몸 전체)를 뒤로 젖혀 머리 위 구구를 째려봄 (원래 화남은 고개를 숙임) → 구구가 날아가면 그쪽 하늘을 봄
+      const lookUp = Math.max(huh * 0.35, gease(gseg(c, 3.6, 3.9)) * (1 - gease(gseg(c, 7.6, 8.2))));
+      core.rotation.x = THREE.MathUtils.lerp(core.rotation.x, -0.45, lookUp);
+      core.rotation.y = gease(gseg(c, 5.5, 6.2)) * 0.5 * lookUp; // 도망가는 쪽(오른쪽)으로 고개 돌림
+      const hops = (c - 4.1) * 2.6; // 방방 횟수 (정수일 때 발이 땅에 닿음)
+      const hopping = hops > 0 && hops < 5; // 땅에 닿는 순간에만 시작·끝·높이 바꿈
+      N.root.position.y = hopping ? Math.abs(Math.sin(hops * PI)) * (hops > 2 ? 0.045 : 0.03) : 0; // 방방
+      N.root.rotation.y = hopping ? Math.sin(c * 9) * 0.15 : 0;
+      const top = headTop();
+
+      // ── 구구: 날아와 앉아 쉬다가, 날개콩이 깜짝 뛰자 휘청휘청 → 화들짝 도망 ──
+      P.reset();
+      perchCycle(P, c, t, AT, top, {
+        from: START, to: END, leaveAt: 5.3,
+        sit: (s) => {
+          const shake = c > 3.6 ? 1 : 0;
+          if (!shake) return;
+          P.body.rotation.z = Math.sin(c * 16) * 0.18; // 휘청
+          P.body.rotation.x = -0.1 + Math.sin(c * 11) * 0.1;
+          P.head.rotation.y = -0.7; // 밑을 내려다봄
+          P.head.rotation.x = 0.35;
+          P.eyes.forEach((e) => e.scale.setScalar(1.4));
+          if (c > 4.6) P.wings.forEach(([w, ws]) => (w.rotation.z += ws * Math.abs(Math.sin(c * 20)) * 0.4)); // 날개 들썩, 버티기
+        },
+      });
+      if (c > 5.3) P.eyes.forEach((e) => e.scale.setScalar(1.4 - 0.4 * gseg(c, 5.5, 6.5)));
+      P.keepAbove(0);
+    },
+  };
+});
+
+// 날아와 어딘가(나뭇가지·캐릭터 머리)에 앉았다가 다시 날아가는 한 바퀴 (T 초)
+// top: 앉을 자리 윗면 (구구 좌표), at: 앉을 자리 x·z. 0~1.8 날아옴 → 2.1 착지 → leaveAt 까지 앉아 쉼 → 날아감 → 안 보임
+function perchCycle(P, c, t, at, top, { from, to, leaveAt = 4.6, sit = null }) {
+  const spot = new THREE.Vector3(at.x, top + 0.04, at.z);
+  P.g.visible = c < leaveAt + 1.8;
+  if (c < 1.8) { // 날아옴
+    const k = gease(gseg(c, 0, 1.8));
+    P.fly.position.lerpVectors(from, spot, k);
+    P.fly.position.y += Math.sin(k * PI) * 0.06 + 0.02 * (1 - k);
+    P.fly.rotation.y = THREE.MathUtils.lerp(Math.atan2(spot.x - from.x, spot.z - from.z), 0, gease(gseg(c, 1.2, 1.8)));
+    P.flap(t, 20, 1.0, 0.2);
+    P.body.rotation.x = 0.15;
+  } else if (c < 2.1) { // 내려앉기: 몸 세우고 발 내밀며 파닥파닥 브레이크
+    const k = gease(gseg(c, 1.8, 2.1));
+    P.fly.position.copy(spot);
+    P.flap(t, 28, 1.1, 0.3);
+    P.body.rotation.x = -0.5;
+    P.tail.scale.x = 1.6;
+    P.tail.rotation.x = -0.4;
+    P.feet.forEach((f) => (f.rotation.x = -0.2));
+    P.plant(top, k);
+  } else if (c < leaveAt) { // 앉아 쉼: 날개 접고 까딱·두리번, 한 번 구구구 (목 부풀리고 꾸벅)
+    const s = c - 2.1;
+    P.fly.position.copy(spot);
+    foldWings(P, 1);
+    P.feet.forEach((f) => (f.rotation.x = 0));
+    P.bob(t, 1.6, 0.006);
+    P.head.rotation.y = Math.sin(s * 2.2) * 0.6;
+    const coo = bump(c, 2.8, 3.8);
+    P.neck.scale.setScalar(1 + coo * 0.3);
+    P.body.rotation.x = -0.1 + Math.max(0, Math.sin(s * 9)) * coo * 0.3;
+    P.tail.scale.x = 1 + coo * 0.4;
+    sit?.(s, coo);
+    P.plant(top);
+  } else { // 짝! 날아감
+    const clap = bump(c, leaveAt, leaveAt + 0.2);
+    const k = gease(gseg(c, leaveAt + 0.15, leaveAt + 1.8));
+    P.fly.position.lerpVectors(spot, to, k);
+    P.fly.position.y += clap * 0.02;
+    P.fly.rotation.y = THREE.MathUtils.lerp(0, Math.atan2(to.x - spot.x, to.z - spot.z), gease(gseg(c, leaveAt + 0.1, leaveAt + 0.6)));
+    if (c < leaveAt + 0.2) {
+      P.wings.forEach(([w, s, h]) => { w.rotation.z = s * clap * 1.5; h.rotation.z = s * clap * 0.4; });
+      foldWings(P, 1 - gease(gseg(c, leaveAt, leaveAt + 0.12))); // 접은 날개를 펴면서 짝!
+    }
+    else P.flap(t, 24, 1.0, 0.25);
+    P.body.rotation.x = 0.2 * k;
+    P.feet.forEach((f) => (f.rotation.x = THREE.MathUtils.lerp(0, 1.3, k)));
+    if (c < leaveAt + 0.15) P.plant(top);
+  }
+  gBlink(P, t);
+}
+
+// 나무 위 앉을 자리: 마을 둥근 나무의 잎 덩어리(공 여러 개) 겉면 중에서 평평한 곳만 고른다 (나무 기준 좌표, 크기 1)
+// 꼭대기 한가운데는 빼고(너무 눈에 띔), 기울기가 완만해 발을 딛기 좋은 둘레 자리들. 게임에서는 이 중 하나를 골라 날아가면 된다
+function canopyPerches(blobs = ROUND_BLOBS) {
+  const height = (x, z) => {
+    let h = -Infinity;
+    for (const [bx, by, bz, r] of blobs) {
+      const d2 = (x - bx) ** 2 + (z - bz) ** 2;
+      if (d2 < r * r) h = Math.max(h, by + Math.sqrt(r * r - d2));
+    }
+    return h;
+  };
+  const out = [];
+  const e = 0.03;
+  for (const rr of [0.4, 0.55, 0.7, 0.85, 1.0, 1.1]) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * PI * 2, x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+      const h = height(x, z);
+      const slope = Math.hypot(height(x + e, z) - height(x - e, z), height(x, z + e) - height(x, z - e)) / (2 * e);
+      if (Number.isFinite(slope) && slope < 0.75) out.push({ p: new THREE.Vector3(x, h, z), slope });
+    }
+  }
+  return out;
+}
+
+// 나무에 앉기: 따로 가지를 만들지 않고, 마을에 있는 둥근 나무 그대로 잎 덩어리 위 평평한 곳에 사뿐
+guguWith.push(() => {
+  const g = new THREE.Group();
+  const tree = new THREE.Group();
+  g.add(tree);
+  mesh(trunkGeometry(), mat('#c0905c', 0.9), tree, '줄기');
+  mesh(roundCanopy(), new THREE.MeshStandardMaterial({ color: '#8fcf6a', vertexColors: true, roughness: 0.9 }), tree, '잎');
+  // 화면 앞쪽(+z)으로 보이고 덜 기울어진 자리 하나를 고름
+  const score = (c) => c.p.z + c.p.x * 0.3 - c.slope * 0.6;
+  const spot = canopyPerches().sort((a, b) => score(b) - score(a))[0].p;
+  const P = makePigeon();
+  g.add(P.g);
+  const TREE_S = 0.8; // 마을 나무 크기 (주민 키와 견줘 보기 좋게)
+  const at = new THREE.Vector3();
+  return {
+    g, name: '나무에 앉기', desc: '마을 나무 잎 덩어리 위 평평한 곳에 사뿐, 구구구 쉬다 날아감',
+    update(t) {
+      tree.scale.setScalar(TREE_S / g.scale.x); // 시안 화면은 몬스터만 크게 키우므로 나무는 원래 크기로 되돌림
+      tree.position.set(-0.3 / g.scale.x, 0, -0.7 / g.scale.x); // 다른 시안 뒤쪽에
+      g.updateMatrixWorld(true);
+      at.copy(spot);
+      P.g.worldToLocal(tree.localToWorld(at));
+      P.reset();
+      perchCycle(P, t % 7, t, at, at.y, {
+        from: new THREE.Vector3(at.x + 0.45, at.y + 0.1, at.z + 0.2), to: new THREE.Vector3(at.x + 0.5, at.y + 0.25, at.z - 0.3), leaveAt: 4.9,
+      });
+      P.keepAbove(0);
+    },
+  };
+});
+
+// 캐릭터 머리에 앉기: 주민이 가만히 서 있으면 머리 위로 와서 앉음 (주민이 움직이면 놀라 날아가는 건 게임에서)
+guguWith.push(() => {
+  const g = new THREE.Group();
+  const V = createVillager(PRESETS.boy);
+  g.add(V.root);
+  const P = makePigeon();
+  g.add(P.g);
+  const head = V.rig.head;
+  // 정수리 자리 (머리 기준): 머리 묶음 전체의 가장 높은 곳
+  g.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(head);
+  const crown = head.worldToLocal(new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y - 0.01, (box.min.z + box.max.z) / 2 - 0.02));
+  const at = new THREE.Vector3();
+  return {
+    g, name: '머리에 앉기', desc: '가만히 있는 캐릭터 머리에 와서 털썩',
+    update(t) {
+      V.root.scale.setScalar(1 / g.scale.x); // 시안 화면은 몬스터만 크게 키우므로 주민은 원래 크기로 되돌림
+      g.updateMatrixWorld(true);
+      at.copy(crown);
+      P.g.worldToLocal(head.localToWorld(at));
+      P.reset();
+      const top = at.y;
+      perchCycle(P, t % 7.5, t, at, top, {
+        from: new THREE.Vector3(at.x - 0.4, top + 0.15, at.z + 0.15), to: new THREE.Vector3(at.x + 0.4, top + 0.25, at.z - 0.2), leaveAt: 5.4,
+        sit: (s) => { if (s > 2.2) P.head.rotation.x = 0.4; }, // 나중엔 머리카락 사이를 콕콕 들여다봄
+      });
+      P.keepAbove(0);
+    },
+  };
+});
+
+// 하악냥이랑: 하악냥이 잡으려 해도 구구는 가볍게 피함 (하악냥은 게임과 같은 monsters/haaknyang.js 동작을 이어 붙임)
+const haakFn = (name) => HAAK_MOTIONS.find((m) => m.name === name).fn;
+const guguHaak = []; // 마을 나무가 없으니 따로 가까이서 봄
+const haakDuo = (name, desc, T, fn) => guguHaak.push(() => {
+  const g = new THREE.Group();
+  const H = makeHaak();
+  H.g.name = '하악냥'; // 하악냥은 원래 외곽선 그대로
+  H.g.userData.haak = H;
+  H.g.scale.setScalar(1.6); // 비둘기보다 고양이가 커 보이게
+  g.add(H.g);
+  const P = makePigeon();
+  g.add(P.g);
+  return {
+    g, name, desc,
+    update(t) {
+      H.reset();
+      P.reset();
+      fn(t % T, H, P, t);
+      H.ground();
+      H.whiskers(t);
+      P.keepAbove(0);
+    },
+  };
+});
+
+// ① 날 때: 머리 위에서 파닥이는 구구를 올려다보다 웅크렸다 폴짝! 앞발 툭툭 → 구구는 살짝 옆으로 비켜 올라감 → 하악냥 실망, 구구는 유유히 날아감
+const JUMP = haakFn('점프 툭'), SAD = haakFn('실망');
+const HOVER = new THREE.Vector3(0, 0.25, 0.06), DODGE = new THREE.Vector3(0.12, 0.32, 0.03);
+haakDuo('하악냥 점프', '날고 있으면 폴짝 뛰어 툭툭 → 구구는 살짝 비켜 유유히', 6.2, (c, H, P, t) => {
+  // 하악냥
+  if (c < 1.4) { // 고개 들고 구구를 따라 봄, 꼬리 살랑
+    H.head.rotation.x = -0.45;
+    H.head.rotation.y = Math.sin(c * 3) * 0.15;
+    H.eyeSize(1.2);
+    hBlink(H, t);
+  } else if (c < 2.9) JUMP(c - 1.4, H, t); // 앞발이 닿는 순간: 2.0, 2.08 초
+  else SAD(c - 2.9, H, t);
+  // 구구
+  P.g.visible = c < 5.4;
+  const inK = gease(gseg(c, 0, 1.0));
+  const dodge = gease(gseg(c, 1.72, 1.98)); // 앞발이 닿기 직전에 사뿐
+  const away = gease(gseg(c, 3.6, 5.4));
+  P.fly.position.set(-0.45, 0.38, -0.1).lerp(HOVER, inK).lerp(DODGE, dodge);
+  P.fly.position.lerp(new THREE.Vector3(0.5, 0.48, -0.3), away);
+  P.fly.position.y += Math.sin(t * 7) * 0.004 * (1 - away); // 제자리 파닥이며 둥실
+  P.fly.rotation.y = THREE.MathUtils.lerp(1.3, 0.5, inK) + away * 0.8;
+  const quick = bump(c, 1.72, 2.05);
+  P.flap(t, 18 + quick * 12, 1.0 + quick * 0.2, 0.25);
+  P.body.rotation.z = -quick * 0.4; // 옆으로 몸을 기울여 비킴
+  P.body.rotation.x = 0.05 + 0.15 * away;
+  P.feet.forEach((f) => (f.rotation.x = 1.3));
+  const look = c > 1.0 && c < 3.6 ? 1 : 0; // 밑의 하악냥을 내려다봄
+  P.head.rotation.x = 0.4 * look;
+  P.head.rotation.y = -0.4 * look;
+  P.eyes.forEach((e) => e.scale.setScalar(1 + 0.3 * bump(c, 1.6, 2.6)));
+  gBlink(P, t);
+});
+
+// ② 걸을 때: 구구가 아장아장 콕콕 → 하악냥이 납작 웅크려 엉덩이 씰룩 → 덮쳐! → 구구는 짝! 가볍게 날아올라 피함
+// → 하악냥 코 박고 부르르, 구구는 옆에 사뿐 내려앉아 아무 일 없다는 듯 다시 아장아장
+const POUNCE = haakFn('공격 ② 덮치기');
+const PZ = 0.16; // 구구가 걷는 줄 (하악냥이 덮치면 코가 닿는 곳)
+haakDuo('하악냥 덮치기', '걷고 있으면 웅크렸다 덮쳐! → 구구는 짝! 날아 피함', 7, (c, H, P, t) => {
+  // 하악냥: 0.4 초부터 덮치기 (웅크림 0.4~1.6, 덮침 1.6~2.0, 코 박음 2.0~3.2, 부르르, 제자리 ~4.2)
+  if (c < 0.4 || c > 4.2) { H.head.rotation.y = -0.4; hBlink(H, t); }
+  else POUNCE(c - 0.4, H, t);
+  // 구구
+  const up = gseg(c, 1.5, 1.85), down = gseg(c, 3.7, 4.3);
+  const air = gease(up) * (1 - gease(down));
+  let x;
+  if (c < 1.5) x = THREE.MathUtils.lerp(-0.2, 0, gease(gseg(c, 0, 1.0))); // 아장아장 와서 콕콕
+  else if (c < 4.3) x = THREE.MathUtils.lerp(0, 0.15, gease(gseg(c, 1.55, 4.3))); // 날아서 옆으로 비킴
+  else x = THREE.MathUtils.lerp(0.15, 0.3, gseg(c, 4.6, 7)); // 다시 아장아장 지나감
+  P.fly.position.set(x, 0, PZ);
+  P.fly.rotation.y = PI / 2;
+  P.g.visible = c < 6.9;
+  if (c < 1.5 || c > 4.3) { // 땅
+    foldWings(P, 1);
+    P.body.rotation.x = -0.12;
+    const walking = c < 1.0 || c > 4.5;
+    if (walking) waddle(P, t * PI * 2.6, c > 4.3 ? gease(gseg(c, 4.5, 4.8)) : 1); // 내려앉은 뒤엔 천천히 다시 걸음
+    else if (c < 1.5) { // 콕콕
+      const peck = Math.max(0, Math.sin((c - 1.0) * PI * 4));
+      P.body.rotation.x = -0.12 + peck * 0.6;
+      P.head.rotation.x = peck * 0.6;
+      P.tail.rotation.x = peck * 0.3;
+    }
+    if (c > 4.3) P.head.rotation.y = -0.5 * (1 - gease(gseg(c, 4.6, 5.0))); // 내려앉아 하악냥 쪽을 힐끔 보다가 앞으로
+    P.fly.position.y = STAND_Y;
+    P.plant(0);
+  } else if (c < 1.65) { // 짝! 날개 위로 (하악냥이 박차기 직전, 엉덩이 씰룩할 때 눈치챔)
+    const clap = bump(c, 1.5, 1.65);
+    P.wings.forEach(([w, s, h]) => { w.rotation.z = s * clap * 1.5; h.rotation.z = s * clap * 0.4; });
+    foldWings(P, 1 - gease(gseg(c, 1.5, 1.6))); // 접은 날개를 펴면서 짝!
+    P.feet.forEach((f) => (f.rotation.x = -0.2));
+    P.fly.position.y = STAND_Y + clap * 0.012;
+    P.eyes.forEach((e) => e.scale.setScalar(1.4));
+  } else { // 둥실 떠서 코 박은 하악냥을 내려다봄 → 브레이크하며 내려앉음
+    const brake = bump(c, 3.8, 4.3);
+    P.flap(t, 20 + brake * 8, 1.0, 0.25 + brake * 0.1);
+    P.body.rotation.x = 0.05 - brake * 0.6;
+    P.tail.scale.x = 1 + brake * 0.7;
+    P.tail.rotation.x = -brake * 0.4;
+    P.feet.forEach((f) => (f.rotation.x = brake > 0.1 ? 1.3 - brake * 1.6 : THREE.MathUtils.lerp(0, 1.3, air)));
+    P.head.rotation.x = 0.45 * (1 - brake);
+    P.head.rotation.y = -0.6;
+    P.eyes.forEach((e) => e.scale.setScalar(1.4 - 0.4 * gseg(c, 2.2, 3.0)));
+    P.fly.position.y = THREE.MathUtils.lerp(STAND_Y, 0.2, air) + Math.sin(t * 20) * 0.003 * air;
+    if (c > 4.1) P.plant(0, gseg(c, 4.1, 4.3));
+  }
+  gBlink(P, t);
+});
+
+// 동작이 바뀌는 순간 자세가 툭 튀지 않게 (관성 블렌딩): 한 프레임에 예상보다 확 튄 만큼을 기억했다가 0.2초쯤에 걸쳐 스르르 풀어 줌
+// 원래 빠른 움직임(날갯짓)은 매 프레임 비슷하게 움직이니 건드리지 않고, 갑자기 꺾인 곳만 잡음
+const SMOOTH_THR = [0.003, 0.003, 0.003, 0.3, 0.3, 0.3, 0.08, 0.08, 0.08]; // 위치·회전·크기
+function poseSmoother(roots) {
+  const objs = [];
+  roots.forEach((r) => r.traverse((o) => { if (o !== r) objs.push([o, r]); }));
+  const st = new Map();
+  const read = (o) => [o.position.x, o.position.y, o.position.z, o.rotation.x, o.rotation.y, o.rotation.z, o.scale.x, o.scale.y, o.scale.z];
+  const shown = (o, r) => { for (let p = o; p && p !== r.parent; p = p.parent) if (!p.visible) return false; return true; };
+  const wrap = (d, k) => (k >= 3 && k < 6 ? Math.atan2(Math.sin(d), Math.cos(d)) : d);
+  let lastT = null;
+  return (t) => {
+    const dt = lastT === null ? -1 : t - lastT;
+    lastT = t;
+    const fresh = !(dt > 0 && dt < 0.25); // 처음이거나 시간이 건너뛰면 그냥 원래 자세
+    const decay = Math.exp(-dt / 0.06);
+    for (const [o, r] of objs) {
+      let raw = read(o);
+      const s = st.get(o);
+      if (!shown(o, r)) { st.delete(o); continue; } // 숨었다 나타나면 새로 시작 (사라진 자리에서 미끄러져 오지 않게)
+      if (fresh || !s) { st.set(o, { raw, v: null, off: raw.map(() => 0), out: raw }); continue; }
+      if (raw.every((x, k) => x === s.out[k])) raw = s.raw; // 이번 프레임에 아무도 안 건드린 부품 → 원래 값은 지난번 그대로
+      const out = [];
+      for (let k = 0; k < 9; k++) {
+        const v = wrap(raw[k] - s.raw[k], k);
+        const jerk = s.v ? v - s.v[k] : 0; // 처음 한 프레임은 속도를 모르니 그냥 지나감
+        s.off[k] *= decay;
+        if (Math.abs(jerk) > SMOOTH_THR[k] && Math.abs(jerk) > 2.5 * Math.abs(s.v[k] - (s.pv?.[k] ?? 0))) s.off[k] -= jerk;
+        out.push(raw[k] + s.off[k]);
+      }
+      s.pv = s.v;
+      s.v = raw.map((x, k) => wrap(x - s.raw[k], k));
+      s.raw = raw;
+      s.out = out;
+      o.position.set(out[0], out[1], out[2]);
+      o.rotation.set(out[3], out[4], out[5]);
+      o.scale.set(out[6], out[7], out[8]);
+    }
+  };
+}
+
+// 비둘기는 부품 크기와 상관없이 외곽선 두께를 하나로 (날개·꼬리 판도, 깃털·빵도 같은 두께)
+const FOOT = new Set(['발', '발가락', '발톱']);
+const pigeonLine = (make) => () => {
+  const m = make();
+  const villager = new Set(); // 합동 시안에 같이 선 주민은 원래 외곽선 그대로
+  for (const k of ['주민', '하악냥']) m.g.getObjectByName(k)?.traverse((o) => villager.add(o));
+  m.g.traverse((o) => { if (o.isMesh && !villager.has(o)) o.userData.outlineWidth = FOOT.has(o.name) ? 0.0012 : 0.002; }); // 가는 발은 선도 가늘게
+  const pigeons = [], haaks = [];
+  const others = [];
+  m.g.traverse((o) => { if (o.userData.pigeon) pigeons.push(o.userData.pigeon); if (o.userData.haak) haaks.push(o.userData.haak); if (o.userData.smoothPose) others.push(o); });
+  const smooth = poseSmoother([...pigeons.map((P) => P.g), ...haaks.map((H) => H.g), ...others]);
+  const up = m.update;
+  m.update = (t) => { // 자세를 부드럽게 이은 뒤에도 땅에 안 파묻히게 (비둘기 시안 8종 포함)
+    up(t);
+    smooth(t);
+    pigeons.forEach((P) => P.keepAbove(0));
+    haaks.forEach((H) => H.ground());
+  };
+  return m;
+};
+
 // ── 배치 ──
 const SET = new URLSearchParams(location.search).get('set');
 const SETS = {
@@ -2069,6 +3236,10 @@ const SETS = {
   cat: { list: cat, title: '고양이 몬스터 시안', link: '?set=cat', cols: 4 },
   haak: { list: haak, title: '하악냥 모션 시안', link: '?set=haak', cols: 4 },
   haakEyes: { list: haakEyes, title: '하악냥 눈 시안', link: '?set=haakEyes', cols: 4 },
+  pigeon: { list: pigeon.map(pigeonLine), title: '비둘기 몬스터 시안', link: '?set=pigeon', cols: 4 },
+  gugu: { list: gugu.map(pigeonLine), title: '구구 모션 시안', link: '?set=gugu', cols: 4 },
+  guguWith: { list: guguWith.map(pigeonLine), title: '구구 어울림 시안', link: '?set=guguWith', dist: 6.5, lookY: 1.2 }, // 마을 나무가 실제 크기라 멀리서 올려다봄
+  guguHaak: { list: guguHaak.map(pigeonLine), title: '구구·하악냥 어울림 시안', link: '?set=guguHaak', spacing: 0.9 }, // 둘이 같이 뛰노는 자리가 넓어 띄워 놓음
 };
 const cur = SETS[SET] ? SET : 'basic';
 document.getElementById('title').innerHTML = `${SETS[cur].title}<span>마우스로 돌려 보기 · 휠로 확대 · 맨 오른쪽은 크기 비교용 주민 · ${
@@ -2079,10 +3250,11 @@ const built = SETS[cur].list.map((make) => make()).filter((m) => !ONLY || ONLY.i
 const COLS = ONLY ? built.length : SETS[cur].cols ?? built.length; // 한 줄에 몇 마리
 const ROWS = Math.ceil(built.length / COLS);
 const GRID = ROWS > 1;
-const SPACING = GRID ? 0.6 : 0.36;
+const SPACING = SETS[cur].spacing ?? (GRID ? 0.6 : 0.36);
 const MON_SCALE = GRID ? 2.4 : 1.5; // 한 줄일 땐 주민 무릎 높이쯤
 const ROW_GAP = 1.1;
 const startX = -(COLS * SPACING) / 2;
+if (SETS[cur].lookY) { controls.target.y = SETS[cur].lookY; camera.position.y = SETS[cur].lookY + 0.4; }
 if (GRID) {
   camera.position.set(0, 2.0, 3.0); // 위에서 내려다봐야 앞뒤 줄이 화면에서 겹치지 않음
   controls.target.set(0.15, 0, 0.1);
@@ -2121,7 +3293,8 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   // 좁은 화면에서도 모두 들어오게 뒤로 물러남
-  const dist = Math.max(3.6, 3.6 * (1.7 / camera.aspect));
+  const near = SETS[cur].dist ?? 3.6;
+  const dist = Math.max(near, near * (1.7 / camera.aspect));
   camera.position.sub(controls.target).setLength(dist).add(controls.target);
   camera.updateProjectionMatrix();
 }

@@ -809,6 +809,8 @@ hmotion('공격 ② 덮치기', '납작 엎드려 엉덩이 씰룩 → 덮치다
       }
     });
     H.tail.rotation.z = Math.sin(t * 6) * 0.5 * plant;
+    H.tail.rotation.x = -1.1 * (1 - land); // 덮치며 뒤로 쭉 편 꼬리를 툭 놓지 않고 스르르
+    H.tailCurl = THREE.MathUtils.lerp(-0.2, 0.15, land);
     H.squint(true); // 코 박고 > <
     H.mouthAs('frown');
   }

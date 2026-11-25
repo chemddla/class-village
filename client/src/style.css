@@ -183,7 +183,7 @@ button, input, textarea, select { font-family: inherit; }
   position: fixed; top: max(188px, calc(env(safe-area-inset-top) + 176px)); right: 12px; /* 꾸미기 버튼 아래 */
   width: min(300px, calc(100% - 24px)); padding: 14px 16px;
 }
-#inv-panel h3 { margin: 0 0 8px; font-size: 14px; }
+#inv-panel h3 { margin: 0 0 8px; font-size: 14px; cursor: move; user-select: none; touch-action: none; }
 /* 인벤토리 칸: 퀵슬롯 4칸 + 가방 네모 칸 */
 .inv-label { margin: 6px 0 5px; font-size: 12px; font-weight: 800; color: var(--muted); }
 .inv-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 6px; border-radius: 12px; background: #f6efe1; }
@@ -209,7 +209,7 @@ button, input, textarea, select { font-family: inherit; }
 .inv-cell.drop { border-color: var(--accent); border-style: solid; background: #eef8e6; }
 .inv-cell.active, .inv-cell.active:hover { border-color: #3d8bfd; } /* 지금 쏘는 화살 */
 .inv-info { margin: 8px 0 0; min-height: 2.6em; }
-#look-panel h3:first-child { margin-top: 0; }
+#look-panel h3:first-child { margin-top: 0; cursor: move; user-select: none; touch-action: none; }
 .look-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .look-row button:not(.swatch) {
   border: 2px solid transparent; background: #f3ead8; border-radius: 10px; padding: 6px 10px;
@@ -263,7 +263,7 @@ button, input, textarea, select { font-family: inherit; }
   position: fixed; top: max(188px, calc(env(safe-area-inset-top) + 176px)); right: 12px;
   width: min(330px, calc(100% - 24px)); max-height: calc(100% - 300px); overflow: auto; padding: 14px 16px;
 }
-#dex-panel h3 { margin: 0 0 4px; font-size: 14px; }
+#dex-panel h3 { margin: 0 0 4px; font-size: 14px; cursor: move; user-select: none; touch-action: none; }
 #dex-panel h4 { margin: 10px 0 6px; font-size: 13px; color: var(--muted); }
 .dex-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; border-bottom: 1px dashed #eee3cf; }
 .dex-row .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 2px rgba(0,0,0,0.12); }
