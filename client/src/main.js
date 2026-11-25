@@ -2516,7 +2516,13 @@ let frameNo = 0;
 let slowFrames = 0;
 let slowTime = 0;
 let slowFor = 0;
-let noLines = LOW; // 다른 학생의 외곽선을 끈 상태인지 (자동 화질 2단계, ?q=low 는 처음부터)
+// 낮춘 화질은 이 기기에 기억해 [낮춘 횟수, 해상도 배율, 외곽선 끔], 다음에는 느린 채로 몇 초 버티지 않고 처음부터 그 화질로 시작한다
+let [qStep, qRatio, qLines] = (() => {
+  try { const q = JSON.parse(store.get(localStorage, 'quality')); if (q[0] > 0 && q[1] >= 0.5) return q; } catch { /* 기억한 것 없음 */ }
+  return [0, Infinity, false];
+})();
+renderer.setPixelRatio(Math.min(renderer.getPixelRatio(), qRatio));
+let noLines = LOW || !!qLines; // 다른 학생의 외곽선을 끈 상태인지 (자동 화질 2단계, ?q=low 는 처음부터)
 let fpsFrames = 0;
 let fpsTime = 0;
 
@@ -2625,7 +2631,7 @@ function frame() {
   fpsFrames++;
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
-    ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS`;
+    ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS${qStep ? ` · 화질 -${qStep}` : ''}`;
     // 자동 화질: 2초 넘게 30fps 에 못 미치면 한 단계씩 낮춘다. 해상도 0.75배까지(20%씩) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지
     // 해상도는 화면 칠하기가 벅찬 기기(태블릿)에, 외곽선은 그리기 횟수가 벅찬 기기에 듣는다
     // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
@@ -2636,6 +2642,7 @@ function frame() {
         noLines = true;
         for (const o of others.values()) o.char.setOutline(false);
       } else renderer.setPixelRatio(Math.max(noLines ? 0.5 : 0.75, renderer.getPixelRatio() * 0.8));
+      store.set(localStorage, 'quality', JSON.stringify([++qStep, renderer.getPixelRatio(), noLines]));
       slowFor = -4; // 낮춘 효과가 보일 때까지 잠깐 기다린다
     }
     fpsFrames = 0;
