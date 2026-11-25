@@ -1838,6 +1838,7 @@ function attach(r) {
       });
     } else {
       const char = new Character(p.name, p.color, parseLook(p.look));
+      if (noLines) char.setOutline(false);
       char.setTool(p.t);
       char.setArrows(p.q);
       char.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
@@ -2515,6 +2516,7 @@ let frameNo = 0;
 let slowFrames = 0;
 let slowTime = 0;
 let slowFor = 0;
+let noLines = LOW; // 다른 학생의 외곽선을 끈 상태인지 (자동 화질 2단계, ?q=low 는 처음부터)
 let fpsFrames = 0;
 let fpsTime = 0;
 
@@ -2624,12 +2626,16 @@ function frame() {
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
     ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS`;
-    // 자동 화질: 2초 넘게 30fps 에 못 미치면 해상도를 한 단계(20%) 낮춘다 (화면 배율 0.75까지). 태블릿처럼 화면 칠하기가 벅찬 기기를 위한 것
+    // 자동 화질: 2초 넘게 30fps 에 못 미치면 한 단계씩 낮춘다. 해상도 0.75배까지(20%씩) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지
+    // 해상도는 화면 칠하기가 벅찬 기기(태블릿)에, 외곽선은 그리기 횟수가 벅찬 기기에 듣는다
     // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
     slowFor = slowFrames > 5 && slowTime / slowFrames > 1 / 30 ? slowFor + 1 : 0;
     slowFrames = slowTime = 0;
-    if (slowFor >= 4 && renderer.getPixelRatio() > 0.75) {
-      renderer.setPixelRatio(Math.max(0.75, renderer.getPixelRatio() * 0.8));
+    if (slowFor >= 4 && (renderer.getPixelRatio() > 0.5 || !noLines)) {
+      if (renderer.getPixelRatio() <= 0.75 && !noLines) {
+        noLines = true;
+        for (const o of others.values()) o.char.setOutline(false);
+      } else renderer.setPixelRatio(Math.max(noLines ? 0.5 : 0.75, renderer.getPixelRatio() * 0.8));
       slowFor = -4; // 낮춘 효과가 보일 때까지 잠깐 기다린다
     }
     fpsFrames = 0;

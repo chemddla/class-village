@@ -168,6 +168,13 @@ export class Character {
     mergeOutlines(this.villager.root, held, isJoint);
     mergeMeshes(this.villager.root, held, isJoint);
     mergeSkinned(this.villager.root, held);
+    if (this.noLine) this.setOutline(false); // 바꿔 쥔 도구에 새로 생긴 외곽선도 끈다
+  }
+
+  // 외곽선 켜고 끄기 (느린 기기용): 외곽선은 캐릭터를 한 번 더 그리는 것이라, 끄면 그리기 횟수와 삼각형이 거의 절반이 된다
+  setOutline(on) {
+    this.noLine = !on;
+    this.villager.root.traverse((o) => { if (o.userData.isOutline) o.visible = on; });
   }
 
   // 손에 든 도구 (평소에도 들고 다님)

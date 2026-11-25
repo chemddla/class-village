@@ -8,7 +8,7 @@ import {
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
-  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME,
+  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME, instancedCells, cullCells,
 } from './materials.js';
 import { makeLabel } from './label.js';
 
@@ -543,13 +543,15 @@ function buildTrees(group) {
   const Y = new THREE.Vector3(0, 1, 0);
   const base = []; // 나무 번호 → { pos, q, s, leaves(matrix): 잎 덩어리 자리 바꾸기 }
 
-  const trunks = new THREE.InstancedMesh(trunkGeometry(), toon(0xc0905c), WORLD.trees.length);
   WORLD.trees.forEach((t, i) => {
     q.setFromAxisAngle(Y, (t.x * 13.7 + t.z) % 6.28);
     base[i] = { pos: new THREE.Vector3(t.x, 0, t.z), q: q.clone(), s: t.s };
-    trunks.setMatrixAt(i, m.compose(base[i].pos, q, s.setScalar(t.s)));
   });
-  group.add(addOutline(trunks, 0.03));
+  // 줄기·잎은 칸으로 나눠 화면에 드는 칸만 그린다 (마을이 넓어 한 덩어리로는 안 보이는 나무까지 다 그린다)
+  const trunkGeo = trunkGeometry();
+  const trunkMat = toon(0xc0905c);
+  const trunkAt = instancedCells(group, WORLD.trees, (n) => addOutline(new THREE.InstancedMesh(trunkGeo, trunkMat, n), 0.03),
+    (mesh, j, i) => mesh.setMatrixAt(j, m.compose(base[i].pos, base[i].q, s.setScalar(base[i].s))));
 
   // 잎 색: 나무마다 조금씩 다른 초록 (연두 ~ 짙은 초록), 과일나무는 잎 색을 미리 칠해 두어 흰색
   const tintOf = (k, h, h2) => {
@@ -561,8 +563,8 @@ function buildTrees(group) {
   const leafMat = swayToon(0xffffff, { vertexColors: true });
   [roundCanopy(), pineCanopy(), ovalCanopy()].forEach((geo, k) => {
     const list = kinds[k];
-    const mesh = new THREE.InstancedMesh(geo, leafMat, list.length);
-    list.forEach(({ t, i }, j) => {
+    instancedCells(group, list.map((o) => o.t), (n) => addOutline(new THREE.InstancedMesh(geo, leafMat, n), 0.025, { sway: true }), (mesh, j, n) => {
+      const { t, i } = list[n];
       const b = base[i];
       b.leaves = (mm) => { mesh.setMatrixAt(j, mm); mesh.instanceMatrix.needsUpdate = true; };
       mesh.setMatrixAt(j, m.compose(b.pos, b.q, s.setScalar(t.s)));
@@ -570,7 +572,6 @@ function buildTrees(group) {
       const h2 = ((t.z * 3.7) % 1 + 1) % 1;
       mesh.setColorAt(j, tintOf(k, h, h2));
     });
-    group.add(addOutline(mesh, 0.025, { sway: true }));
   });
   // 과일나무: 한 그루씩 따로 그려, 남은 과일 수에 맞는 모양으로 바꿔 끼운다 (잎 색은 미리 칠해 둠)
   const fruitMeshes = new Map(); // 나무 번호 → 잎+과일 덩어리
@@ -590,10 +591,11 @@ function buildTrees(group) {
   const set = (i, ang, ax) => {
     const b = base[i];
     wq.setFromAxisAngle(ax, ang * 0.3).multiply(b.q);
-    trunks.setMatrixAt(i, m.compose(b.pos, wq, s.setScalar(b.s)));
+    const { mesh, j } = trunkAt[i];
+    mesh.setMatrixAt(j, m.compose(b.pos, wq, s.setScalar(b.s)));
+    mesh.instanceMatrix.needsUpdate = true;
     wq.setFromAxisAngle(ax, ang).multiply(b.q);
     b.leaves(m.compose(b.pos, wq, s.setScalar(b.s)));
-    trunks.instanceMatrix.needsUpdate = true;
   };
   return {
     // 과일나무 k(WORLD.fruitTrees 순서)에 남은 과일 수만큼만 매단다
@@ -624,19 +626,21 @@ function buildRocks(group) {
     new THREE.IcosahedronGeometry(0.42, 1).scale(1, 0.75, 1).translate(0.5, 0.2, 0.3),
   ]);
   shadeByHeight(geo, 0, 0.75, 0.82, 1.05);
-  const rocks = new THREE.InstancedMesh(geo, toon(0xc4beb2, { vertexColors: true }), WORLD.rocks.length);
+  const rockMat = toon(0xc4beb2, { vertexColors: true });
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const Y = new THREE.Vector3(0, 1, 0);
   const sc = new THREE.Vector3();
   const pos = new THREE.Vector3();
-  const place = (i, ox = 0, oz = 0) => {
+  const put = (mesh, j, i, ox = 0, oz = 0) => {
     const r = WORLD.rocks[i];
     q.setFromAxisAngle(Y, r.rot);
-    rocks.setMatrixAt(i, m.compose(pos.set(r.x + ox, 0, r.z + oz), q, sc.setScalar(r.s)));
+    mesh.setMatrixAt(j, m.compose(pos.set(r.x + ox, 0, r.z + oz), q, sc.setScalar(r.s)));
+    mesh.instanceMatrix.needsUpdate = true;
   };
-  WORLD.rocks.forEach((_, i) => place(i));
-  group.add(addOutline(rocks));
+  // 칸으로 나눠 화면에 드는 칸만 그린다
+  const at = instancedCells(group, WORLD.rocks, (n) => addOutline(new THREE.InstancedMesh(geo, rockMat, n)), put);
+  const place = (i, ox, oz) => put(at[i].mesh, at[i].j, i, ox, oz);
   const active = new Map();
   const gone = new Set();
   return {
@@ -645,9 +649,7 @@ function buildRocks(group) {
     setGone(i, on) {
       if (on) gone.add(i); else gone.delete(i);
       active.delete(i);
-      if (on) rocks.setMatrixAt(i, m.makeScale(0, 0, 0));
-      else place(i);
-      rocks.instanceMatrix.needsUpdate = true;
+      if (on) { at[i].mesh.setMatrixAt(at[i].j, m.makeScale(0, 0, 0)); at[i].mesh.instanceMatrix.needsUpdate = true; } else place(i);
     },
     update(dt) {
       for (const [i, a] of active) {
@@ -655,7 +657,6 @@ function buildRocks(group) {
         const done = a.t > 0.5;
         const w = done ? 0 : 0.07 * a.power * Math.sin(a.t * 70) * Math.exp(-a.t * 9);
         place(i, a.dx * w, a.dz * w);
-        rocks.instanceMatrix.needsUpdate = true;
         if (done) active.delete(i);
       }
     },
@@ -708,16 +709,15 @@ function buildMeadow(group, { low = false } = {}) {
   }
   parts.push(paint(new THREE.SphereGeometry(0.05, 8, 5).scale(1, 0.75, 1).translate(0, 0.02, 0), 0xffd84a));
   const headGeo = mergeGeometries(parts).rotateX(0.3).translate(0, 0.31, 0);
-  const stems = new THREE.InstancedMesh(stemGeo, windToon(0x6aa84f), flowers.length);
-  const heads = new THREE.InstancedMesh(headGeo, windToon(0xffffff, { vertexColors: true }), flowers.length);
-  flowers.forEach((f, i) => {
-    q.setFromEuler(e.set(0, rand() * Math.PI * 2, 0));
-    m.compose(p.set(f.x, 0, f.z), q, s.setScalar(f.s));
-    stems.setMatrixAt(i, m);
-    heads.setMatrixAt(i, m);
-    heads.setColorAt(i, palette[f.c % palette.length]);
+  const stemMat = windToon(0x6aa84f);
+  const headMat = windToon(0xffffff, { vertexColors: true });
+  const turn = flowers.map(() => rand() * Math.PI * 2);
+  const pose = (i) => m.compose(p.set(flowers[i].x, 0, flowers[i].z), q.setFromEuler(e.set(0, turn[i], 0)), s.setScalar(flowers[i].s));
+  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(stemGeo, stemMat, n), (mesh, j, i) => mesh.setMatrixAt(j, pose(i)));
+  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(headGeo, headMat, n), (mesh, j, i) => {
+    mesh.setMatrixAt(j, pose(i));
+    mesh.setColorAt(j, palette[flowers[i].c % palette.length]);
   });
-  group.add(stems, heads);
 }
 
 
@@ -1839,6 +1839,7 @@ export function buildVillage(scene, { low = false } = {}) {
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t) {
       TIME.value = t;
+      cullCells();
       river.update(t);
       fountain(t);
       clouds(dt);

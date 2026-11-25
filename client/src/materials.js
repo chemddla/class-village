@@ -197,6 +197,40 @@ export function addOutline(mesh, thickness = 0.035, { sway = false } = {}) {
   return mesh;
 }
 
+// 인스턴스 수백 개를 한 덩어리로 두면 화면 밖 것까지 늘 다 그린다: CELL(m) 칸으로 나눠 칸마다 InstancedMesh 하나씩 두어 화면 밖 칸은 빠지게 한다.
+// items: [{ x, z }] · make(n): n개짜리 InstancedMesh (addOutline 을 둘러도 됨) · init(mesh, j, i): items[i] 를 mesh 의 j 번 자리에 놓기
+// 돌려주는 값: 번호 i → { mesh, j } (나중에 그 인스턴스의 자리를 바꿀 때)
+// shortcut: 둘레 공은 처음 놓은 자리로 한 번만 잡는다, 인스턴스를 멀리(수 m) 옮기게 되면 다시 잡아야 한다
+const CELL = 30; // 작을수록 삼각형은 줄고 그리기 횟수는 는다 (24m: 134만·453회, 40m: 162만·397회 — 광장에서 잰 값)
+const cellSpheres = [];
+export function instancedCells(group, items, make, init) {
+  const cells = new Map();
+  items.forEach((t, i) => {
+    const key = `${Math.floor(t.x / CELL)},${Math.floor(t.z / CELL)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(i);
+  });
+  const slot = [];
+  for (const ids of cells.values()) {
+    const mesh = make(ids.length);
+    ids.forEach((i, j) => { slot[i] = { mesh, j }; init(mesh, j, i); });
+    mesh.computeBoundingSphere();
+    cellSpheres.push({ s: mesh.boundingSphere, y: mesh.boundingSphere.center.y, r: mesh.boundingSphere.radius });
+    for (const o of mesh.children) if (o.isInstancedMesh) o.boundingSphere = mesh.boundingSphere; // 외곽선도 같은 공으로
+    group.add(mesh);
+  }
+  return slot;
+}
+// 매 장면: 그릴 때 둥근 지평선만큼 내려가므로(멀수록 많이, 십수 m까지) 둘레 공도 그만큼 아래로 늘려야 멀리서 내려와 화면에 드는 것이 빠지지 않는다
+export function cullCells() {
+  for (const { s, y, r } of cellSpheres) {
+    const { x, z } = s.center;
+    const drop = Math.max(curveDrop(x, z), curveDrop(x + r, z), curveDrop(x - r, z), curveDrop(x, z + r), curveDrop(x, z - r)) * 1.5; // 칸 안 가장 많이 내려가는 곳 (어림 + 여유)
+    s.center.y = y - drop / 2;
+    s.radius = r + drop / 2 + 1; // +1m: 바람에 흔들리는 잎·외곽선 두께
+  }
+}
+
 // 꼭짓점마다 색을 넣은 도형을 하나로 합칠 때 쓰는 재질 (캐릭터 등)
 export const vertexColorToon = toon(0xffffff, { vertexColors: true });
 
