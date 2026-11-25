@@ -1273,6 +1273,13 @@ addEventListener('keydown', (e) => {
 });
 for (const panel of [ui.inv, dexPanel, $id('look-panel')]) { // 인벤토리·도감·꾸미기 창: 제목줄을 잡고 끌면 옮겨진다 (칸 안 물건 끌기와 안 겹치게 제목줄만)
   let drag = null;
+  const key = `panelPos:${panel.id}`;
+  const saved = store.get(localStorage, key)?.split(',').map(Number);
+  if (saved?.length === 2 && saved.every(Number.isFinite)) { // 화면이 작아졌어도 제목줄은 보이게
+    panel.style.left = `${Math.max(0, Math.min(innerWidth - 80, saved[0]))}px`;
+    panel.style.top = `${Math.max(0, Math.min(innerHeight - 40, saved[1]))}px`;
+    panel.style.right = 'auto';
+  }
   panel.addEventListener('pointerdown', (e) => {
     if (e.target.closest('h3') !== panel.querySelector('h3')) return; // 맨 위 제목줄만
     e.preventDefault();
@@ -1288,7 +1295,11 @@ for (const panel of [ui.inv, dexPanel, $id('look-panel')]) { // 인벤토리·�
     s.top = `${Math.max(0, Math.min(innerHeight - 40, e.clientY - drag.dy))}px`;
     s.right = 'auto';
   });
-  const end = () => { drag = null; };
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    if (panel.style.left) store.set(localStorage, key, `${parseFloat(panel.style.left)},${parseFloat(panel.style.top)}`);
+  };
   panel.addEventListener('pointerup', end);
   panel.addEventListener('pointercancel', end);
 }
