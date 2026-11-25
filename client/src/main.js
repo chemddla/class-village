@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
 import { buildField } from './field.js';
@@ -42,7 +42,7 @@ const store = {
 
 // ── 3D 기본 설정 ──
 const canvas = document.getElementById('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW, powerPreference: 'high-performance', stencil: true }); // stencil: 삽으로 판 구덩이 속을 땅 아래로 그리기
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1 : 1.5)); // 태블릿 성능을 위해 최대 1.5배
 const scene = new THREE.Scene();
 // 하늘: 위는 맑은 하늘색, 지평선 쪽은 안개와 같은 파스텔색으로 번지는 그라데이션
@@ -396,6 +396,35 @@ function hitFx(char, action) {
       wearTool('net');
     }
     burst('leaf', 4, at(char.x + fx * 1.3, char.z + fz * 1.3, 0.4), { spread: Math.PI, power: 0.5 });
+  } else if (action === 'dig' || action === 'fill') {
+    // 삽날이 땅에 꽂히는 순간: (내 캐릭터면) 서버에 파기·덮기·바위 치기를 알린다. 흙(모래)·돌 조각이 튄다
+    const px = char.x + fx * DIG_AHEAD;
+    const pz = char.z + fz * DIG_AHEAD;
+    const pend = char === me ? local.shovel : null;
+    if (pend) {
+      local.shovel = null;
+      wearTool('shovel');
+      if (pend.dig) room?.send('dig', [toCm(pend.x), toCm(pend.z)]);
+      else if (pend.fill) room?.send('fill', pend.fill);
+      else if (pend.rock !== undefined) {
+        room?.send('smash', pend.rock);
+        village.shakeRock(pend.rock, fx, fz, 1.2);
+      }
+    }
+    const rock = action === 'fill' ? -1 : pend?.rock ?? (onField ? -1 : village.nearRock(px, pz, 0.5));
+    if (action === 'fill') {
+      // 덮기: 흙(모래)이 구덩이로 쏟아지며 먼지가 퐁
+      const h = pend?.fill ? holes.get(pend.fill) : null;
+      burst('dust', 12, at(h?.x ?? px, h?.z ?? pz, 0.05), { ring: true, power: 0.8 });
+      burst('wood', 5, at(h?.x ?? px, h?.z ?? pz, 0.15), { spread: Math.PI, power: 0.4 }); // 흙덩이
+    } else if (rock >= 0) {
+      const r = WORLD.rocks[rock];
+      burst('stone', 9, at(r.x - fx * r.r, r.z - fz * r.r, 0.4 * r.s), { dir: [-fx, -fz], spread: 1.6 });
+      burst('dust', 5, at(r.x - fx * r.r, r.z - fz * r.r, 0.3), { spread: Math.PI, power: 0.6 });
+    } else {
+      burst('dust', 10, at(px, pz, 0.08), { spread: Math.PI, power: 0.8 });
+      burst('wood', 4, at(px, pz, 0.1), { spread: Math.PI, power: 0.5 }); // 흙덩이
+    }
   } else if (action === 'angry') {
     // 화나서 발을 구르는 순간 발밑에 먼지가 퐁
     burst('dust', 8, at(char.x, char.z, 0.05), { ring: true, power: 0.7 });
@@ -409,9 +438,10 @@ function hitFx(char, action) {
     const pend = char === me && local.picked?.grab !== undefined ? local.picked : null;
     if (pend) {
       local.picked = null;
-      const w = WOOD_BY_ID[drops.get(pend.grab)?.f];
+      const f = drops.get(pend.grab)?.f;
+      const w = WOOD_BY_ID[f] ?? STONE_BY_ID[f];
       room?.send('grab', pend.grab);
-      if (w) toast(`🪵 ${eul(w.name)} 주웠다! ${stars(w.rarity)} ${RARITY[w.rarity].name}`);
+      if (w) toast(`${STONE_BY_ID[f] ? '🪨' : '🪵'} ${eul(w.name)} 주웠다! ${stars(w.rarity)} ${RARITY[w.rarity].name}`);
     }
     burst('sparkle', 8, at(char.x + fx * 0.45, char.z + fz * 0.45, 0.25), { spread: Math.PI });
   } else if (action === 'gather') {
@@ -527,9 +557,16 @@ const NET_ICON = `<svg class="ico" viewBox="0 0 32 32" aria-hidden="true">
 <path d="M22.5 20.6 Q24.75 17.6 27 20.6" stroke="#8a8f96" stroke-width="1.1" fill="none"/>
 <path d="M23 29 Q24 25.5 23.5 24 M25.5 29 Q26.5 26 27.2 25" stroke="#7fbf4f" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 </svg>`;
-const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹', net: NET_ICON, staff: '🪄', dagger: '🔪' };
-const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', net: NET_ICON };
-const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', net: '곤충' };
+// 삽 아이콘 (그림 문자에 없어서 직접 그림): 비스듬한 나무 자루 + D자 손잡이 + 쇠 삽날
+const SHOVEL_ICON = `<svg class="ico" viewBox="0 0 32 32" aria-hidden="true">
+<path d="M8.5 8.5 L20 20" stroke="#b07a45" stroke-width="2.8" stroke-linecap="round"/>
+<path d="M4.2 7.6 Q4 4 7.6 4.2 L9.6 6.2 L6.2 9.6 Z" fill="none" stroke="#6e4526" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M19 17.5 L23.5 13 Q29.5 15.5 29 22 Q28.5 28.5 22 29 Q15.5 29.5 13 23.5 L17.5 19 Z" fill="#b9c2ca" stroke="#6f7c86" stroke-width="1.4" stroke-linejoin="round"/>
+<path d="M21 21 L26 26" stroke="#e7edf2" stroke-width="1.6" stroke-linecap="round"/>
+</svg>`;
+const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSword: '🗡️', bow: '🏹', net: NET_ICON, staff: '🪄', dagger: '🔪', shovel: SHOVEL_ICON };
+const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', net: NET_ICON, shovel: SHOVEL_ICON };
+const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', net: '곤충', shovel: '삽질' };
 const QUICK_SLOTS = 4;
 const FRUIT_ICON = { peach: '🍑', apple: '🍎', orange: '🍊', pear: '🍐' };
 const bag = new Map(); // 내 가방에 든 과일: 이름 → 개수 (서버가 정함)
@@ -559,6 +596,7 @@ const BOW = TOOLS.indexOf('bow');
 const NET = TOOLS.indexOf('net');
 const STAFF = TOOLS.indexOf('staff');
 const DAGGER = TOOLS.indexOf('dagger');
+const SHOVEL = TOOLS.indexOf('shovel');
 // 생활 도구 내구도: 쓸 때마다 1씩 닳고 0이 되면 부서져 가방에서 사라진다 (이 브라우저에 저장. 대장간에서 새로 만든다)
 const WEAR_TOOLS = Object.keys(TOOL_DURABILITY); // axe · rod · net
 local.dura = (() => {
@@ -598,7 +636,7 @@ function breakTool(name) {
   renderQuick();
   renderInv();
 }
-let invItems = [1, 2, 4, NET, STAFF, DAGGER].filter((t) => !toolBroken(TOOLS[t])); // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채·나무 단검은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
+let invItems = [1, 2, 4, NET, STAFF, DAGGER, SHOVEL].filter((t) => !toolBroken(TOOLS[t])); // 가방에 든 장비 번호 (맨손은 빼고). 목검(4)·잠자리채·나무 단검은 기본, 테스트 서버에선 나무 몽둥이(3)를 하나 더 줌
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
 let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이·하악냥)
@@ -668,7 +706,7 @@ if (!store.get(localStorage, 'daggerGiven')) {
   if (!quick.includes(TOOLS.indexOf('dagger')) && empty >= 0) { quick[empty] = TOOLS.indexOf('dagger'); saveQuick(); }
 }
 // 생활 도구(도끼·낚싯대)는 따로 생활 도구 칸에 있고, 퀵슬롯(1~4)에는 무기만 넣는다
-const LIFE_ITEMS = [TOOLS.indexOf('axe'), TOOLS.indexOf('rod'), TOOLS.indexOf('net')];
+const LIFE_ITEMS = [TOOLS.indexOf('axe'), TOOLS.indexOf('rod'), TOOLS.indexOf('net'), TOOLS.indexOf('shovel')];
 const isLifeItem = (t) => LIFE_ITEMS.includes(t);
 const slotItem = (i) => (quick[i] !== null && invItems.includes(quick[i]) && !isLifeItem(quick[i]) ? quick[i] : null); // 가방에 없는 장비·생활 도구는 빈칸으로 본다
 
@@ -887,6 +925,10 @@ function renderInv() {
     const color = `#${f.color.toString(16).padStart(6, '0')}`;
     add(`fish:${f.id}`, info(cell('🐟', { count: bag.get(f.id), title: `${f.name} ×${bag.get(f.id)}`, color }),
       `${f.name} ×${bag.get(f.id)} (${RARITY[f.rarity].name}): 희귀할수록 비싸게 팔 수 있어요`));
+  }
+  for (const st of STONES.filter((x) => bag.get(x.id) > 0)) {
+    add(`stone:${st.id}`, info(cell('🪨', { count: bag.get(st.id), title: `${st.name} ×${bag.get(st.id)}`, color: `#${st.color.toString(16).padStart(6, '0')}` }),
+      `${st.name} ×${bag.get(st.id)} (${RARITY[st.rarity].name}): 바위를 삽으로 깨서 얻었어요. 대장간에서 도구를 만드는 재료예요`));
   }
   for (const w of WOODS.filter((x) => bag.get(x.id) > 0)) {
     const color = `#${w.inner.toString(16).padStart(6, '0')}`;
@@ -1352,14 +1394,47 @@ function drawBow() {
   local.actLeft = actTime(ANIM.BOW_AIM);
 }
 
+// ── 삽: 앞 땅(DIG_AHEAD)을 보고 할 일을 고른다. 가까이 구덩이가 있으면 덮고, 앞에 바위가 있으면 치고(여러 번 치면 깨짐),
+// 아니면 풀밭·모래를 판다. 실제 파기·덮기·치기는 삽날이 땅에 꽂히는 순간(hitFx 'dig')에 서버로 보낸다
+const holes = new Map(); // 번호 → { x, z, k } (서버가 정함)
+const HOLE_BLOCK = DIG_HOLE.r * 0.8; // 구덩이가 막는 둘레 (테두리 흙은 밟을 수 있게 구멍보다 조금 작게)
+const HOLE_JUMP_AFTER = 0.3; // 구덩이 앞에서 방향키를 이만큼(초) 누르고 있으면 뛰어 넘는다
+function shovelTarget() {
+  const fx = Math.sin(me.targetRot);
+  const fz = Math.cos(me.targetRot);
+  const ax = me.x + fx * DIG_AHEAD;
+  const az = me.z + fz * DIG_AHEAD;
+  let fill = null;
+  let best = DIG_HOLE.r + 0.35;
+  for (const [id, h] of holes) {
+    const d = Math.min(Math.hypot(h.x - ax, h.z - az), Math.hypot(h.x - me.x, h.z - me.z) - 0.2);
+    if (d < best) { best = d; fill = { fill: id, x: h.x, z: h.z }; }
+  }
+  if (fill) return fill;
+  if (!onField) {
+    const rock = village.nearRock(ax, az, 0.5);
+    if (rock >= 0) return { rock, x: WORLD.rocks[rock].x, z: WORLD.rocks[rock].z };
+  }
+  return groundKind(ax, az) ? { dig: true, x: ax, z: az } : null;
+}
+function useShovel() {
+  if (local.actLeft > 0 || !me) return;
+  if (toolBroken('shovel')) { toast('삽이 부서져서 쓸 수 없어요. 대장간에서 새로 만들어야 해요'); return; }
+  const t = shovelTarget();
+  if (!t) { toast('여기는 팔 수 없어요. 풀밭이나 모래사장에서 G를 눌러 보세요'); return; }
+  if (t.fill || t.rock !== undefined) me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 덮을 구덩이·칠 바위 쪽으로 돌아섬
+  local.shovel = t;
+  startAct(t.fill ? ANIM.FILL : ANIM.DIG); // 덮을 때는 흙을 긁어 넣고 톡톡 다지는 동작
+}
+
 function startAct(a) {
   if (local.actLeft > 0) return; // 하던 동작이 끝나야 다음 동작
   local.act = a;
   local.actLeft = actTime(a);
 }
 
-// Z 는 공격만 한다. 무기를 들지 않았으면(맨손·도끼·낚싯대·잠자리채) 아무것도 하지 않는다 (생활은 G로만)
-const NOT_WEAPON = new Set(['none', 'axe', 'rod', 'net']);
+// Z 는 공격만 한다. 무기를 들지 않았으면(맨손·도끼·낚싯대·잠자리채·삽) 아무것도 하지 않는다 (생활은 G로만)
+const NOT_WEAPON = new Set(['none', 'axe', 'rod', 'net', 'shovel']);
 function clickAction() {
   if (local.fishing || NOT_WEAPON.has(TOOLS[local.tool])) return null;
   return 'attack';
@@ -1517,7 +1592,7 @@ const input = createInput({
       const t = d ? null : findFruit(me.x, me.z);
       if (!d && !t) { toast(`${FRUIT_NAMES[VILLAGE_FRUIT]}가 열린 과일나무에 바짝 붙어서 F를 눌러 보세요`); return; }
       const item = d && drops.get(d.id)?.f;
-      if (d && (bag.get(item) ?? 0) >= BAG_MAX) { toast(`가방에 ${WOOD_BY_ID[item]?.name ?? FRUIT_NAMES[item] ?? '이것'}이(가) 가득 찼어요`); return; }
+      if (d && (bag.get(item) ?? 0) >= BAG_MAX) { toast(`가방에 ${WOOD_BY_ID[item]?.name ?? STONE_BY_ID[item]?.name ?? FRUIT_NAMES[item] ?? '이것'}이(가) 가득 찼어요`); return; }
       const aim = d ?? t;
       local.picked = d ? { grab: d.id, x: d.x, z: d.z } : { shake: t.pick, x: t.x, z: t.z };
       holdTool(0);
@@ -1533,6 +1608,7 @@ const input = createInput({
       if (local.actLeft > 0) return;
       // 잠자리채를 들고 있으면 G = 바라보는 쪽으로 휘두르기 (곤충이 없어도)
       if (TOOLS[local.equip] === 'net') { swingNet(null); return; }
+      if (TOOLS[local.equip] === 'shovel') { useShovel(); return; } // 삽을 들고 있으면 G = 앞 땅 파기·구덩이 덮기·바위 치기
       const t = findLife(me.x, me.z, lifeSpots);
       if (!t) { toast('곤충·나무·물가·꽃 가까이에서 G를 눌러 보세요'); return; }
       if (toolBroken(t.tool)) { toast(`${iga(EQUIPMENT[t.tool].label)} 부서져서 쓸 수 없어요. 대장간에서 새로 만들어야 해요`); return; }
@@ -1684,7 +1760,7 @@ function attach(r) {
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
     if (free) { for (const k of WEAR_TOOLS) local.dura[k] = TOOL_DURABILITY[k]; saveDura(); } // 테스트 서버: 들어올 때마다 새 생활 도구 (아직 대장간이 없음)
-    setInvItems(free ? [1, 2, 3, 4, BOW, NET, STAFF, DAGGER] : [1, 2, 4, NET, STAFF, DAGGER]);
+    setInvItems(free ? [1, 2, 3, 4, BOW, NET, STAFF, DAGGER, SHOVEL] : [1, 2, 4, NET, STAFF, DAGGER, SHOVEL]);
     // 활을 처음 받으면 빈 퀵슬롯에 넣어 준다 (한 번만). 테스트 서버에서는 들어올 때마다 화살통을 가득 채워 준다 (아직 화살을 얻는 곳이 없음)
     if (free && !store.get(localStorage, 'bowGiven')) {
       store.set(localStorage, 'bowGiven', '1');
@@ -1726,6 +1802,33 @@ function attach(r) {
     }
   });
   $(r.state).drops.onRemove((_, id) => { drops.delete(id); village.removeDrop(id); });
+  // 삽으로 판 구덩이 · 깨뜨린 바위
+  for (const id of holes.keys()) village.holes.remove(id);
+  holes.clear();
+  $(r.state).holes.onAdd((h, id) => {
+    const x = fromCm(h.x);
+    const z = fromCm(h.z);
+    holes.set(id, { x, z, k: h.k });
+    village.holes.add(id, x, z, h.k, dropsReady);
+  });
+  $(r.state).holes.onRemove((_, id) => { holes.delete(id); village.holes.remove(id); });
+  for (const i of ROCKS_GONE) village.setRockGone(i, false);
+  ROCKS_GONE.clear();
+  $(r.state).rocksGone.onAdd((_, key) => {
+    const i = Number(key);
+    ROCKS_GONE.add(i);
+    village.setRockGone(i, true);
+    if (dropsReady) { // 지금 막 깨졌으면 와르르
+      const rk = WORLD.rocks[i];
+      FX.burst('stone', 18, rk.x, 0.5 * rk.s, rk.z, { floor: 0, spread: Math.PI, power: 1.2 });
+      FX.burst('dust', 12, rk.x, 0.3, rk.z, { floor: 0, ring: true, power: 1.1 });
+    }
+  });
+  $(r.state).rocksGone.onRemove((_, key) => { ROCKS_GONE.delete(Number(key)); village.setRockGone(Number(key), false); });
+  r.onMessage('rockHit', ([sid, i, hp]) => {
+    if (sid !== r.sessionId) village.shakeRock(i, 0, 0, 1);
+    else if (hp > 0) toast(`🪨 바위에 금이 갔어요! ${hp}번 더 치면 깨져요`);
+  });
 
   // 곤충: 서버가 정한 자리로 그리고, 놀라 날아가거나(bugGone) 잡히면(bugCaught) 없앤다
   for (const id of bugSpots.keys()) village.bugs.remove(id, 'caught');
@@ -2018,9 +2121,23 @@ function updateMe(dt) {
     const extra = lifeSpots.length ? [...LIFE_COLLIDERS] : [];
     for (const m of hereMonsters()) extra.push(...m.colliders()); // 날개콩은 지나갈 수 없음
     for (const { char } of others.values()) extra.push({ x: char.x, z: char.z, r: PLAYER_RADIUS });
+    // 삽으로 판 구덩이는 걸어서 못 지나간다 (뛰어오른 동안에는 넘어간다)
+    const airborne = AIRBORNE.has(local.act) && local.actLeft > 0;
+    if (!airborne) for (const h of holes.values()) extra.push({ x: h.x, z: h.z, r: HOLE_BLOCK });
     const [nx, nz] = resolveMove(me.x, me.z, me.x + wx * speed * dt, me.z + wz * speed * dt, extra);
+    // 구덩이 앞에서 방향키를 계속 누르고 있으면 폴짝 뛰어 넘는다
+    // (구덩이에 바짝 붙어 있고, 누르는 방향이 구덩이 쪽(좌우 60도 안)이면 미는 중으로 본다. 비스듬히 밀어도 넘는다)
+    const wl = Math.hypot(wx, wz) || 1;
+    const intoHole = !airborne && [...holes.values()].some((h) => {
+      const dx = h.x - me.x;
+      const dz = h.z - me.z;
+      const d = Math.hypot(dx, dz);
+      return d < HOLE_BLOCK + PLAYER_RADIUS + 0.15 && (dx * wx + dz * wz) / (d * wl) > 0.5;
+    });
+    local.holePush = intoHole ? (local.holePush ?? 0) + dt : 0;
     me.setPose(nx, nz, Math.atan2(wx, wz));
     anim = inp.run ? ANIM.RUN : ANIM.WALK;
+    if (local.holePush > HOLE_JUMP_AFTER && local.actLeft <= 0) { local.holePush = 0; startAct(ANIM.JUMP); }
     if (local.fishing && local.fishing.phase !== 'reeling') stopFishing(); // 움직이면 낚시를 그만둠
     if (!AIRBORNE.has(local.act)) local.actLeft = 0; // 움직이면 감정 표현·생활 행동은 멈춤 (점프는 뛰면서도 가능)
     else if (local.actLeft > 0) {
@@ -2114,7 +2231,7 @@ function updateMe(dt) {
   local.lifeTimer -= dt;
   if (local.lifeTimer <= 0) {
     local.lifeTimer = 0.2;
-    showLife(TOOLS[local.equip] === 'net' ? 'net' : findLife(me.x, me.z, lifeSpots)?.tool ?? null); // 잠자리채를 들면 G = 휘두르기
+    showLife(TOOLS[local.equip] === 'net' || TOOLS[local.equip] === 'shovel' ? TOOLS[local.equip] : findLife(me.x, me.z, lifeSpots)?.tool ?? null); // 잠자리채를 들면 G = 휘두르기
     const grab = nearDrop(me.x, me.z);
     const shake = !grab && findFruit(me.x, me.z);
     ui.pickBtn.classList.toggle('hidden', !grab && !shake);
