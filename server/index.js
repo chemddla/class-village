@@ -7,7 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
-  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS,
+  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
   PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
@@ -57,12 +57,21 @@ const Bug = schema({
   f: 'uint8', // 1 이면 날거나 뛰는 중 (날개짓·다리 동작)
 }, 'Bug');
 
+// 삽으로 판 구덩이 (누구나 덮을 수 있음)
+const Hole = schema({
+  x: 'int16', // cm
+  z: 'int16', // cm
+  k: 'string', // 'grass' 풀밭(흙) · 'sand' 모래
+}, 'Hole');
+
 const VillageState = schema({
   players: { map: Player },
   freeLook: 'boolean',
   fruitLeft: ['uint8'], // 과일나무마다 남은 과일 개수 (WORLD.fruitTrees 순서)
   drops: { map: Drop }, // 땅에 떨어진 과일·목재: 번호 → 자리
   bugs: { map: Bug }, // 곤충: 번호 → 종류·자리
+  holes: { map: Hole }, // 삽으로 판 구덩이: 번호 → 자리
+  rocksGone: { map: 'uint8' }, // 삽으로 깨뜨려 지금 없는 바위: 바위 번호 → 1
 }, 'VillageState');
 
 // ── 전송량 측정 ──
@@ -93,6 +102,8 @@ class VillageRoom extends Room {
     this.state.freeLook = FREE_LOOK;
     this.state.fruitLeft = new ArraySchema(...WORLD.fruitTrees.map(() => FRUIT_MAX));
     if (!this.state.drops) this.state.drops = new MapSchema();
+    this.state.holes = new MapSchema();
+    this.state.rocksGone = new MapSchema();
     if (!this.state.bugs) this.state.bugs = new MapSchema();
     // 학생마다 지금 움직이는 빠르기 (곤충이 놀라는지 볼 때 씀): 0.4초 넘게 움직임이 없으면 멈춘 것으로 본다
     this.speeds = new Map();
@@ -290,6 +301,74 @@ class VillageRoom extends Room {
       }
     });
 
+    // ── 삽 ──
+    // 파기: [x, z](cm). 몸 가까이의 풀밭·모래만, 다른 구덩이와 겹치지 않게. 너무 많으면 오래된 것부터 메워진다
+    // 덮기: [구덩이 번호]. 바위 치기: [바위 번호]. ROCK_HP 번 치면 깨져 돌멩이가 떨어지고, ROCK_REGROW 초 뒤 다시 생긴다
+    this.holeId = 0;
+    this.rockHp = new Map(); // 바위 번호 → 남은 체력
+    const shovelReady = (client) => {
+      const now = Date.now();
+      if (now - (client.userData?.shovelAt ?? 0) < 450) return false; // 너무 빠른 연속 삽질은 무시
+      client.userData = { ...client.userData, shovelAt: now };
+      return true;
+    };
+    this.onMessage('dig', (client, at) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !Array.isArray(at) || !shovelReady(client)) return;
+      const x = Number(at[0]) / 100;
+      const z = Number(at[1]) / 100;
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+      if (Math.hypot(x - fromCm(p.x), z - fromCm(p.z)) > DIG_HOLE.reach) return;
+      const k = groundKind(x, z);
+      if (!k) return;
+      for (const h of this.state.holes.values()) if (Math.hypot(fromCm(h.x) - x, fromCm(h.z) - z) < DIG_HOLE.r * 2) return;
+      if (this.state.holes.size >= DIG_HOLE.max) this.state.holes.delete(this.state.holes.keys().next().value);
+      const h = new Hole();
+      h.x = toCm(x);
+      h.z = toCm(z);
+      h.k = k;
+      this.state.holes.set(String(++this.holeId), h);
+    });
+    this.onMessage('fill', (client, id) => {
+      const p = this.state.players.get(client.sessionId);
+      const h = this.state.holes.get(String(id));
+      if (!p || !h || !shovelReady(client)) return;
+      if (Math.hypot(fromCm(h.x) - fromCm(p.x), fromCm(h.z) - fromCm(p.z)) > DIG_HOLE.reach + 0.3) return;
+      this.state.holes.delete(String(id));
+    });
+    this.onMessage('smash', (client, i) => {
+      const p = this.state.players.get(client.sessionId);
+      i = Number(i);
+      const r = WORLD.rocks[i];
+      if (!p || !r || this.state.rocksGone.has(String(i)) || !shovelReady(client)) return;
+      if (Math.hypot(r.x - fromCm(p.x), r.z - fromCm(p.z)) > r.r + DIG_HOLE.reach) return;
+      const hp = (this.rockHp.get(i) ?? ROCK_HP) - 1;
+      this.broadcast('rockHit', [client.sessionId, i, hp]); // 모두의 화면에서 바위가 흔들리고 조각이 튄다
+      if (hp > 0) { this.rockHp.set(i, hp); return; }
+      // 깨짐: 바위가 사라지고 그 자리에 돌이 두세 개 (가끔 반짝이는 돌)
+      this.rockHp.delete(i);
+      this.state.rocksGone.set(String(i), 1);
+      ROCKS_GONE.add(i);
+      const now = Date.now();
+      const n = 2 + (Math.random() < 0.4 ? 1 : 0);
+      for (let k = 0; k < n; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.random() * r.r * 0.8;
+        const dr = new Drop();
+        dr.x = toCm(r.x + Math.cos(a) * d);
+        dr.z = toCm(r.z + Math.sin(a) * d);
+        dr.f = Math.random() < 0.15 ? 'shinystone' : 'stone';
+        dr.k = -1;
+        const id = String(++this.dropId);
+        this.state.drops.set(id, dr);
+        this.dropAt.set(id, now + DROP_LIFE * 1000);
+      }
+      this.clock.setTimeout(() => {
+        this.state.rocksGone.delete(String(i));
+        ROCKS_GONE.delete(i);
+      }, ROCK_REGROW * 1000);
+    });
+
     // 떨어진 과일·목재 줍기: [번호]. 가까이 있을 때만 가방에 넣는다
     this.onMessage('grab', (client, id) => {
       const p = this.state.players.get(client.sessionId);
@@ -333,7 +412,7 @@ class VillageRoom extends Room {
     this.onMessage('say', (client, text) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || typeof text !== 'string') return;
-      const t = text.replace(/[ -]/g, '').trim().slice(0, 40);
+      const t = text.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40); // 줄바꿈 등 제어 문자는 뺀다
       if (!t) return;
       const now = Date.now();
       if (now - (client.userData?.sayAt ?? 0) < 700) return;

@@ -49,10 +49,12 @@ export const ANIM = {
   DAGGER5: 53, // 나무 단검 4타: 내려찍은 자세에서 그대로 올려 베기 (DAGGER4 는 4타에 이어 치는 1타)
   DAGGER_DASH2: 54, // 나무 단검 대시 공격 2타 (팔꿈치를 펴며 되베기)
   STAFF_CHARGE: 55, STAFF_FIRE: 56, STAFF_BIG: 57, // 마법 지팡이: 꾹 눌러 기 모으기 · 다 모으기 전에 떼어 보통 볼 쏘기 · 다 모아 큰 볼 쏘기
+  DIG: 58, // 삽질: 삽을 들어 앞 땅에 꽂았다가 흙을 떠서 옆으로 (구덩이 파기·바위 깨기)
+  FILL: 59, // 구덩이 덮기: 옆에 쌓인 흙을 삽으로 긁어 구덩이에 밀어 넣고, 삽 등으로 톡톡 다진다
 };
 export const ANIM_MAX = Math.max(...Object.values(ANIM));
 // 손에 드는 도구 (번호로 주고받음). 맨손은 채집
-export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', 'staff', 'dagger']; // net: 잠자리채(+ 왼손 채집통), dagger: 나무 단검
+export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', 'staff', 'dagger', 'shovel']; // net: 잠자리채(+ 왼손 채집통), dagger: 나무 단검, shovel: 삽
 // 활: 화살통에 넣고 다니는 화살 최대 개수 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
 export const ARROW = { max: 30, speed: 24, range: 20 };
 // 마법 지팡이: 에너지 볼 한 발에 드는 마나 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
@@ -330,7 +332,7 @@ export function generateWorld(seed = 20261118) {
     if (ok(x, z, 0.3, all) && !nearRiver(x, z, RIVER_BANK_CLEAR)) flowers.push({ x, z, c: Math.floor(rand() * 4), s: 0.7 + rand() * 0.5 });
   }
 
-  const colliders = [...trees, ...rocks].map((o) => ({ x: o.x, z: o.z, r: o.r }));
+  const colliders = [...trees.map((o) => ({ x: o.x, z: o.z, r: o.r })), ...rocks.map((o, i) => ({ x: o.x, z: o.z, r: o.r, rock: i }))];
   // 예정지 표지판 기둥·판
   for (const p of PLOTS) colliders.push({ x: p.x, z: p.z + p.d / 2 + 0.25, r: 0.35 });
   // 광장 분수·벤치·가로등
@@ -432,6 +434,7 @@ export function isBlocked(x, z, radius = PLAYER_RADIUS) {
   const onBridge = Math.abs(x - BRIDGE.x) < BRIDGE.halfWidth - radius * 0.5;
   if (!onBridge && Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + radius * 0.3) return true;
   for (const c of WORLD.colliders) {
+    if (c.rock !== undefined && ROCKS_GONE.has(c.rock)) continue; // 삽으로 깨뜨린 바위는 지나갈 수 있다
     const dx = x - c.x;
     const dz = z - c.z;
     const rr = c.r + radius;
@@ -439,6 +442,8 @@ export function isBlocked(x, z, radius = PLAYER_RADIUS) {
   }
   return false;
 }
+// 삽으로 깨뜨려 지금 없는 마을 바위 번호 (서버가 정하고, 화면은 서버 상태로 채운다)
+export const ROCKS_GONE = new Set();
 
 // 테스트 서버 광장 요소의 부딪힘 원
 export const LIFE_COLLIDERS = LIFE_SPOTS.map((s) => ({ x: s.x, z: s.z, r: 0.3 }));
@@ -585,7 +590,7 @@ export const WOOD_ODDS = { common: 72, uncommon: 20, rare: 7, legend: 1 }; // �
 export const WOOD_STOCK = 5; // 나무 한 그루에서 연달아 나오는 목재 수 (다 나오면 잠시 쉼)
 export const WOOD_REGROW = 40; // 쉰 나무에 목재가 하나씩 다시 차는 시간 (초)
 // 생활 도구 내구도: 이만큼 쓰면 부서진다 (대장간에서 새로 만든다). 도끼는 한 번 찍을 때 · 낚싯대는 한 번 던질 때 · 잠자리채는 한 번 휘두를 때 1씩 닳는다
-export const TOOL_DURABILITY = { axe: 40, rod: 30, net: 50 }; // 기본 도구라 금방 닳는다 (대장간에서 더 튼튼한 도구로 바꾼다)
+export const TOOL_DURABILITY = { axe: 40, rod: 30, net: 50, shovel: 40 }; // 기본 도구라 금방 닳는다 (대장간에서 더 튼튼한 도구로 바꾼다)
 export const CHOP_REACH = 2.2; // 나무 둘레에서 이만큼 안이면 목재가 나온다 (m)
 // 나무 번호 → 보이는 모양 (village.js 의 나무 종류와 같게). 광장 체험용 나무(번호 < 0)는 둥근 나무
 export function treeWoodKind(i) {
@@ -612,7 +617,7 @@ const FOUNTAIN_TIERS = { low: { y: 1.0, r: 0.95 }, top: { y: 1.62, r: 0.5 } }; /
 function buildSolids(trees, rocks, extra) {
   return [
     ...trees.map((t, i) => ({ x: t.x, z: t.z, r: 0.24 * t.s, h: 1.6 * t.s, kind: 'tree', i })),
-    ...rocks.map((o) => ({ x: o.x, z: o.z, r: o.r * 0.9, h: 0.9 * o.r, kind: 'rock' })),
+    ...rocks.map((o, i) => ({ x: o.x, z: o.z, r: o.r * 0.9, h: 0.9 * o.r, kind: 'rock', i })),
     ...extra,
   ];
 }
@@ -662,9 +667,30 @@ function solidDist(s, x, z) {
 export function solidAt(x, y, z, extra = [], pad = 0) {
   for (const list of [inField(x, z) ? FIELD_SOLIDS : VILLAGE_SOLIDS, extra]) {
     for (const s of list) {
+      if (s.kind === 'rock' && list === VILLAGE_SOLIDS && ROCKS_GONE.has(s.i)) continue; // 깨뜨린 바위
       if (y < (s.y0 ?? 0) - pad || y > s.h + pad) continue;
       if (solidDist(s, x, z) < s.r + pad) return s;
     }
   }
   return null;
+}
+
+// ── 삽: 풀밭·모래를 파서 구덩이를 만들고(다시 누르면 덮는다), 바위는 여러 번 쳐서 깨뜨린다 ──
+export const DIG_HOLE = { r: 0.42, max: 80, reach: 2.4 }; // 구덩이 반지름 · 마을에 있을 수 있는 최대 수(넘으면 오래된 것부터 메워짐) · 팔 수 있는 거리
+export const DIG_AHEAD = 0.9; // 삽날이 땅에 닿는 자리: 몸 앞으로 이만큼 (m, actions.js dig 를 재어 둔 값)
+export const ROCK_HP = 4; // 바위를 이만큼 치면 깨진다
+export const ROCK_REGROW = 240; // 깨진 바위가 다시 생기는 시간 (초)
+// 바위가 깨지면 나오는 돌 (대장간 재료): 대부분 돌멩이, 가끔 반짝이는 돌
+export const STONES = [
+  { id: 'stone', name: '돌멩이', rarity: 'common', color: 0xb3ada2, price: 4 },
+  { id: 'shinystone', name: '반짝이는 돌', rarity: 'uncommon', color: 0x9fd3e6, price: 30 },
+];
+export const STONE_BY_ID = Object.fromEntries(STONES.map((s) => [s.id, s]));
+// 그 자리를 팔 수 있는지: 'grass' 풀밭(흙) · 'sand' 모래 · null 못 팜 (물·광장 돌바닥·예정지·나무·바위 둘레)
+export function groundKind(x, z) {
+  if (inField(x, z)) return isBlocked(x, z, 0.35) ? null : 'grass';
+  if (isBlocked(x, z, 0.35)) return null;
+  if (Math.hypot(x - PLAZA.fountain.x, z - PLAZA.fountain.z) < PLAZA.r + 0.3) return null; // 광장 돌바닥
+  for (const p of PLOTS) if (Math.abs(x - p.x) < p.w / 2 + 0.2 && Math.abs(z - p.z) < p.d / 2 + 0.2) return null; // 건물 예정지
+  return shoreN(x, z) - islandN(x, z) < BEACH.grass ? 'sand' : 'grass';
 }

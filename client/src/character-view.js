@@ -130,7 +130,7 @@ scene.add(mon.root);
 
 // ── 패널 데이터: 버튼 목록은 전부 여기서 만든다 ──
 const ACTION_LABELS = { idle: '대기', walk: '걷기', run: '달리기', jump: '점프', flip: '공중제비', wave: '인사', cheer: '환호' };
-const LIFE_ACTIONS = { gather: '채집', treeShake: '나무 흔들기', pocket: '과일 줍기', netSwing: '잠자리채', netHigh: '잠자리채(높이)', netLow: '잠자리채(낮게)', chop: '벌목', chopAgain: '벌목(이어 찍기)', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
+const LIFE_ACTIONS = { gather: '채집', treeShake: '나무 흔들기', pocket: '과일 줍기', dig: '삽질', fill: '구덩이 덮기', netSwing: '잠자리채', netHigh: '잠자리채(높이)', netLow: '잠자리채(낮게)', chop: '벌목', chopAgain: '벌목(이어 찍기)', fish: '낚시(연속)', fishCast: '던지기', fishWait: '입질 대기', fishCatch: '낚아채기' };
 const COMBAT_ACTIONS = {
   slash1: '기본 베기', slash2: '연속 횡베기', smash: '강공격 내려찍기', guard: '방어', bowShot: '활 쏘기',
   castSpell: '마법 시전', hit: '피격', faint: '기절',
