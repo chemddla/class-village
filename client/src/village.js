@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   WORLD, HALF, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, RIVER_BANK_CLEAR, riverCenterZ,
   islandN, shoreN, islandRadius, BEACH, FISH, FISH_APPROACH, LURE_HESITATE, NIBBLE_MS, shadowLen, rollFish, NOTICE,
-  VILLAGE_FRUIT, FRUIT_MAX, PORTALS, WOOD_BY_ID, LIFE_SPOTS,
+  VILLAGE_FRUIT, FRUIT_MAX, PORTALS, WOOD_BY_ID, LIFE_SPOTS, STONE_BY_ID, DIG_HOLE, ROCKS_GONE,
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
@@ -638,8 +638,17 @@ function buildRocks(group) {
   WORLD.rocks.forEach((_, i) => place(i));
   group.add(addOutline(rocks));
   const active = new Map();
+  const gone = new Set();
   return {
-    shake(i, dx, dz, power = 1) { active.set(i, { t: 0, dx, dz, power }); },
+    shake(i, dx, dz, power = 1) { if (!gone.has(i)) active.set(i, { t: 0, dx, dz, power }); },
+    // 삽으로 깨뜨린 바위: 없앴다가(크기 0) 다시 생기면 되돌린다
+    setGone(i, on) {
+      if (on) gone.add(i); else gone.delete(i);
+      active.delete(i);
+      if (on) rocks.setMatrixAt(i, m.makeScale(0, 0, 0));
+      else place(i);
+      rocks.instanceMatrix.needsUpdate = true;
+    },
     update(dt) {
       for (const [i, a] of active) {
         a.t += dt;
@@ -1037,6 +1046,20 @@ function woodParts(w) {
 // 땅에 떨어진 물건 모양: 과일 또는 목재 (땅 위에 놓이게)
 const groundItemCache = new Map();
 function groundItem(f) {
+  const st = STONE_BY_ID[f];
+  if (st) {
+    // 돌멩이: 납작하게 눌린 둥근 돌 두 개 (반짝이는 돌은 푸른빛)
+    if (!groundItemCache.has(f)) {
+      const g = mergeGeometries([
+        tint(new THREE.IcosahedronGeometry(0.1, 1).scale(1.2, 0.7, 1), st.color, (c, x, y) => c.multiplyScalar(0.85 + y * 1.5)),
+        tint(new THREE.IcosahedronGeometry(0.06, 1).scale(1, 0.75, 1).translate(0.1, -0.02, 0.05), st.color, (c) => c.multiplyScalar(0.92)),
+      ]);
+      g.computeBoundingBox();
+      g.translate(0, -g.boundingBox.min.y, 0);
+      groundItemCache.set(f, g);
+    }
+    return groundItemCache.get(f);
+  }
   const w = WOOD_BY_ID[f];
   if (!w) return groundFruit(f);
   if (!groundItemCache.has(f)) {
@@ -1084,6 +1107,91 @@ function buildDrops(group) {
         const bounce = k > 0.87 ? Math.sin(((k - 0.87) / 0.13) * Math.PI) * 0.12 : 0;
         d.mesh.position.y = fallY + bounce;
         d.mesh.rotation.x = (1 - k) * 2.5;
+      }
+    },
+  };
+}
+
+// ── 삽으로 판 구덩이: 땅 아래로 실제로 파인 것처럼 보이게 ──
+// 땅은 평평한 판이라 그 아래를 그리면 땅에 가려진다. 그래서 구멍 자리를 먼저 '표시'(스텐실)해 두고,
+// 그 자리에만 땅속 벽·바닥을 깊이 검사 없이 덧그린다 (구멍 앞에 선 캐릭터·물건은 표시가 안 되어 그대로 앞에 보인다).
+// 둘레에는 불룩한 흙 테두리, 옆에는 퍼 올린 흙 무더기. 팔 때는 쑥 생겨나고, 덮으면 납작해지며 사라진다
+const HOLE_COLORS = {
+  grass: { top: 0x7a5535, deep: 0x2e1d12, rim: 0x8d6440, pile: 0x9a6f47 },
+  sand: { top: 0xc8a46c, deep: 0x7a5c35, rim: 0xe3c98f, pile: 0xead39c },
+};
+const HOLE_DEPTH = 0.38;
+const holeMats = (() => {
+  const stencil = { stencilWrite: true, stencilRef: 1 };
+  return {
+    // 구멍 자리 표시: 색·깊이는 쓰지 않고 스텐실만 1로 (앞을 가린 것이 있으면 표시되지 않는다)
+    mask: basic(0x000000, { ...stencil, colorWrite: false, depthWrite: false, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }),
+    // 표시된 자리에만, 땅보다 아래여도 보이게 (깊이 검사 없이) 바닥 → 안쪽 벽 순서로
+    bottom: toon(0xffffff, { ...stencil, vertexColors: true, depthFunc: THREE.AlwaysDepth, depthWrite: false, stencilFunc: THREE.EqualStencilFunc }),
+    wall: toon(0xffffff, { ...stencil, vertexColors: true, depthFunc: THREE.AlwaysDepth, depthWrite: false, stencilFunc: THREE.EqualStencilFunc, side: THREE.BackSide }),
+    top: toon(0xffffff, { vertexColors: true }),
+  };
+})();
+function holeParts(kind, seed) {
+  const C = HOLE_COLORS[kind] ?? HOLE_COLORS.grass;
+  const R = DIG_HOLE.r;
+  const O = R * 0.86; // 구멍 입구 반지름
+  const rand = seeded(seed);
+  const deep = new THREE.Color(C.deep);
+  const mask = new THREE.CircleGeometry(O, 28).rotateX(-Math.PI / 2).translate(0, 0.03, 0);
+  // 바닥: 가운데가 가장 어둡다
+  const bottom = tint(new THREE.CircleGeometry(O * 0.9, 20).rotateX(-Math.PI / 2).translate(0, -HOLE_DEPTH, 0), C.deep,
+    (c, x, y, z) => c.multiplyScalar(0.75 + 0.35 * Math.min(1, Math.hypot(x, z) / O)));
+  // 안쪽 벽: 위는 밝은 흙, 아래로 갈수록 어둡게 (아래가 살짝 좁은 통)
+  const wall = tint(new THREE.CylinderGeometry(O, O * 0.9, HOLE_DEPTH, 24, 4, true).translate(0, -HOLE_DEPTH / 2 + 0.03, 0), C.top,
+    (c, x, y) => c.lerp(deep, Math.min(1, (0.03 - y) / HOLE_DEPTH) ** 0.8));
+  // 둘레의 불룩한 흙 테두리 + 퍼 올린 흙 무더기
+  const rim = tint(new THREE.TorusGeometry(R * 0.98, R * 0.15, 6, 26).rotateX(-Math.PI / 2).scale(1, 0.5, 1), C.rim,
+    (c, x, y) => c.multiplyScalar(0.88 + y * 5));
+  const pile = tint(new THREE.SphereGeometry(R * 0.6, 10, 6).scale(1.1, 0.55, 0.85)
+    .translate(R * 1.5, 0.03, (rand() - 0.5) * R), C.pile, (c, x, y) => c.multiplyScalar(0.85 + y * 3));
+  const crumb = tint(new THREE.SphereGeometry(R * 0.2, 6, 4).scale(1, 0.6, 1).translate(R * 1.25, 0.01, R * 0.75), C.pile);
+  return { mask, bottom, wall, top: mergeGeometries([rim, pile, crumb]) };
+}
+function buildHoles(group) {
+  const list = new Map(); // 번호 → { g, t, gone }
+  const GROW = 0.25;
+  return {
+    add(id, x, z, kind, fresh) {
+      const parts = holeParts(kind, Number(id) * 31 + 7);
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = (Number(id) * 2.399) % (Math.PI * 2);
+      // 그리는 순서: 땅·캐릭터(0) 다음에 표시(5) → 바닥(6) → 안쪽 벽(7)
+      for (const [k, order] of [['mask', 5], ['bottom', 6], ['wall', 7], ['top', 0]]) {
+        const m = new THREE.Mesh(parts[k], holeMats[k]);
+        m.renderOrder = order;
+        m.frustumCulled = false;
+        g.add(m);
+      }
+      group.add(g);
+      list.set(id, { g, t: fresh ? 0 : GROW, gone: -1 });
+      g.scale.setScalar(fresh ? 0.3 : 1);
+    },
+    remove(id) { const h = list.get(id); if (h) h.gone = 0; },
+    update(dt) {
+      for (const [id, h] of list) {
+        if (h.gone >= 0) {
+          h.gone += dt;
+          const k = Math.max(0, 1 - h.gone / 0.3);
+          h.g.scale.set(k, k * k, k);
+          if (k <= 0) {
+            group.remove(h.g);
+            for (const m of h.g.children) m.geometry.dispose();
+            list.delete(id);
+          }
+          continue;
+        }
+        if (h.t < GROW) {
+          h.t = Math.min(GROW, h.t + dt);
+          const k = h.t / GROW;
+          h.g.scale.setScalar(0.3 + 0.7 * k + Math.sin(k * Math.PI) * 0.12);
+        }
       }
     },
   };
@@ -1670,6 +1778,7 @@ export function buildVillage(scene, { low = false } = {}) {
   group.add(buildBridge());
   const trees = buildTrees(group);
   const rocks = buildRocks(group);
+  const holes = buildHoles(group);
   buildMeadow(group, { low });
   buildPlots(group, labels);
   const fountain = buildPlaza(group);
@@ -1685,10 +1794,11 @@ export function buildVillage(scene, { low = false } = {}) {
   scene.add(group);
 
   // 가장 가까운 나무·바위 번호 (reach 안에 없으면 -1)
-  const nearest = (list, x, z, reach) => {
+  const nearest = (list, x, z, reach, skip = null) => {
     let best = -1;
     let bestD = reach;
     list.forEach((o, i) => {
+      if (skip?.has(i)) return;
       const d = Math.hypot(o.x - x, o.z - z) - o.r;
       if (d < bestD) { bestD = d; best = i; }
     });
@@ -1700,7 +1810,7 @@ export function buildVillage(scene, { low = false } = {}) {
     labels,
     size: HALF,
     nearTree: (x, z, reach = 1) => nearest(WORLD.trees, x, z, reach),
-    nearRock: (x, z, reach = 1) => nearest(WORLD.rocks, x, z, reach),
+    nearRock: (x, z, reach = 1) => nearest(WORLD.rocks, x, z, reach, ROCKS_GONE), // 깨뜨린 바위는 빼고
     shakeTree: trees.shake,
     setFruitLeft: trees.setFruitLeft,
     lure, // 낚시 찌로 다가오는 물고기
@@ -1724,6 +1834,8 @@ export function buildVillage(scene, { low = false } = {}) {
     },
     removeDrop: drops.remove,
     shakeRock: rocks.shake,
+    setRockGone: rocks.setGone,
+    holes, // 삽으로 판 구덩이 (서버 상태를 따라 그림)
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t) {
       TIME.value = t;
@@ -1737,6 +1849,7 @@ export function buildVillage(scene, { low = false } = {}) {
       drops.update(dt);
       trees.update(dt);
       rocks.update(dt);
+      holes.update(dt);
       portal.update(t);
     },
   };

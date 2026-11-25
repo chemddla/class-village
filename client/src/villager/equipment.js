@@ -159,6 +159,54 @@ function bugNet() {
   return grip(g);
 }
 
+// 삽: 밝은 나무 자루(마디 띠 두 줄) 끝에 동글동글한 산호빛 D자 손잡이(왼손),
+// 반대쪽 끝에는 은빛 목과 발판, 살짝 오목하게 휜 민트빛 하트꼴 삽날(은빛 테두리). 오른손은 자루 가운데를 쥔다
+// (도구 공간 +Y = 손잡이 → 삽날, 삽날의 넓은 면은 앞(+Z)을 본다)
+function shovel() {
+  const g = new THREE.Group();
+  g.name = '삽';
+  const SHAFT = mat('#e3b07a', { roughness: 0.7 });
+  const BAND = mat('#b9824e', { roughness: 0.7 });
+  const GRIP = mat('#ff8b78', { roughness: 0.45 });
+  const SILVER = mat('#d9e1e8', { roughness: 0.25, metalness: 0.55 });
+  const BLADE = mat('#7fd1b9', { roughness: 0.35, metalness: 0.15 });
+  // 자루: 손잡이 쪽이 살짝 가늘다
+  part(new THREE.CylinderGeometry(0.0115, 0.0105, 0.5, 12), SHAFT, g, '삽자루', [0, 0.04, 0]);
+  for (const y of [-0.12, 0.2]) part(new THREE.CylinderGeometry(0.0128, 0.0128, 0.012, 12), BAND, g, '마디띠', [0, y, 0]);
+  // D자 손잡이: 통통한 반고리 + 가로대 (끝을 둥글게)
+  part(new THREE.CylinderGeometry(0.012, 0.0115, 0.025, 12), BAND, g, '손잡이목', [0, -0.217, 0]);
+  part(new THREE.TorusGeometry(0.036, 0.0105, 10, 20, Math.PI).rotateZ(Math.PI), GRIP, g, 'D손잡이', [0, -0.229, 0]);
+  const bar = part(new THREE.CapsuleGeometry(0.0115, 0.06, 4, 10).rotateZ(Math.PI / 2), GRIP, g, '가로대', [0, -0.265, 0]);
+  bar.scale.set(1, 1, 1);
+  // 은빛 목: 자루를 감싸는 둥근 통 + 삽날 위 발판
+  part(new THREE.CylinderGeometry(0.0135, 0.018, 0.05, 12), SILVER, g, '쇠목', [0, 0.3, 0]);
+  part(new THREE.SphereGeometry(0.016, 12, 8).scale(1, 0.6, 1), SILVER, g, '쇠목끝', [0, 0.326, 0]);
+  part(new THREE.CapsuleGeometry(0.008, 0.1, 4, 8).rotateZ(Math.PI / 2), SILVER, g, '발판', [0, 0.336, -0.003]);
+  // 삽날: 위는 반듯하고 아래로 둥글게 모이는 하트꼴 (끝은 살짝 뾰족). 가로로 오목하게 휘어 흙을 담는 모양
+  const shape = (k) => {
+    const s = new THREE.Shape();
+    s.moveTo(-0.058 * k, 0);
+    s.lineTo(0.058 * k, 0);
+    s.bezierCurveTo(0.068 * k, 0.07 * k, 0.05 * k, 0.13 * k, 0, 0.175 * k);
+    s.bezierCurveTo(-0.05 * k, 0.13 * k, -0.068 * k, 0.07 * k, -0.058 * k, 0);
+    return s;
+  };
+  const bend = (geo) => {
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) + 4.5 * p.getX(i) * p.getX(i)); // 양옆이 앞으로 휘어 오목
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const extr = { depth: 0.006, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 2, curveSegments: 16 };
+  const edge = bend(new THREE.ExtrudeGeometry(shape(1.08), extr).translate(0, 0.335, -0.006));
+  part(edge, SILVER, g, '삽날테');
+  const blade = bend(new THREE.ExtrudeGeometry(shape(1), extr).translate(0, 0.343, -0.002));
+  part(blade, BLADE, g, '삽날');
+  // 반짝이는 점 하나
+  part(new THREE.SphereGeometry(0.008, 8, 6).scale(1, 1.4, 0.4), mat('#ffffff', { roughness: 0.1 }), g, '반짝', [-0.025, 0.42, 0.013]).castShadow = false;
+  return grip(g);
+}
+
 // 채집통: 왼손에 손잡이를 쥐고 드는 투명한 통 (초록 뚜껑·바닥, 안에 풀잎 하나). 손 아래(-y)로 매달린다
 function bugCase() {
   const g = new THREE.Group();
@@ -442,6 +490,7 @@ export const EQUIPMENT = {
   axe: { label: '도끼', right: axe, carry: [-0.9, 0], twoHand: -0.07 },
   club: { label: '나무 몽둥이', right: club, carry: [-0.9, 0], twoHand: -0.056 }, // 두 주먹이 맞닿는 간격
   rod: { label: '낚싯대', right: fishingRod, carry: [-0.7, 0], twoHand: -0.07 },
+  shovel: { label: '삽', right: shovel, carry: [-0.9, 0], twoHand: -0.17 }, // 왼손은 D자 손잡이 쪽
   net: { label: '잠자리채', right: bugNet, left: bugCase, carry: [-1.0, 0] }, // 오른손 잠자리채 + 왼손 채집통
   swordShield: { label: '검 + 방패', right: sword, left: shield, carry: [-0.5, 0] },
   woodSword: { label: '목검', right: woodSword, carry: [-0.5, 0] },
