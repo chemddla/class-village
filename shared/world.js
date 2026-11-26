@@ -61,7 +61,7 @@ export const TOOLS = ['none', 'axe', 'rod', 'club', 'woodSword', 'bow', 'net', '
 // 활: 화살통에 넣고 다니는 화살 최대 개수 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
 export const ARROW = { max: 30, speed: 24, range: 20 };
 // 마법 지팡이: 에너지 볼 한 발에 드는 마나 · 날아가는 빠르기(m/초) · 날아가는 거리(m)
-export const BOLT = { cost: 12, speed: 8, range: 16, splash: 1, // speed: m/초 (눈으로 따라갈 수 있게 화살보다 느리게), splash: 터질 때 맞는 반지름(m)
+export const BOLT = { cost: 7, speed: 8, range: 16, splash: 1, // speed: m/초 (눈으로 따라갈 수 있게 화살보다 느리게), splash: 터질 때 맞는 반지름(m)
   charge: 1.2, chargeCost: 15, big: 2 }; // 기 모으기: 다 모으는 데 걸리는 시간(초) · 모으는 동안 1초에 드는 마나 · 다 모아 쏜 볼의 크기·터지는 둘레 배수
 export const LIFE_TOOLS = 3; // Q는 앞의 생활 도구만 돌림. 그 뒤(몽둥이·목검)는 인벤토리에서 꺼냄
 // 테스트 서버에서 광장에 놓는 생활 체험용 나무
@@ -79,7 +79,7 @@ export const FRUIT_REGROW = 45; // 딴 과일이 다시 열리기까지 (초)
 export const BAG_MAX = 99; // 가방에 넣을 수 있는 과일 한 종류의 최대 개수
 // 레벨: 생활(줍기·곤충·물고기)과 몬스터 잡기로 경험치를 얻는다. 물고기는 별 개수(RARITY.stars)만큼 곱한다
 export const XP = { grab: 1, bug: 4, fish: 3, monster: 8 };
-export const xpNeed = (lv) => lv * 10; // lv → lv+1 에 필요한 경험치
+export const xpNeed = (lv) => lv * 20; // lv → lv+1 에 필요한 경험치
 // 모은 경험치 → { lv, xp: 이번 레벨에서 모은 만큼, need: 다음 레벨까지 필요한 만큼 }
 export function levelOf(total) {
   let lv = 1;
@@ -88,22 +88,32 @@ export function levelOf(total) {
   return { lv, xp, need: xpNeed(lv) };
 }
 
-// 스텟: 레벨에 따라 저절로 오른다. Lv1 은 모두 1, 레벨마다 4포인트.
-// 모험가는 몽둥이 공격력(힘)으로 모두 가고, 전직하면 처음부터 그 직업이었던 것처럼 다시 짠다(주스텟 +3 · 부스텟 +1)
+// 스텟: 레벨에 따라 저절로 오른다. Lv1 은 모두 1.
+// 모험가는 레벨마다 힘 +3, 전직하면 처음부터 그 직업이었던 것처럼 다시 짠다(주스텟 +3 · 부스텟 +1 = 4포인트): 전직하면 늘 조금 더 세진다
 export const STAT_NAMES = { str: '힘', dex: '민첩', int: '지능', luk: '운' };
 export const JOB_LEVEL = 10;
+// def: 레벨마다 오르는 방어력 (몸으로 부딪히는 전사가 가장 많이, 멀리서 싸우는 마법사가 가장 적게)
+// spread: 피해 흔들림 범위 ±(궁수는 정확해서 고르게, 전사는 묵직하게 꾸준히, 마법사는 마력이 들쭉날쭉, 도적은 급소를 노려 크게 들쭉날쭉)
 export const JOBS = {
-  '': { name: '모험가', weapon: 'club' },
-  warrior: { name: '전사', main: 'str', sub: 'dex', weapon: 'woodSword' },
-  archer: { name: '궁수', main: 'dex', sub: 'luk', weapon: 'bow' },
-  mage: { name: '마법사', main: 'int', sub: 'luk', weapon: 'staff' },
-  thief: { name: '도적', main: 'luk', sub: 'dex', weapon: 'dagger' },
+  '': { name: '모험가', weapon: 'club', def: 1, spread: 0.15 },
+  warrior: { name: '전사', main: 'str', sub: 'dex', weapon: 'woodSword', def: 2, spread: 0.1 },
+  archer: { name: '궁수', main: 'dex', sub: 'luk', weapon: 'bow', def: 0.8, spread: 0.06 },
+  mage: { name: '마법사', main: 'int', sub: 'luk', weapon: 'staff', def: 0.6, spread: 0.2 },
+  thief: { name: '도적', main: 'luk', sub: 'dex', weapon: 'dagger', def: 1.2, spread: 0.3 },
 };
+// 방어력: Lv1 은 0, 레벨마다 직업의 def 만큼 (전직하면 처음부터 그 직업이었던 것처럼 다시 짠다)
+export const defenseOf = (lv, job = '') => Math.round((lv - 1) * (JOBS[job] ?? JOBS['']).def * 10) / 10;
+// 방어력 → 받는 피해 배수: 방어력 50이면 절반만 아프다 (몬스터도 같은 식)
+export const DEF_HALF = 50;
+export const defCut = (def) => DEF_HALF / (DEF_HALF + Math.max(0, def));
+// 피해 흔들림: 맞힐 때마다 피해를 (1 - spread) ~ (1 + spread) 배 사이에서 고르게 굴린다. 사람은 직업의 spread, 몬스터는 DMG_SPREAD
+export const DMG_SPREAD = 0.15;
+export const dmgRoll = (spread = DMG_SPREAD, rand = Math.random) => 1 - spread + 2 * spread * rand();
 export function statsOf(lv, job = '') {
   const s = { str: 1, dex: 1, int: 1, luk: 1 };
   const j = JOBS[job]?.main ? JOBS[job] : null;
   for (let l = 2; l <= lv; l++) {
-    if (j) { s[j.main] += 3; s[j.sub] += 1; } else s.str += 4;
+    if (j) { s[j.main] += 3; s[j.sub] += 1; } else s.str += 3;
   }
   return s;
 }
@@ -112,12 +122,18 @@ export const WEAPONS = ['club', 'woodSword', 'bow', 'staff', 'dagger'];
 export const canWield = (tool, job, free = false) => free || tool === 'club' || !WEAPONS.includes(tool) || JOBS[job]?.weapon === tool;
 // 무기마다 공격력에 쓰는 스텟 (그 밖의 도구는 힘)
 export const WEAPON_STAT = { club: 'str', woodSword: 'str', axe: 'str', bow: 'dex', staff: 'int', dagger: 'luk' };
+// 무기마다 한 대 피해 배수: 빨리 휘두르는 무기는 낮게, 느린 무기는 높게 (초당 피해를 맞추려고)
+// 목표: 근접 직업 모험가의 100~110% · 궁수 80~90%(멀리서 안전) · 마법사 70~80%(멀리서 + 터지면 여럿)
+export const WEAPON_MULT = { club: 1, woodSword: 1, axe: 1, bow: 1.1, staff: 1.45, dagger: 0.6 }; // 목검은 조금 빠르고 전사 부스텟 덕에 1로도 모험가보다 약간 셈
 // 능력치: 스텟 → 실제로 쓰는 값. Lv1(모두 1)이면 지금까지 쓰던 기본값 그대로. 몬스터와 싸울 때만 쓰고, 학생끼리는 기본값
-export function abilitiesOf(s) {
+// lv·job: 방어력 계산용 (없으면 Lv1 모험가)
+export function abilitiesOf(s, lv = 1, job = '') {
   const b = (k) => s[k] - 1;
   const attack = {};
   for (const k in STAT_NAMES) attack[k] = 10 * (1 + 0.03 * b(k));
   return {
+    def: defenseOf(lv, job),
+    spread: (JOBS[job] ?? JOBS['']).spread, // 피해 흔들림 범위 (dmgRoll)
     hpMax: 100 + 3 * b('str') + b('dex') + b('int') + b('luk'),
     mpMax: 100 + 3 * b('int') + b('str') + b('dex') + b('luk'),
     hpRegen: 2 * Math.min(2, 1 + 0.02 * b('str')),
@@ -128,6 +144,66 @@ export function abilitiesOf(s) {
     miss: Math.max(0.01, 0.05 - 0.001 * b('dex')),
     dodgeCool: 0.3 * Math.max(0.5, 1 - 0.01 * b('luk') - 0.005 * b('dex')),
   };
+}
+// ── 몬스터 능력치 ── (종류마다 생김새·성격에 맞춰)
+// lv: 레벨 (나보다 높으면 내 공격이 레벨 차이 1마다 2%씩 더 빗나감, 쓰러뜨리면 경험치도 레벨만큼 더)
+// hp: 체력 · atk: 한 대 피해 · def: 방어력 (사람과 같은 식, defCut) · eva: 내 공격을 피하는 확률 (내 빗나감에 더함)
+// crit: 치명타 확률 (치명타 피해는 1.5배) · xp: 쓰러뜨리면 얻는 경험치
+// 여럿이 함께하는 게임이라 일반 몬스터도 단단하게: 같은 레벨은 혼자 잡을 만하고, 레벨이 높은 몬스터는 혼자면 쓰러지기 쉬워 둘·셋이 함께 잡는 게 좋다
+export const MON_CRIT_MULT = 1.5;
+export const MONSTERS = {
+  nalgae: { name: '날개콩', lv: 1, hp: 90, atk: 19, def: 0, eva: 0.08, crit: 0.05, xp: 20 }, // 작고 말랑한 콩: 파닥여서 조금 잘 피함
+  gugu: { name: '구구', lv: 1, hp: 72, atk: 17, def: 0, eva: 0.12, crit: 0.05, xp: 18 }, // 비둘기: 약하지만 푸드덕 잘 피함
+  mongdang: { name: '몽당연필', lv: 2, hp: 100, atk: 29, def: 2, eva: 0.03, crit: 0.12, xp: 25 }, // 뾰족한 심: 아프게 찌르고 치명타가 잦음
+  ttok: { name: '똑딱이', lv: 2, hp: 90, atk: 26, def: 1, eva: 0.06, crit: 0.12, xp: 25 }, // 똑딱볼펜: 가늘어서 약하지만 볼펜심으로 콕 찌름
+  kkreyong: { name: '끄레용', lv: 2, hp: 130, atk: 24, def: 6, eva: 0.02, crit: 0.05, xp: 28 }, // 크레파스: 종이옷 덕에 단단, 느릿느릿
+  banjjok: { name: '반쪽이', lv: 3, hp: 165, atk: 29, def: 10, eva: 0, crit: 0.05, xp: 33 }, // 납작한 몸통: 맷집이 가장 좋지만 피하지는 못함
+  kkakkak: { name: '깍깍이', lv: 3, hp: 110, atk: 32, def: 2, eva: 0.12, crit: 0.1, xp: 33 }, // 까치 깡패: 부리가 매섭고 날쌤
+  chul: { name: '철필통대장', lv: 15, hp: 520, atk: 60, def: 10, eva: 0, crit: 0.1, xp: 150 }, // 필드보스 (들판 북서쪽 끝 FIELD_BOSS 자리에 Lv20 으로): 크고 단단, 피하지는 못함
+  haak: { name: '하악냥', lv: 4, hp: 125, atk: 36, def: 3, eva: 0.15, crit: 0.15, xp: 40 }, // 고양이: 가장 날쌔고 할퀴기가 매서움
+};
+// 레벨이 다른 몬스터: 위 값은 그 종류의 기본 레벨(lv) 값이고, 레벨이 그보다 1 높을 때마다
+//   체력 +16% · 공격력 +13% · 방어력 +0.6 · 경험치 +10% (기본 값에 더해 감, 회피·치명타는 그대로)
+// 같은 레벨 학생이 치면 레벨이 올라가도 대여섯 대쯤에 쓰러지고, 한 대에 체력의 15~20%쯤 아프게 맞춘 값
+// (학생은 레벨마다 공격력 약 +9~12%, 체력 약 +5~10, 방어력 +0.6~2 가 오른다)
+export const MON_GROW = { hp: 0.16, atk: 0.13, def: 0.6, xp: 0.1 };
+export const MON_MAX_LV = 20;
+export function monsterStats(kind, lv) {
+  const b = MONSTERS[kind];
+  const L = Math.max(1, Math.min(MON_MAX_LV, Math.round(lv ?? b.lv)));
+  const g = Math.max(-0.8, L - b.lv); // 기본 레벨보다 낮아도 너무 약해지지는 않게
+  return {
+    ...b,
+    lv: L,
+    hp: Math.round(b.hp * (1 + MON_GROW.hp * g)),
+    atk: Math.round(b.atk * (1 + MON_GROW.atk * g)),
+    def: Math.round((b.def + MON_GROW.def * Math.max(0, g)) * 10) / 10,
+    xp: Math.round(b.xp * (1 + MON_GROW.xp * g)),
+  };
+}
+// 쓰러뜨려 얻는 경험치: 나보다 5레벨 넘게 낮은 몬스터는 한 레벨마다 15%씩 덜 준다 (가장 적게 20%)
+// (높은 레벨이 입구에서 약한 몬스터만 잡아 쉽게 오르지 못하게)
+export function killXp(kind, monLv, myLv) {
+  const s = monsterStats(kind, monLv);
+  const low = Math.max(0, myLv - s.lv - 5);
+  return Math.max(1, Math.round(s.xp * Math.max(0.2, 1 - 0.15 * low)));
+}
+// 함께 잡으면 경험치를 기여도대로 나눈다. 기여도 = 준 피해 + 받은 피해 × TANK_WEIGHT (몸으로 막아 준 것도 쳐 줌)
+// 여럿이 잡으면 PARTY_BONUS 만큼 더 얹어 나눈다 (한 명 늘 때마다 +10%, 최대 +50%): 혼자 잡을 때보다 손해 보지 않게
+export const TANK_WEIGHT = 1;
+export const PARTY_BONUS = 0.1;
+// base(sid): 그 사람이 혼자 잡았을 때 받을 경험치 (killXp: 사람 레벨에 따라 다름)
+// dealt·taken: Map(sid → 피해) · 돌려주는 값: Map(sid → 받을 경험치), 기여가 없으면 빈 Map
+export function shareXp(base, dealt, taken) {
+  const score = new Map();
+  for (const [sid, d] of dealt) score.set(sid, (score.get(sid) ?? 0) + Math.max(0, d));
+  for (const [sid, d] of taken) score.set(sid, (score.get(sid) ?? 0) + TANK_WEIGHT * Math.max(0, d));
+  for (const [sid, s] of score) if (!(s > 0)) score.delete(sid);
+  const sum = [...score.values()].reduce((a, b) => a + b, 0);
+  const bonus = 1 + Math.min(0.5, PARTY_BONUS * (score.size - 1));
+  const out = new Map();
+  for (const [sid, s] of score) out.set(sid, Math.max(1, Math.round(base(sid) * bonus * (s / sum))));
+  return out;
 }
 // ── 스킬 ──
 // type: 'active' 는 키를 눌러 쓰고 마나·대기 시간이 든다, 'passive' 는 배우면 늘 저절로 효과가 붙는다
@@ -378,29 +454,50 @@ export function generateWorld(seed = 20261118) {
 
 // ── 들판(저렙 사냥터, 가명): 마을 섬과 멀리 떨어진 곳에 따로 있는 맵. 걸어서는 못 가고 포탈로만 오간다 ──
 // 같은 방·같은 좌표계 안이라 접속을 바꾸지 않고 순간이동만 하면 된다 (z는 int16 cm 라 327m 안쪽이어야 함)
-export const FIELD = { x: 0, z: 220, r: 54 }; // 가운데 · 걸어 다닐 수 있는 대략의 반지름 (가장자리는 물결 모양 숲)
+export const FIELD = { x: 0, z: 224, r: 80 }; // 가운데 · 걸어 다닐 수 있는 대략의 반지름 (가장자리는 물결 모양 숲)
 export const inField = (x, z) => z > 120;
 // 그 방향의 들판 가장자리까지 거리 (이보다 멀면 숲이라 못 감)
 export function fieldEdge(x, z) {
   const a = Math.atan2(z - FIELD.z, x - FIELD.x);
   return FIELD.r + 3.6 * Math.sin(3 * a + 1) + 2.2 * Math.sin(5 * a + 0.3) + 1.0 * Math.sin(11 * a);
 }
-export const FIELD_POND = { x: FIELD.x - 24, z: FIELD.z - 10, r: 3.4 }; // 작은 연못 (못 들어감)
-// 날개콩이 돌아다니는 자리 (가운데 x,z 를 반지름 r 로 빙 돈다). 나무·바위는 이 둘레를 피해 놓는다
+export const FIELD_POND = { x: FIELD.x - 36, z: FIELD.z - 14, r: 3.4 }; // 작은 연못 (못 들어감)
+// ── 들판 몬스터 자리 ── Lv1~20 사냥터: 남쪽 끝 포탈에서 멀어질수록 레벨이 높다 (입구 근처에는 높은 레벨이 없다)
+//   포탈에서 31m 안 Lv1~3 · 50m 안 Lv3~7 · 78m 안 Lv7~12 · 105m 안 Lv12~16 · 그 너머 Lv16~19
+//   Lv20 은 FIELD_BOSS 자리의 필드보스 철필통대장 몫: 들어서서 왼쪽(서쪽) 맨 끝 구석, 포탈에서 가장 먼 쪽 (r 둘레는 비워 둔다 · 싸움터는 arena)
+// 자리마다 가운데 x,z 를 몬스터가 빙 돈다: 첫째는 반지름 r, 둘째는 그 안쪽 r/2 (같은 원이면 서로 막혀 줄만 선다)
+// 한 자리 둘은 합동 모션 짝으로 골라 넣었다 (DUO_NEAR 3.5m 안이라 자주 만난다). 나무·바위는 이 둘레를 피해 놓는다
+// [x, z, r, [종류, 레벨], [종류, 레벨]?]
+export const FIELD_BOSS = { x: FIELD.x - 52, z: FIELD.z - 53, r: 10, arena: 40, kind: 'chul', lv: 20, rot: Math.atan2(52, 53) }; // r: 비워 둔 둘레 · arena: 싸움터 반지름 (벗어나면 보스가 돌아감) · rot: 들판 가운데를 바라봄
 export const FIELD_MONSTERS = [
-  [12, -4, 2.6], [-8, 12, 2.2], [20, 18, 2.2], [-4, -24, 3], [26, -22, 2.4], [-30, 16, 2.2],
-  // 들판을 넓히며(넓이 4배) 더한 자리: 처음과 같은 빽빽함이 되게 18곳
-  [-20, -28, 2.4], [8, -36, 2.6], [30, -6, 2.4], [36, 10, 2.2], [-36, -6, 2.4], [-14, 30, 2.2],
-  [14, 31, 2.4], [30, 26, 2.2], [-27, 31, 2.2], [-36, -20, 2.4], [21, -33, 2.2], [-9, -38, 2.4],
-  [38, -16, 2.2], [-24, 2, 2.6], [7, 20, 2.2], [-17, -14, 2.2], [16, 6, 2.4], [-40, 6, 2],
-].map(([x, z, r]) => ({ x: FIELD.x + x, z: FIELD.z + z, r }));
+  // 입구 풀밭 (Lv1~3): 날개콩 무리
+  [-9, 53, 2.2, ['nalgae', 1], ['nalgae', 1]], [-17, 46, 2.2, ['nalgae', 2]], [9, 51, 2.2, ['nalgae', 1], ['nalgae', 2]],
+  [17, 42, 2.2, ['nalgae', 2], ['nalgae', 3]], [-22, 56, 2, ['nalgae', 3]],
+  // 안쪽 들판 (Lv3~7): 서쪽은 섞여 사는 곳 (날개 달아 주기·그림 그려 주기·들어 올리기), 동쪽은 몽당연필 무리 (똑딱이·끄레용 색칠과 함께)
+  [-24, 32, 2.2, ['mongdang', 4], ['nalgae', 3]], [-38, 44, 2.2, ['kkreyong', 5], ['nalgae', 4]], [-32, 51, 1.6, ['gugu', 3]],
+  [11, 24, 2.2, ['banjjok', 5], ['nalgae', 4]],
+  [24, 33, 2.2, ['mongdang', 4], ['ttok', 5]], [34, 42, 2.2, ['mongdang', 3], ['ttok', 6]], [31, 29, 2.2, ['mongdang', 6], ['kkreyong', 7]],
+  // 가운데 (Lv7~12): 서쪽 반쪽이 무리 · 연필 넘어뜨리기 · 지우다 번짐 · 낮잠 · 구구 나들이
+  [-40, 11, 2.4, ['banjjok', 9], ['banjjok', 8]], [-50, 22, 2.2, ['banjjok', 8]], [-30, 1, 2.4, ['banjjok', 10], ['banjjok', 9]],
+  [-13, 7, 2.2, ['mongdang', 8], ['haak', 8]], [18, 4, 2.2, ['kkreyong', 9], ['banjjok', 8]],
+  [49, 13, 2.4, ['banjjok', 10], ['haak', 10]], [9, -9, 2.2, ['haak', 11], ['gugu', 10]],
+  // 북쪽 (Lv12~16): 동쪽 하악냥 낮잠터 무리 · 연못가 · 끄레용 툭툭 · 깍깍이 · 박박 문지르기
+  [38, -13, 2.4, ['haak', 13], ['haak', 12]], [51, -21, 2.2, ['haak', 14]], [61, -4, 2.4, ['haak', 13], ['haak', 12]],
+  [-48, -6, 2.2, ['nalgae', 12], ['gugu', 12]], [-22, -27, 2.4, ['banjjok', 14], ['nalgae', 13]],
+  [18, -32, 2.2, ['kkreyong', 14], ['haak', 14]], [30, -23, 2, ['kkakkak', 15]], [-58, -20, 2.4, ['mongdang', 14], ['banjjok', 15]],
+  // 북쪽 끝 (Lv16~19): 서쪽 깍깍이 둥지 무리 · 동쪽 하악냥 (필드보스는 북서쪽 구석)
+  [-33, -49, 2.4, ['kkakkak', 17], ['kkakkak', 16]], [-47, -38, 2.2, ['kkakkak', 16]], [-24, -61, 2.2, ['kkakkak', 19], ['kkakkak', 18]],
+  [31, -49, 2.4, ['haak', 18], ['banjjok', 17]], [18, -62, 2.4, ['haak', 19], ['mongdang', 18]], [-9, -47, 2.2, ['banjjok', 17]],
+].map(([x, z, r, ...mobs]) => ({ x: FIELD.x + x, z: FIELD.z + z, r, mobs: mobs.map(([kind, lv]) => ({ kind, lv })) }));
+// 몬스터 한 마리씩: 종류 · 레벨 · 도는 가운데 x,z · 반지름 r
+export const FIELD_MOBS = FIELD_MONSTERS.flatMap((s) => s.mobs.map((m, k) => ({ ...m, x: s.x, z: s.z, r: k ? s.r / 2 : s.r })));
 
 // 포탈: 이 자리를 지나가면 to 번 포탈 앞(그 포탈이 바라보는 쪽 ARRIVE m)으로 순간이동
 // rot: 포탈이 바라보는 쪽 (나오는 사람이 걸어가는 쪽). 문 양쪽 기둥은 부딪힌다
 export const PORTAL = { reach: 0.7, arrive: 2.0, half: 0.85, pillar: 0.22 };
 export const PORTALS = [
   { name: '들판', x: 5.4, z: 8.4, rot: Math.atan2(SPAWN.x - 5.4, SPAWN.z - 8.4), to: 1 }, // 광장 남동쪽, 분수를 바라봄
-  { name: '마을', x: FIELD.x, z: FIELD.z + 42, rot: Math.PI, to: 0 }, // 들판 남쪽 끝, 들판 안쪽(-z)을 바라봄
+  { name: '마을', x: FIELD.x, z: FIELD.z + 62, rot: Math.PI, to: 0 }, // 들판 남쪽 끝, 들판 안쪽(-z)을 바라봄
 ];
 export const portalArrive = (p) => ({ x: p.x + Math.sin(p.rot) * PORTAL.arrive, z: p.z + Math.cos(p.rot) * PORTAL.arrive, rot: p.rot });
 const portalPillars = (p) => [-1, 1].map((k) => ({ x: p.x + Math.cos(p.rot) * PORTAL.half * k, z: p.z - Math.sin(p.rot) * PORTAL.half * k, r: PORTAL.pillar }));
@@ -420,14 +517,14 @@ function generateField(seed = 20261123) {
   };
   const rnd = () => (rand() * 2 - 1) * FIELD.r;
   // 들판 안에 띄엄띄엄 선 나무 몇 그루 (넓게 트여 사냥하기 좋게)
-  for (let i = 0; i < 800 && trees.length < 56; i++) {
+  for (let i = 0; i < 2000 && trees.length < 124; i++) {
     const x = FIELD.x + rnd();
     const z = FIELD.z + rnd();
     const s = 0.85 + rand() * 0.5;
     if (ok(x, z, 2.5, trees)) trees.push({ x, z, s, r: 0.55 * s, kind: rand() < 0.3 ? 1 : 0 });
   }
   const all = [...trees];
-  for (let i = 0; i < 800 && rocks.length < 64; i++) {
+  for (let i = 0; i < 2000 && rocks.length < 141; i++) {
     const x = FIELD.x + rnd();
     const z = FIELD.z + rnd();
     const s = 0.45 + rand() * 0.7;
@@ -440,10 +537,10 @@ function generateField(seed = 20261123) {
   // 지형지물 (부딪힘): 쓰러진 통나무 · 그루터기 · 덤불 · 건초더미 · 돌탑 · 큰 바위 언덕(여러 덩이, 삽으로 못 깸) · 버섯 무리(장식, 안 부딪힘)
   // [종류, 개수, 부딪힘 반지름(크기 1), 높이(크기 1), 띄울 거리]
   const props = [];
-  const KINDS = [['log', 10, 0.32, 0.55, 2.2], ['stump', 14, 0.38, 0.45, 1], ['bush', 22, 0.6, 0.85, 1], ['hay', 8, 0.65, 1.1, 1.6],
-    ['cairn', 6, 0.45, 1.1, 1.4], ['outcrop', 4, 2.4, 1.7, 2.5], ['mushroom', 22, 0, 0, 0.4]];
+  const KINDS = [['log', 22, 0.32, 0.55, 2.2], ['stump', 31, 0.38, 0.45, 1], ['bush', 48, 0.6, 0.85, 1], ['hay', 17, 0.65, 1.1, 1.6],
+    ['cairn', 14, 0.45, 1.1, 1.4], ['outcrop', 9, 2.4, 1.7, 2.5], ['mushroom', 48, 0, 0, 0.4]];
   for (const [kind, n, r, h, margin] of KINDS) {
-    for (let i = 0, made = 0; i < 900 && made < n; i++) {
+    for (let i = 0, made = 0; i < 1800 && made < n; i++) {
       const x = FIELD.x + rnd();
       const z = FIELD.z + rnd();
       const s = 0.85 + rand() * 0.4;
@@ -462,7 +559,7 @@ function generateField(seed = 20261123) {
   });
   // 꺾을 수 있는 들꽃(채집·무당벌레·꿀벌 자리): 무리 지어 핀다
   const flowers = [];
-  for (let i = 0; i < 3000 && flowers.length < 160; i++) {
+  for (let i = 0; i < 7500 && flowers.length < 352; i++) {
     const c = flowers.length % 8 ? flowers[flowers.length - 1] : null; // 8송이마다 새 무리
     const x = c ? c.x + (rand() * 2 - 1) * 1.6 : FIELD.x + rnd();
     const z = c ? c.z + (rand() * 2 - 1) * 1.6 : FIELD.z + rnd();
@@ -642,7 +739,7 @@ export const BUG_SHY = {
 };
 export const NET_CATCH = 0.42; // 그물 테가 지나간 길에서 이만큼 안에 있던 곤충이 잡힌다 (m)
 export const NET_ROOM = 3.2; // 휘두른 길은 캐릭터 둘레 이만큼 안이어야 믿는다 (m)
-export const BUG_COUNT = 64; // 마을·들판에 늘 있는 곤충 수 (셋에 하나쯤 들판)
+export const BUG_COUNT = 90; // 마을·들판에 늘 있는 곤충 수 (둘에 하나쯤 들판)
 // 곤충이 머무를 수 있는 풀밭: 갈 수 있는 곳이면서 광장·길·모래사장·강에서 떨어진 곳
 export function onGrass(x, z) {
   if (isBlocked(x, z, 0.3)) return false;

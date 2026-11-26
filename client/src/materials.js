@@ -29,6 +29,15 @@ export function curveDrop(x, z) {
   return (f * f * 0.8 + sd * sd * 0.25) * CURVE.strength;
 }
 
+// 둥근 지평선 너머 땅에 가리지 않고 보이는 가장 먼 거리(m, 키 1m쯤 되는 것 기준). main 이 매 장면 viewReach 로 정한다
+// 키 큰 것(나무)은 이보다 더 멀리서도 꼭대기가 보이니 칸마다 tall(m)을 더해 견준다
+export const VIEW = { reach: 1e9 };
+export const TREE_TALL = 22; // 나무(키 5~6m)는 보이는 거리에 이만큼 더해 견준다
+// 카메라 거리 배율(zoom × 세로 화면 배율)과 화면 비율(가로/세로)로 보이는 거리를 어림한다.
+// 땅에 가리는지까지 따져 잰 값(FOV 38°, 둥근 지평선 세기 0.0065, 카메라 각도 0.3~1.3 중 가장 먼 것)을 넉넉히 덮는다:
+//   키 1.2m — 4:3 은 배율 1·2·3 에서 55·69·93m, 16:9 는 60·86·107m, 2.2:1 은 62·92·119m. 키 6m 나무는 여기에 약 +20m
+// 카메라 거리·시야각·둥근 지평선 세기를 바꾸면 다시 재야 한다
+export const viewReach = (zoom, aspect) => (35 + 25 * zoom) * Math.sqrt(Math.max(1, aspect / 1.33));
 export function setCurveCenter(x, z, yaw = 0) {
   CURVE.center.set(x, z);
   CURVE.yaw.set(Math.sin(yaw), Math.cos(yaw));
@@ -203,7 +212,9 @@ export function addOutline(mesh, thickness = 0.035, { sway = false } = {}) {
 // shortcut: 둘레 공은 처음 놓은 자리로 한 번만 잡는다, 인스턴스를 멀리(수 m) 옮기게 되면 다시 잡아야 한다
 const CELL = 30; // 작을수록 삼각형은 줄고 그리기 횟수는 는다 (24m: 134만·453회, 40m: 162만·397회 — 광장에서 잰 값)
 const cellSpheres = [];
-export function instancedCells(group, items, make, init) {
+const farCells = [];
+// tall(m): 주어지면 그 칸 가장자리가 보는 자리(CURVE.center)에서 VIEW.reach + tall 보다 멀 때 칸째 안 그린다 (둥근 지평선 너머라 땅에 가려 안 보임)
+export function instancedCells(group, items, make, init, { tall } = {}) {
   const cells = new Map();
   items.forEach((t, i) => {
     const key = `${Math.floor(t.x / CELL)},${Math.floor(t.z / CELL)}`;
@@ -218,6 +229,7 @@ export function instancedCells(group, items, make, init) {
     cullCurved(mesh.boundingSphere);
     for (const o of mesh.children) if (o.isInstancedMesh) o.boundingSphere = mesh.boundingSphere; // 외곽선도 같은 공으로
     group.add(mesh);
+    if (tall !== undefined) farCells.push({ mesh, tall });
   }
   return slot;
 }
@@ -230,6 +242,11 @@ export function cullCells() {
     const drop = Math.max(curveDrop(x, z), curveDrop(x + r, z), curveDrop(x - r, z), curveDrop(x, z + r), curveDrop(x, z - r)) * 1.5; // 칸 안 가장 많이 내려가는 곳 (어림 + 여유)
     s.center.y = y - drop / 2;
     s.radius = r + drop / 2 + 1; // +1m: 바람에 흔들리는 잎·외곽선 두께
+  }
+  const { x: cx, y: cz } = CURVE.center;
+  for (const { mesh, tall } of farCells) {
+    const { center, radius } = mesh.boundingSphere;
+    mesh.visible = Math.hypot(center.x - cx, center.z - cz) - radius < VIEW.reach + tall;
   }
 }
 

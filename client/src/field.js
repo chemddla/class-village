@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FIELD, FIELD_MAP, FIELD_POND, FIELD_MONSTERS, PORTALS, fieldEdge, outcropStones } from '../../shared/world.js';
-import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop, instancedCells, tiled } from './materials.js';
+import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop, CURVE, VIEW, TREE_TALL, instancedCells, tiled } from './materials.js';
 import { roundCanopy, pineCanopy, ovalCanopy, trunkGeometry } from './village.js';
 import { makeLabel } from './label.js';
 import { buildPortal } from './portal.js';
@@ -90,11 +90,13 @@ function buildPond(group) {
 }
 
 const TREE_CELL = 20;
+// 둥근 지평선 너머라 땅에 가려 안 보이는 먼 칸은 안 그린다 (보이는 거리 VIEW.reach 에 키만큼 더함, materials.js)
+// 둘레 숲 나무는 키가 커서 멀리서도 꼭대기가 보인다(TREE_TALL) (포탈 앞에서 삼각형 310만 → 150만)
 // 나무: 가장자리를 빽빽이 두르는 숲(장식, 어차피 못 들어감). 들판 안 나무는 village.js 가 그린다
 function buildTrees(group, low) {
   const rand = seeded(20261124);
   const list = [];
-  const ring = low ? 240 : 400;
+  const ring = low ? 356 : 592; // 둘레 길이에 맞춰 (반지름 80)
   for (let i = 0; i < ring; i++) {
     const a = (i / ring) * Math.PI * 2 + rand() * 0.03;
     const ux = Math.cos(a);
@@ -133,7 +135,7 @@ function buildTrees(group, low) {
   const spheres = [];
   const cull = (mesh) => {
     mesh.computeBoundingSphere();
-    spheres.push({ s: mesh.boundingSphere, y: mesh.boundingSphere.center.y, r: mesh.boundingSphere.radius });
+    spheres.push({ mesh, s: mesh.boundingSphere, y: mesh.boundingSphere.center.y, r: mesh.boundingSphere.radius });
     mesh.children[0].boundingSphere = mesh.boundingSphere; // 외곽선도 같은 공으로
   };
   for (const here of cells.values()) {
@@ -157,11 +159,13 @@ function buildTrees(group, low) {
     });
   }
   return () => {
-    for (const { s, y, r } of spheres) {
+    const { x: cx, y: cz } = CURVE.center;
+    for (const { mesh, s, y, r } of spheres) {
       const { x, z } = s.center;
       const drop = Math.max(curveDrop(x, z), curveDrop(x + r, z), curveDrop(x - r, z), curveDrop(x, z + r), curveDrop(x, z - r)) * 1.5; // 칸 안 가장 많이 내려가는 곳 (어림 + 여유)
       s.center.y = y - drop / 2;
       s.radius = r + drop / 2;
+      mesh.visible = Math.hypot(x - cx, z - cz) - r < VIEW.reach + TREE_TALL; // 둥근 지평선 아래로 넘어가 안 보이는 먼 칸은 뺀다
     }
   };
 }
@@ -252,8 +256,8 @@ function buildMeadow(group, low) {
   }
   const tuftGeo = mergeGeometries(blades);
   const tufts = [];
-  const want = low ? 1040 : 2080;
-  for (let tries = 0; tufts.length < want && tries < 24000; tries++) {
+  const want = low ? 2285 : 4570; // 넓이에 맞춰 (반지름 80)
+  for (let tries = 0; tufts.length < want && tries < 53000; tries++) {
     const x = FIELD.x + (rand() * 2 - 1) * FIELD.r;
     const z = FIELD.z + (rand() * 2 - 1) * FIELD.r;
     if (noise(x * 1.7, z * 1.7) < 0.5 || !grassy(x, z)) continue; // 무리 지어
@@ -266,14 +270,14 @@ function buildMeadow(group, low) {
     const t = tufts[i];
     mesh.setMatrixAt(j, m.compose(p.set(t.x, 0, t.z), q.setFromEuler(e.set(0, t.rot, 0)), s.set(t.s, t.s * t.tall, t.s)));
     mesh.setColorAt(j, col.setHSL(t.hue, 0.5, t.light));
-  });
+  }, { tall: 0 });
 
   // 들꽃: 노랑·하양·주홍 (마을보다 들판다운 색)
   const palette = [0xfff08a, 0xffffff, 0xffbe94, 0xffd35c].map((c) => new THREE.Color(c));
   const stem = new THREE.CylinderGeometry(0.018, 0.024, 0.26, 5).translate(0, 0.13, 0);
   const head = paint(new THREE.SphereGeometry(0.07, 8, 5).scale(1, 0.45, 1).translate(0, 0.27, 0), 0xffffff);
   const flowers = [];
-  for (let tries = 0; flowers.length < (low ? 480 : 880) && tries < 16000; tries++) {
+  for (let tries = 0; flowers.length < (low ? 1050 : 1925) && tries < 35000; tries++) {
     const x = FIELD.x + (rand() * 2 - 1) * FIELD.r;
     const z = FIELD.z + (rand() * 2 - 1) * FIELD.r;
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.7 + rand() * 0.5 });
@@ -281,11 +285,11 @@ function buildMeadow(group, low) {
   const stemMat = windToon(0x6aa84f);
   const headMat = windToon(0xffffff, { vertexColors: true });
   const pose = (i) => m.compose(p.set(flowers[i].x, 0, flowers[i].z), q.identity(), s.setScalar(flowers[i].s));
-  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(stem, stemMat, n), (mesh, j, i) => mesh.setMatrixAt(j, pose(i)));
+  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(stem, stemMat, n), (mesh, j, i) => mesh.setMatrixAt(j, pose(i)), { tall: 0 });
   instancedCells(group, flowers, (n) => new THREE.InstancedMesh(head, headMat, n), (mesh, j, i) => {
     mesh.setMatrixAt(j, pose(i));
     mesh.setColorAt(j, palette[flowers[i].c]);
-  });
+  }, { tall: 0 });
 }
 
 // 포탈 옆 나무 표지판 + 길가 울타리 몇 칸
