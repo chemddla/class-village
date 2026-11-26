@@ -71,6 +71,7 @@ const CHASE_LOSE = 9; // 이만큼 멀어지면 쫓기를 그만둠 (m): 화난 
 const CHASE_SPEED = 1.6; // 쫓아오는 빠르기 (m/s)
 const ANGRY_CHASE = 1.75; // 맞아서 화나 쫓아올 때 빠르기 배수 (1.6 → 2.8 m/s: 걸어서 달아나면 겨우, 달리면 따돌림. 하악냥은 4.2 m/s로 걷기보다 빠름)
 const LEASH = 7; // 제 길에서 이보다 멀리는 가지 않음 (m)
+const ZONE = 10; // 쫓던 캐릭터가 제 자리(제 길)에서 이보다 멀어지면 포기하고 돌아감 (m): 철필통 싸움터처럼, 원 표시는 없음
 const ANGRY_LEASH = 25; // 화나서 쫓거나 도망칠 때는 이만큼까지 따라감 (m): 맵 끝까지 끝없이 따라오지는 않게
 const ATTACK_REACH = 0.55; // 몸 가장자리에서 이만큼 안이면 공격 (m)
 const ATTACK_COOL = 1.6; // 공격 사이 쉬는 시간 (초)
@@ -1223,7 +1224,7 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
       // 자는 중엔 눈을 감고 있어서 아주 가까이 와야(발소리) 깸
       const sees = me && (mon.state === 'sleep' ? near < WAKE_NEAR : near < SIGHT && Math.abs(wrap(Math.atan2(me.x - px, me.z - pz) - heading)) < VIEW);
       if (busy || !me || trip) mode = 'route'; // 나들이 중엔 사람을 봐도 다녀와서 (깍깍이도 날아가는 동안은 안 덤빔)
-      else if (hostile && (mode === 'chase' || mode === 'rage' || angry ? near < CHASE_LOSE : near < AGGRO_SIGHT)) {
+      else if (hostile && Math.hypot(me.x - tx, me.z - tz) < ZONE && (mode === 'chase' || mode === 'rage' || angry ? near < CHASE_LOSE : near < AGGRO_SIGHT)) {
         if (!targeting) {
           // 처음 공격 대상으로 알아챔: 멈춰서 '화남!' 하고 나서 쫓아옴 (쫓다가 맞은 뒤에는 바로 다시 쫓음)
           targeting = true;
@@ -1291,6 +1292,7 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
       // 한가한지: 제 길 가까이에서 걷거나 쉬는 중 (짝이 될 수 있음. 같은 길을 줄지어 따라가며 조금 처질 때도 있어 넉넉히)
       const onRoute = mode === 'route' && !busy && Math.hypot(tx - px, tz - pz) < 0.6 && (mon.state === 'idle' || mon.state === 'walk');
       self.free = onRoute && !self.duo && self.duoCool <= 0;
+      if (!follow && onRoute && sinceHit > 2) hp = Math.min(STATS.hp, hp + STATS.hp * 0.25 * dt); // 제 길로 돌아오면 체력이 빠르게 참 (2초 안에 또 맞으면 안 참: 멀리서 쏘는 동안은 그대로)
       self.napping = mode === 'route' && !busy && mon.state === 'sleep' && Math.hypot(tx - px, tz - pz) < 0.6 && !self.duo && self.duoCool <= 0; // 낮잠 자는 하악냥 (반쪽이가 다가옴)
       self.seen = Date.now();
       self.duoCool -= dt;
