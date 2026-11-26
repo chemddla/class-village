@@ -9,12 +9,20 @@ import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, fruitOf, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
   FOSSIL_SPOTS, pickFossil, FLOWER_ITEMS, PICK_FLOWER_REACH, PLANT, plantKind, plantItem, SEEDS, HALF, FIELD, inField,
-  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL, canWield,
+  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, MONSTERS, killXp, shareXp, levelOf, JOBS, JOB_LEVEL, canWield,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
 
 const PORT = Number(process.env.GAME_PORT || 2567);
 const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
+// 몬스터 피해 나누기 (monHit·monHurt): 한 번에 믿어 주는 가장 큰 피해 · 이만큼(ms) 안 맞으면 기여도를 잊음 (몬스터 체력도 10초면 다시 참) · 같은 몬스터 두 번 나누기 막는 시간
+const MON_HIT_MAX = 2000;
+const MON_FORGET = 12000;
+const BOSS_FORGET = 90000; // 보스(id 가 b 로 시작)는 싸움이 길고 체력이 서서히 차므로 오래 기억
+const forgetOf = (id) => (id[0] === 'b' ? BOSS_FORGET : MON_FORGET);
+const MON_KILL_DUP = 3000;
+// 몬스터 id: 짧은 글자만 (화면이 정함: 광장 p0~, 들판 f0~)
+const monId = (v) => (typeof v === 'string' && /^[a-z][0-9]{1,4}$/.test(v) ? v : null);
 const RECONNECT_SECONDS = 60;
 // 화면을 닫거나 다른 곳으로 갈 때 '나가요(bye)'를 보낸 경우: 새로고침해서 돌아올 만큼만 기다린다
 const BYE_SECONDS = 8;
@@ -501,15 +509,69 @@ class VillageRoom extends Room {
 
     // 몬스터를 쓰러뜨림: 몬스터는 화면이 판정하므로 서버는 얼마나 자주 오는지만 본다
     // (한꺼번에 3마리까지, 그 뒤로는 2초에 1마리꼴로만 쳐 준다)
-    this.onMessage('kill', (client) => {
+    // 경험치는 몬스터 종류·레벨마다 (killXp: 나보다 많이 낮은 몬스터는 덜 줌, 모르는 종류면 XP.monster)
+    // { kind, lv } 로 오고, 예전 화면은 종류 글자만 보낸다 (그때는 그 종류의 기본 레벨)
+    // id 가 있는 몬스터(광장·들판 일반 몬스터)는 함께 싸운 사람 모두에게 기여도대로 나눈다 (shareXp)
+    this.onMessage('kill', (client, msg) => {
       const p = this.state.players.get(client.sessionId);
       if (!p) return;
       const now = Date.now();
       const u = client.userData ?? {};
       const b = Math.min(3, (u.killB ?? 3) + (now - (u.killAt ?? now)) / 2000);
       client.userData = { ...u, killAt: now, killB: Math.max(0, b - 1) };
-      if (b >= 1) p.xp += XP.monster;
+      if (b < 1) return;
+      const kind = typeof msg === 'string' ? msg : msg?.kind;
+      const lv = Number.isFinite(msg?.lv) ? msg.lv : undefined;
+      const known = typeof kind === 'string' && Object.hasOwn(MONSTERS, kind);
+      const id = monId(msg?.id);
+      if (id && known) {
+        if (this.monKilled.get(id) > now - MON_KILL_DUP) return; // 둘이 거의 같이 막타를 쳤다: 한 번만 나눈다
+        this.monKilled.set(id, now);
+        const f = this.monFight.get(id);
+        this.monFight.delete(id);
+        if (f) {
+          const got = shareXp((sid) => killXp(kind, lv, levelOf(this.state.players.get(sid)?.xp ?? 0).lv), f.dealt, f.taken);
+          for (const [sid, xp] of got) { const q = this.state.players.get(sid); if (q) q.xp += xp; }
+          if (got.size) return;
+        }
+      }
+      p.xp += known ? killXp(kind, lv, levelOf(p.xp).lv) : XP.monster;
     });
+    // 몬스터 피해 나누기: 몬스터는 각자 화면이 움직이므로, 누가 때린 피해(그 화면에서 굴린 값)를 모두에게 그대로 전해
+    // 모든 화면에서 체력이 같게 깎이도록 한다. 서버는 기여도(준 피해·받은 피해)를 세어 쓰러뜨리면 경험치를 나눈다
+    // monHit: [몬스터 id, 때린 자리 x, z(cm), 피해 ×10, 맞힘(0 빗나감 · 1 보통 · 2 치명타)] · monHurt: [몬스터 id, 받은 피해 ×10]
+    this.monFight = new Map(); // 몬스터 id → { dealt: Map(sid → 피해), taken: Map(sid → 피해), at: 마지막으로 맞은 시각 }
+    this.monKilled = new Map(); // 몬스터 id → 쓰러뜨린 시각 (같은 몬스터를 두 번 나누지 않게)
+    const fightOf = (id, now) => {
+      let f = this.monFight.get(id);
+      if (!f || now - f.at > forgetOf(id)) { f = { dealt: new Map(), taken: new Map(), at: now }; this.monFight.set(id, f); } // 오래 안 맞으면 몬스터 체력도 다시 차므로 처음부터
+      return f;
+    };
+    this.onMessage('monHit', (client, m) => {
+      if (!Array.isArray(m) || !this.state.players.has(client.sessionId)) return;
+      const id = monId(m[0]);
+      const [x, z, d10, k] = m.slice(1).map(Number);
+      if (!id || ![x, z, d10, k].every(Number.isFinite)) return;
+      const dmg = Math.max(0, Math.min(MON_HIT_MAX, d10 / 10));
+      const now = Date.now();
+      const f = fightOf(id, now);
+      f.at = now;
+      if (dmg > 0) f.dealt.set(client.sessionId, (f.dealt.get(client.sessionId) ?? 0) + dmg);
+      this.broadcast('monHit', [client.sessionId, id, Math.round(x), Math.round(z), Math.round(dmg * 10), k === 2 ? 2 : k ? 1 : 0], { except: client });
+    });
+    this.onMessage('monHurt', (client, m) => {
+      if (!Array.isArray(m) || !this.state.players.has(client.sessionId)) return;
+      const id = monId(m[0]);
+      const dmg = Math.max(0, Math.min(MON_HIT_MAX, Number(m[1]) / 10));
+      if (!id || !(dmg > 0)) return;
+      const f = fightOf(id, Date.now());
+      f.taken.set(client.sessionId, (f.taken.get(client.sessionId) ?? 0) + dmg);
+    });
+    this.clock.setInterval(() => { // 오래된 기록 치우기
+      const now = Date.now();
+      for (const [id, f] of this.monFight) if (now - f.at > forgetOf(id)) this.monFight.delete(id);
+      for (const [id, t] of this.monKilled) if (now - t > MON_KILL_DUP) this.monKilled.delete(id);
+    }, 30000);
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각
     this.bye = new Set(); // 화면을 닫는다고 알려 온 sessionId

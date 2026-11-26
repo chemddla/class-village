@@ -6,7 +6,7 @@ import {
 } from '../shared/world.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
-const FIELD_SHARE = 0.35; // 새로 나타나는 곤충 중 들판에 나오는 몫
+const FIELD_SHARE = 0.53; // 새로 나타나는 곤충 중 들판에 나오는 몫 (들판을 반지름 80으로 넓히며 늘림)
 const RUNNING = 4.0; // 이보다 빠르면 달리는 중 (m/초)
 const WALKING = 0.8; // 이보다 빠르면 걷는 중
 const SCARE = 1.7; // 헛손질하면 이만큼 안의 겁 많은 곤충이 (확률로) 놀라 도망감 (m)

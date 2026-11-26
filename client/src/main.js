@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, fruitOf, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MOBS, FIELD_BOSS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, fruitOf, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, defCut, dmgRoll, MON_CRIT_MULT, WEAPON_STAT, WEAPON_MULT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
   SKILLS, SKILL_TYPES, inStrike, FOSSILS, FOSSIL_BY_ID, FLOWER_ITEMS, FLOWER_BY_ID, PICK_FLOWER_REACH, SEEDS, SEED_BY_ID, PLANT, plantItem as plantKey, plantKind,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
@@ -15,9 +15,10 @@ import { createLookEditor } from './look-editor.js';
 import { createMinimap } from './minimap.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
-import { setCurveCenter, curveDrop, HOLE } from './materials.js';
+import { setCurveCenter, curveDrop, HOLE, VIEW, viewReach } from './materials.js';
 import { FX } from './fx.js';
 import { createPlazaMonsters } from './monsters/plaza-monsters.js';
+import { createChulBoss } from './monsters/chul.js';
 import { createArrows } from './arrows.js';
 
 const params = new URLSearchParams(location.search);
@@ -77,9 +78,14 @@ const camTarget = new THREE.Vector3(0, 0, 3);
 let camScale = 1;
 // 시점: 마우스 왼쪽 끌기로 돌리기(yaw)·기울기(pitch), 휠로 거리(zoom). 처음 값은 예전 고정 시점과 같음
 const cam = { yaw: 0, pitch: Math.atan2(12.5, 13.5), dist: Math.hypot(12.5, 13.5), zoom: 1 };
+// 휠로 당길 수 있는 거리 배율. 멀리 당길수록 둥근 지평선 너머까지 보여 그릴 것이 확 는다 (들판 포탈 앞 그리기 횟수:
+// 배율 1 → 534회 · 1.5 → 752회 · 1.75 → 793회 · 2 → 1015회 · 3 → 1333회). 태블릿이 버티게 1.6 까지만
+const ZOOM_MIN = 0.2;
+const ZOOM_MAX = 1.6;
 const RECENTER_RATE = 5; // V 로 등 뒤로 돌아갈 때 스프링 세기 (약 0.6초)
 // 새로고침해도 카메라 각도·거리는 그대로 (이 탭에만 기억)
 try { Object.assign(cam, JSON.parse(store.get(sessionStorage, 'cam') ?? '{}')); } catch { /* 처음 */ }
+cam.zoom = THREE.MathUtils.clamp(cam.zoom, ZOOM_MIN, ZOOM_MAX); // 예전에 더 멀리 당겨 둔 값이 남아 있을 수 있다
 // 마우스 끌기·휠은 여기(목표)만 바꾸고 cam 은 장면마다 스르르 따라간다: 마우스 신호는 장면과 박자가 안 맞아 바로 넣으면 툭툭 끊긴다
 const camGoal = { yaw: cam.yaw, pitch: cam.pitch, zoom: cam.zoom };
 const CAM_EASE = 14; // 클수록 손을 바로 따라옴 (1/s)
@@ -231,7 +237,7 @@ let myJob = ''; // 직업 (서버가 정함, 비어 있으면 모험가)
 function showXp(total, prev) {
   const { lv, xp, need } = levelOf(total);
   myXp = total;
-  ab = abilitiesOf(statsOf(lv, myJob));
+  ab = abilitiesOf(statsOf(lv, myJob), lv, myJob);
   renderInfo();
   renderSkills();
   ui.xp.querySelector('i').style.width = `${(xp / need) * 100}%`;
@@ -266,28 +272,50 @@ function updateStats(dt) {
     row.classList.toggle('low', stats[k] < max * 0.25);
   }
 }
-// 치명타·빗나감: 맞힐 때마다 굴려 피해 배수를 정한다 (0 = 빗나감)
-// mine: 내가 친 것이면 내 능력치(빗나감·치명타), 아니면 기본값
-function rollHit(mine = false) {
+// 몬스터를 칠 때 치명타·빗나감: 맞힐 때마다 굴려 피해 배수를 정한다 (0 = 빗나감)
+// mine: 내가 친 것이면 내 능력치(빗나감·치명타), 아니면 기본값 · mon: 맞는 몬스터의 능력치
+// 빗나감 = 내 빗나감 + 몬스터 회피 + (몬스터가 나보다 높은 레벨 1마다 2%)
+const LV_GAP_MISS = 0.02;
+function rollHit(mine = false, mon = null) {
   const a = mine ? ab : BASE_AB;
+  const gap = mine && mon ? Math.max(0, mon.lv - levelOf(myXp).lv) : 0;
+  const miss = Math.min(0.9, a.miss + (mon?.eva ?? 0) + LV_GAP_MISS * gap);
   const r = Math.random();
-  return r < a.miss ? 0 : r < a.miss + a.crit ? a.critMult : 1;
+  return r < miss ? 0 : r < miss + a.crit ? a.critMult : 1;
 }
-// 내가 몬스터를 칠 때 공격력 배수 (stat: 무기가 쓰는 스텟). 남이 친 것은 1
-const atkMul = (mine, stat) => (mine ? ab.attack[stat] / STAT.hit : 1);
-const meleeStat = () => WEAPON_STAT[TOOLS[local.tool]] ?? 'str';
-// 피해 숫자: 하얀색, 빗나가면 '빗나감', 치명타면 노란색 큰 숫자에 '!'
-function showDamage(base, k, x, y, z) {
+// 몬스터를 칠 때 한 대 공격력: 무기가 쓰는 스텟의 공격력 × 무기 배수(WEAPON_MULT). 남이 친 것은 기본값 × 무기 배수
+const atkOf = (mine, weapon) => (mine ? ab.attack[WEAPON_STAT[weapon] ?? 'str'] : STAT.hit) * (WEAPON_MULT[weapon] ?? 1);
+// 피해 숫자: 하얀색, 빗나가면 '빗나감', 치명타(k > 1)면 노란색 큰 숫자에 '!' · dmg: 실제로 깎인 체력 (방어력까지 뺀 것)
+function showDamage(dmg, k, x, y, z) {
   if (!k) FX.damage('빗나감', x, y, z, '#d8d0c4');
-  else if (k > 1) FX.damage(`${Math.round(base * k)}!`, x, y, z, '#ffe14d', true);
-  else FX.damage(Math.round(base), x, y, z, '#ffffff');
+  else if (k > 1) FX.damage(`${Math.max(1, Math.round(dmg))}!`, x, y, z, '#ffe14d', true);
+  else FX.damage(Math.max(1, Math.round(dmg)), x, y, z, '#ffffff');
 }
-// power: 피해 배수 (지팡이로 기를 다 모아 쏜 큰 볼은 BOLT.big)
-function getHit(fromX, fromZ, power = 1) {
-  const k = rollHit();
-  if (me) showDamage(STAT.hit * power, k, me.x, me.groundY + 1.9, me.z);
+// 함께 잡기: 내가 몬스터를 맞혔다 (h: tryHit 결과, k: 맞힘 배수). 함께 잡는 몬스터(id 있음)는 모두에게 피해를 그대로 알려
+// 모든 화면에서 체력이 같게 깎이게 하고, 서버는 그걸로 기여도를 센다. 쓰러뜨렸으면 서버가 기여도대로 경험치를 나눈다
+function reportHit(mon, h, ax, az, k) {
+  if (mon.id) room?.send('monHit', [mon.id, toCm(ax), toCm(az), Math.round((h.dmg ?? 0) * 10), k > 1 ? 2 : k ? 1 : 0]);
+  if (h.dead) room?.send('kill', { kind: h.kind, lv: h.lv, id: mon.id ?? undefined });
+}
+// 다른 학생이 함께 잡는 몬스터를 때렸다 (서버가 전해 줌): 그 학생 화면에서 굴린 피해 그대로 맞는다
+function monHitFrom(sid, id, ax, az, dmg, k) {
+  const mon = [...plazaMonsters, ...fieldMonsters].find((m) => m.id === id);
+  const h = mon?.applyHit(ax, az, k ? dmg : 0);
+  if (!h || !mon.root.visible) return; // 다른 맵에 있는 몬스터는 체력만 맞추고 보이지 않는다
+  const gy = (others.get(sid)?.char ?? me)?.groundY ?? 0; // 때린 학생이 선 땅 높이
+  if (k) FX.burst('star', 8, h.x, gy + h.y, h.z, { floor: gy, spread: Math.PI, power: 0.8 });
+  showDamage(h.dmg, k, h.x, gy + h.y + 0.5, h.z);
+}
+// 몬스터에게 맞음: mon 은 때린 몬스터의 능력치 (공격력·치명타), id 는 그 몬스터 이름. 내 방어력만큼 덜 아프다
+function getHit(fromX, fromZ, mon = null, id = null) {
+  const r = Math.random();
+  const miss = BASE_AB.miss;
+  const k = r < miss ? 0 : r < miss + (mon?.crit ?? BASE_AB.crit) ? (mon ? MON_CRIT_MULT : BASE_AB.critMult) : 1;
+  const dmg = (mon?.atk ?? STAT.hit) * k * dmgRoll() * defCut(ab.def); // 범위 안에서 흔들림
+  if (me) showDamage(dmg, k, me.x, me.groundY + 1.9, me.z);
   if (!k) return; // 빗나가면 안 아프고 움찔하지도 않는다
-  stats.hp = Math.max(0, stats.hp - STAT.hit * power * k);
+  if (id) room?.send('monHurt', [id, Math.round(dmg * 10)]); // 몸으로 막아 준 것도 기여도
+  stats.hp = Math.max(0, stats.hp - dmg);
   if (stats.hp <= 0) { // 다 닳으면 벌러덩 쓰러졌다가 다시 꽉 찬다
     stats.hp = ab.hpMax;
     local.act = ANIM.FAINT;
@@ -341,6 +369,7 @@ function hitFx(char, action) {
   }
   if (action === 'staffBolt' || action === 'staffFire' || action === 'staffBig') { arrows.shoot(char, char === me, 0, true, action === 'staffBig' ? BOLT.big : 1); return; } // 지팡이 끝에서 에너지 볼 (다 모아 쏘면 크게)
   const slam = action === 'clubSlam' || action === 'swordSlam';
+  const meleeWeapon = /^sword/.test(action) ? 'woodSword' : /^dagger/.test(action) ? 'dagger' : 'club'; // 휘두른 무기 (동작 이름으로: 남이 친 것도 그 무기로 셈)
   const strike = /^(club|sword|dagger)Strike$/.test(action) ? SKILLS.strike : null; // 강타 스킬: 더 멀리·넓게, 더 세게
   const power = strike?.power ?? 1;
   const thrust = action === 'swordSlash3'; // 찌르기는 앞으로 길고 좁게 맞는다
@@ -368,8 +397,14 @@ function hitFx(char, action) {
     const tree = village.nearTree(hx, hz, action === 'chop' ? 1.2 : 0.7);
     const spot = spotIdx('tree', hx, hz, 1.3);
     // 몬스터: 휘두른 범위 안에 있는 것은 모두 맞는다 (한 번 휘둘러 여럿)
-    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => { const k = rollHit(char === me); const h = m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me, k * atkMul(char === me, meleeStat()) * power); return h && { ...h, k }; }).filter(Boolean) : [];
-    if (char === me) for (const m of monHits) if (m.dead) room?.send('kill');
+    // 다른 학생이 친 것은 함께 잡는 몬스터(id 있음)면 여기서 굴리지 않고, 그 학생이 보낸 피해를 받는다 (monHit)
+    const monHits = action === 'clubSmash' ? hereMonsters().map((m) => {
+      if (char !== me && m.id) return null;
+      const k = rollHit(char === me, m.stats);
+      const h = m.tryHit(char.x, char.z, (bx, bz) => hits(char.x, char.z, char.targetRot, bx, bz), char === me, k * dmgRoll((char === me ? ab : BASE_AB).spread) * atkOf(char === me, meleeWeapon) * power);
+      if (h && char === me) reportHit(m, h, char.x, char.z, k);
+      return h && { ...h, k };
+    }).filter(Boolean) : [];
     // 곤충: 휘두른 범위 안에 있으면 놀라 날아간다 (내가 휘둘렀을 때만 서버에 알림)
     if (action === 'clubSmash' && char === me) spookBugs((b) => b.y - gy < 2.2 && hits(char.x, char.z, char.targetRot, b.x, b.z));
     if (victims.length || monHits.length) {
@@ -381,7 +416,7 @@ function hitFx(char, action) {
         if (v === me) strong = true;
       }
       // 깃털이 빠지고 찌부되는 건 몬스터가 직접 하고, 여기서는 맞은 자리마다 별만 튀긴다
-      for (const m of monHits) { if (m.k) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 }); showDamage(STAT.hit * atkMul(char === me, meleeStat()) * power, m.k, m.x, gy + m.y + 0.5, m.z); }
+      for (const m of monHits) { if (m.k) burst('star', 8, at(m.x, m.z, m.y), { spread: Math.PI, power: 0.8 }); showDamage(m.dmg, m.k, m.x, gy + m.y + 0.5, m.z); }
     } else if (rock >= 0) {
       const r = WORLD.rocks[rock];
       village.shakeRock(rock, fx, fz);
@@ -526,18 +561,24 @@ function arrowHit(a, from, mine) {
     else if (local.dodge <= 0 && local.hurt <= 0) { ouch(bx, bz); FX.hitstop(0.05); } // 구르는 중에는 피한다
     return done();
   }
-  const k = rollHit(mine);
-  const dmg = atkMul(mine, 'dex') * a.dmg;
+  const dmg = atkOf(mine, 'bow') * a.dmg;
   let m = null;
+  let k = 0;
   for (const mon of hereMonsters()) {
     if (a.struck.has(mon)) continue;
-    m = mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine, k * dmg);
-    if (m) { a.struck.add(mon); break; }
+    if (!mine && mon.id) { // 남의 화살이 함께 잡는 몬스터에 닿음: 화살만 멈추고, 피해는 쏜 학생이 보낸 값으로 (monHit)
+      let touched = false;
+      mon.tryHit(bx, bz, (mx, mz) => { touched ||= Math.hypot(mx - x, mz - z) < ARROW_HIT_R; return false; });
+      if (touched) { a.struck.add(mon); return done(); }
+      continue;
+    }
+    k = rollHit(mine, mon.stats);
+    m = mon.tryHit(bx, bz, (mx, mz) => Math.hypot(mx - x, mz - z) < ARROW_HIT_R, mine, k * dmgRoll((mine ? ab : BASE_AB).spread) * dmg);
+    if (m) { a.struck.add(mon); if (mine) reportHit(mon, m, bx, bz, k); break; }
   }
   if (!m) return false;
-  if (mine && m.dead) room?.send('kill');
   if (k) burst('star', a.dmg > 1 ? 14 : 8, m.x, from.groundY + m.y, m.z, { power: a.dmg > 1 ? 1.2 : 0.8 });
-  showDamage(STAT.hit * dmg, k, m.x, from.groundY + m.y + 0.5, m.z);
+  showDamage(m.dmg, k, m.x, from.groundY + m.y + 0.5, m.z);
   if (mine && k) FX.hitstop(a.dmg > 1 ? 0.08 : 0.04);
   return done();
 }
@@ -578,10 +619,11 @@ function boltBurst(a, at) {
   }
   let any = false;
   for (const mon of hereMonsters()) {
-    const k = rollHit(mine);
-    const m = mon.tryHit(at.x, at.z, (mx, mz) => Math.hypot(mx - at.x, mz - at.z) < R, mine, a.size * k * atkMul(mine, 'int'));
-    if (mine && m?.dead) room?.send('kill');
-    if (m) { any ||= k > 0; if (k) star(m.x, from.groundY + m.y, m.z, m.x - at.x, m.z - at.z); showDamage(STAT.hit * a.size * atkMul(mine, 'int'), k, m.x, from.groundY + m.y + 0.5, m.z); }
+    if (!mine && mon.id) continue; // 남의 마법 볼: 함께 잡는 몬스터는 쏜 학생이 보낸 피해로 (monHit)
+    const k = rollHit(mine, mon.stats);
+    const m = mon.tryHit(at.x, at.z, (mx, mz) => Math.hypot(mx - at.x, mz - at.z) < R, mine, a.size * k * dmgRoll((mine ? ab : BASE_AB).spread) * atkOf(mine, 'staff'));
+    if (m && mine) reportHit(mon, m, at.x, at.z, k);
+    if (m) { any ||= k > 0; if (k) star(m.x, from.groundY + m.y, m.z, m.x - at.x, m.z - at.z); showDamage(m.dmg, k, m.x, from.groundY + m.y + 0.5, m.z); }
   }
   if (any && mine) FX.hitstop(0.04);
 }
@@ -687,8 +729,8 @@ let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬�
 // 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필·반쪽이·하악냥을 돌아가며)
 // 몬스터 공통 설정: 공격이 닿으면 내가 맞음 (구르는 중·이미 맞는 중이면 피함) · 도망·쫓을 때 벽·분수·광장 나무에 막힘
 const monsterOpts = {
-  onAttack(x, z) {
-    if (me && local.dodge <= 0 && local.hurt <= 0) getHit(x, z);
+  onAttack(x, z, mon, id) {
+    if (me && local.dodge <= 0 && local.hurt <= 0) getHit(x, z, mon, id);
   },
   blocked: (x, z, r) => isBlocked(x, z, r) || (lifeSpots.length > 0 && LIFE_COLLIDERS.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + r)),
 };
@@ -719,17 +761,29 @@ const headPerch = (c) => ({
   },
 });
 const guguPerches = () => [...TREE_PERCHES, ...[me, ...[...others.values()].map((o) => o.char)].filter(Boolean).map(headPerch)];
-const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
 // 들판 몬스터는 시작할 때 한꺼번에 만들지 않고(30마리에 0.5초 넘게 멈춘다), 첫 화면이 뜬 뒤 장면마다 한 마리씩 만든다 (frame 에서)
 // 자리와 동작은 시계로 정해지므로 늦게 만들어도 모두의 화면에서 같다
+// 어느 자리에 무엇이 몇 레벨로 있는지는 shared/world.js FIELD_MONSTERS (포탈 가까이 낮은 레벨, 멀수록 높은 레벨, 같은 종류 무리)
+// 나는 종류(구구·깍깍이)는 나무 꼭대기·가만히 선 캐릭터 머리에 앉으러 다닌다
+const FLIES = new Set(['gugu', 'kkakkak']);
 const fieldMonsters = [];
-const fieldJobs = FIELD_MONSTERS.map((spot, i) => () => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
-// 들판 구구: 하악냥 자리(가장 넓음) 안쪽 작은 원을 돌게 해서(같은 원이면 하악냥에 막혀 줄만 섬) 하악냥과 합동 모션이 나게
-fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
-// 들판 깍깍이 (중립형 까치): 들판 곳곳 네 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
-for (const i of [4, 10, 16, 22]) fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[i], r: FIELD_MONSTERS[i].r / 2, kind: 'kkakkak', phase: 6.1 + i * 1.7, perches: guguPerches }));
-// 들판 끄레용 (크레파스): 몽당연필 자리 안쪽 작은 원
-fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[1], r: FIELD_MONSTERS[1].r / 2, kind: 'kkreyong', phase: 9.4 }));
+const fieldJobs = FIELD_MOBS.map((m, i) => () => createPlazaMonsters(scene, { ...monsterOpts, id: `f${i}`, x: m.x, z: m.z, r: m.r, kind: m.kind, lv: m.lv, phase: i * 7.3, perches: FLIES.has(m.kind) ? guguPerches : null }));
+// 필드보스 철필통대장 (들판 왼쪽 맨 끝 구석 FIELD_BOSS): 와르르 쏟기로 불러낸 졸개는 들판 몬스터 목록에 넣어 맞고 움직이게, 보스가 치우면 뺀다
+let boss = null;
+fieldJobs.push(() => (boss = createChulBoss(scene, { id: 'b0', // 모두의 화면에서 같은 보스 (피해 나누기·기여도)
+  ...monsterOpts, x: FIELD_BOSS.x, z: FIELD_BOSS.z, r: FIELD_BOSS.arena, lv: FIELD_BOSS.lv, heading: FIELD_BOSS.rot, // 들판 가운데를 바라보고 잠
+  summon(kind, x, z, lv) { // 공격형으로 불려 나와 싸우는 캐릭터에게 덤빔
+    const m = createPlazaMonsters(scene, { ...monsterOpts, x, z, r: 0.6, kind, lv, temper: 'aggro', phase: Math.random() * 30 });
+    m.root.visible = onField;
+    fieldMonsters.push(m);
+    return m;
+  },
+  unsummon(m) {
+    const i = fieldMonsters.indexOf(m);
+    if (i >= 0) fieldMonsters.splice(i, 1);
+    m.root.removeFromParent();
+  },
+})));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -740,6 +794,7 @@ function showMap(f) {
   field.group.visible = f;
   for (const m of plazaMonsters) m.root.visible = !f;
   for (const m of fieldMonsters) m.root.visible = f;
+  boss?.setShown(f); // 싸움터 둘레도
 }
 showMap(false);
 // 퀵슬롯: 칸마다 장비 번호 또는 null. Q 를 누르면 맨손 → 1칸 → 2칸 → … 차례로 바꿔 든다
@@ -1241,7 +1296,9 @@ function renderInfo() {
     <h4>능력치</h4>
     ${row('최대 HP', Math.round(ab.hpMax))}${row('최대 MP', Math.round(ab.mpMax))}
     ${row('HP 회복', `${ab.hpRegen.toFixed(1)} / 초`)}${row('MP 회복', `${ab.mpRegen.toFixed(1)} / 초`)}
-    ${row(`공격력 (${WEAPON_NAMES[job.weapon]})`, ab.attack[WEAPON_STAT[job.weapon]].toFixed(1))}
+    ${row(`공격력 (${WEAPON_NAMES[job.weapon]})`, `${atkOf(true, job.weapon).toFixed(1)}${WEAPON_MULT[job.weapon] !== 1 ? ` <small>(무기 ×${WEAPON_MULT[job.weapon]})</small>` : ''}`)}
+    ${row('피해 범위', `${Math.round(atkOf(true, job.weapon) * (1 - ab.spread))} ~ ${Math.round(atkOf(true, job.weapon) * (1 + ab.spread))} <small>(±${Math.round(ab.spread * 100)}%)</small>`)}
+    ${row('방어력', `${ab.def.toFixed(1)} <small>(받는 피해 −${Math.round((1 - defCut(ab.def)) * 100)}%)</small>`)}
     ${row('치명타 확률', pct(ab.crit))}${row('치명타 피해', `${ab.critMult.toFixed(2)}배`)}
     ${row('빗나감', pct(ab.miss))}${row('구르기 대기', `${ab.dodgeCool.toFixed(2)}초`)}
     <h4>생활</h4>
@@ -1850,7 +1907,7 @@ const input = createInput({
     saveCam();
   },
   onZoom(dy) {
-    camGoal.zoom = THREE.MathUtils.clamp(camGoal.zoom * Math.exp(dy * 0.0012), 0.2, 3);
+    camGoal.zoom = THREE.MathUtils.clamp(camGoal.zoom * Math.exp(dy * 0.0012), ZOOM_MIN, ZOOM_MAX);
     saveCam();
   },
 });
@@ -1928,7 +1985,7 @@ function attach(r) {
       $(p).listen('xp', (v, prev) => showXp(v, prev));
       $(p).listen('job', (v, prev) => {
         myJob = v ?? '';
-        ab = abilitiesOf(statsOf(levelOf(myXp).lv, myJob));
+        ab = abilitiesOf(statsOf(levelOf(myXp).lv, myJob), levelOf(myXp).lv, myJob);
         renderInfo();
         if (!wieldable(local.equip)) equipTool(0); // 직업을 바꿔 못 쓰게 된 무기는 내려놓는다
         if (prev !== undefined && v) toast(`✨ ${ro(JOBS[v].name)} ${prev ? '바꿨어요' : '전직했어요!'}`);
@@ -2002,11 +2059,14 @@ function attach(r) {
       // 하악냥은 광장 둘레 곤충을 쫓아가 툭툭 침: 두 번째 툭에 서버에 알려 곤충이 놀라 날아가게 (들판엔 곤충이 없어 광장 하악냥만)
       const preyOpts = { prey: () => bugSpots, onSwat: (id, x, z) => room?.send('catSwat', [id, toCm(x), toCm(z)]) };
       // 몽당연필·반쪽이·하악냥·구구는 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
-      plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkakkak', phase: 13.4, perches: guguPerches }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkreyong', phase: 19.6 })]; // 깍깍이: 중립형이라 사람은 본 척도 안 함 · 끄레용: 중립형 크레파스
+      let pn = 0; // 광장 몬스터 이름: p0, p1, … (모두의 화면에서 같은 순서로 만든다)
+      const pm = (o) => createPlazaMonsters(scene, { ...o, id: `p${pn++}` });
+      plazaMonsters = [pm(monsterOpts), pm({ ...monsterOpts, kind: 'mongdang', phase: 11 }),
+        pm({ ...monsterOpts, kind: 'banjjok', phase: 5.5 }), pm({ ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts }),
+        pm({ ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches }),
+        pm({ ...monsterOpts, kind: 'kkakkak', phase: 13.4, perches: guguPerches }),
+        pm({ ...monsterOpts, kind: 'kkreyong', phase: 19.6 }),
+        pm({ ...monsterOpts, kind: 'ttok', phase: 23.3 })]; // 깍깍이: 중립형이라 사람은 본 척도 안 함 · 끄레용: 중립형 크레파스
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });
@@ -2077,6 +2137,8 @@ function attach(r) {
     }
   });
   $(r.state).rocksGone.onRemove((_, key) => { ROCKS_GONE.delete(Number(key)); village.setRockGone(Number(key), false); });
+  // 함께 잡는 몬스터: 다른 학생이 때린 피해 (그 학생 화면에서 굴린 값)
+  r.onMessage('monHit', ([sid, id, x, z, d10, k]) => monHitFrom(sid, id, fromCm(x), fromCm(z), d10 / 10, k === 2 ? 2 : k));
   r.onMessage('rockHit', ([sid, i, hp]) => {
     if (sid !== r.sessionId) village.shakeRock(i, 0, 0, 1);
     else if (hp > 0) toast(`🪨 바위에 금이 갔어요! ${hp}번 더 치면 깨져요`);
@@ -2700,6 +2762,7 @@ function frame() {
   cam.pitch += (camGoal.pitch - cam.pitch) * ease;
   cam.zoom *= (camGoal.zoom / cam.zoom) ** (ease * 0.7); // 거리는 배율로 (가까울 때·멀 때 똑같은 느낌), 조금 더 느긋하게
   const d = cam.dist * camScale * cam.zoom;
+  VIEW.reach = viewReach(cam.zoom * camScale, camera.aspect); // 둥근 지평선 너머 먼 나무·풀·몬스터를 안 그릴 거리
   camOffset.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch));
   camera.position.copy(camTarget).addScaledVector(camOffset, d);
   // 잠자리채로 잡는 순간: 카메라가 살짝 다가가며 떨렸다가 돌아온다
@@ -2741,12 +2804,16 @@ function frame() {
   checkNetBonks(); // 다른 학생들도 움직인 뒤에
   // 화면 밖 몬스터는 두 장면에 한 번만 움직인다 (그동안 흐른 시간을 모아서 넘긴다): 들판 27마리의 움직임 계산이 장면당 3.5ms 라 크다
   // 공은 넉넉히 6m: 높이 나는 종류(구구·깍깍이)와 둥근 지평선으로 내려 그려지는 만큼
+  // 화면 안이어도 보이는 거리(VIEW.reach)보다 멀면 몬스터를 통째로 숨긴다: 둥근 지평선 너머라 땅에 가려 안 보이는데 화면 안으로 잡혀 그려지던 것
+  // (+3m: 높이 나는 종류)
+  const monFar = VIEW.reach + 3;
   let mi = 0;
   for (const m of hereMonsters()) {
     m.lag = (m.lag ?? 0) + dt;
     viewSphere.center.copy(m.root.position);
     viewSphere.radius = 6;
-    const seen = viewFrustum.intersectsSphere(viewSphere);
+    const seen = Math.hypot(m.root.position.x - camTarget.x, m.root.position.z - camTarget.z) < monFar && viewFrustum.intersectsSphere(viewSphere);
+    m.root.visible = seen;
     for (const b of m.root.userData.batches) b.visible = seen;
     if (!seen && (frameNo + mi++) % 2) continue;
     m.update(Math.min(m.lag, 0.1), me);
