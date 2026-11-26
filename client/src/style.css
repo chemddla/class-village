@@ -223,12 +223,6 @@ button, input, textarea, select { font-family: inherit; }
 .look-row .swatch { width: 30px; }
 .fruit-count { padding: 6px 10px; border-radius: 10px; background: #fff7e8; font-size: 13px; font-weight: 700; }
 
-#hint {
-  position: fixed; left: 12px; bottom: 84px; max-width: min(300px, calc(50% - 40px)); /* 퀵슬롯(생활 도구 칸까지 넓어짐) 위로 */
-  font-size: 13px; color: rgba(74, 59, 42, 0.75); pointer-events: none;
-  background: rgba(255, 250, 240, 0.7); padding: 6px 12px; border-radius: 12px;
-}
-@media (pointer: coarse) { #hint { display: none; } }
 
 #join, #reconnect {
   position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;

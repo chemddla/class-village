@@ -106,7 +106,7 @@ const $id = (id) => document.getElementById(id);
 const ui = {
   join: $id('join'), form: $id('join-form'), name: $id('name'), colors: $id('colors'),
   joinBtn: $id('join-btn'), error: $id('join-error'), hud: $id('hud'), people: $id('people'),
-  fps: $id('fps'), actions: $id('actions'), hint: $id('hint'), reconnect: $id('reconnect'),
+  fps: $id('fps'), actions: $id('actions'), reconnect: $id('reconnect'),
   hp: $id('hp-bar'), mp: $id('mp-bar'), xp: $id('xp-bar'),
   toolBtn: $id('tool-btn'), lifeBtn: $id('life-btn'), pickBtn: $id('pick-btn'), quick: $id('quick'), toast: $id('toast'), inv: $id('inv-panel'), invBtn: $id('inv-btn'),
 };
@@ -708,8 +708,8 @@ const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
 const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 // 들판 구구: 하악냥 자리(가장 넓음) 안쪽 작은 원을 돌게 해서(같은 원이면 하악냥에 막혀 줄만 섬) 하악냥과 합동 모션이 나게
 fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
-// 들판 깍깍이 (공격형 까치): 날개콩 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
-fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[4], r: FIELD_MONSTERS[4].r / 2, kind: 'kkakkak', phase: 6.1, perches: guguPerches }));
+// 들판 깍깍이 (공격형 까치): 들판 곳곳 네 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
+for (const i of [4, 10, 16, 22]) fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[i], r: FIELD_MONSTERS[i].r / 2, kind: 'kkakkak', phase: 6.1 + i * 1.7, perches: guguPerches }));
 // 들판 끄레용 (크레파스): 몽당연필 자리 안쪽 작은 원
 fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[1], r: FIELD_MONSTERS[1].r / 2, kind: 'kkreyong', phase: 9.4 }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
@@ -2132,7 +2132,6 @@ function enterGame() {
   ui.join.classList.add('hidden');
   ui.hud.classList.remove('hidden');
   ui.actions.classList.remove('hidden');
-  ui.hint.classList.remove('hidden');
   ui.invBtn.classList.remove('hidden');
   $id('behind-btn').classList.remove('hidden');
   $id('dex-btn').classList.remove('hidden');
