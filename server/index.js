@@ -22,6 +22,10 @@ const BOSS_FORGET = 90000; // 보스(id 가 b 로 시작)는 싸움이 길고 �
 const BOSS_SPILL_GAP = 10000; // 보스 졸개 소환 사이 최소 간격 (ms)
 const forgetOf = (id) => (id[0] === 'b' ? BOSS_FORGET : MON_FORGET);
 const MON_KILL_DUP = 3000;
+// 몬스터 맡기기 (monNear·monOwn·monSync): 이만큼(m) 안의 몬스터만 맡음 · 맡은 학생보다 이만큼(m) 더 가까워야 넘김 · 이만큼(ms) 소식이 없으면 풀어 줌
+const MON_CLAIM = 30;
+const MON_SWITCH = 4;
+const MON_STALE = 3000;
 // 몬스터 id: 짧은 글자만 (화면이 정함: 광장 p0~, 들판 f0~)
 const monId = (v) => (typeof v === 'string' && /^[a-z][0-9]{1,4}$/.test(v) ? v : null);
 const RECONNECT_SECONDS = 60;
@@ -583,6 +587,47 @@ class VillageRoom extends Room {
       const ids = kinds.map(() => `m${(this.minionSeq = (this.minionSeq % 9999) + 1)}`);
       this.broadcast('bossSpill', [id, kinds, ids]);
     });
+    // ── 몬스터 맡기기: 몬스터는 화면이 움직이므로, 몬스터마다 가장 가까운 학생 한 명의 화면이 할 일(쫓기·도망·공격)을 정하고
+    // 그 상태(monSync)를 다른 학생에게 전한다. 다른 화면은 받은 대로 따라 그려서 모두의 화면에서 같게 보인다
+    // monNear: [[몬스터 id, 거리 cm], …] 화면이 1초마다 둘레(MON_CLAIM m 안) 몬스터를 알려 옴 → 가장 가까운 학생에게 맡김
+    // (맡은 학생보다 MON_SWITCH m 넘게 더 가까운 학생이 오면 넘김: 비슷한 거리에서 자꾸 바뀌지 않게)
+    // monOwn: [몬스터 id, 1 맡음 | 0 그만] 해당 학생에게만 · monSync: [[몬스터 id, …상태], …] 맡은 학생 → 다른 모두
+    this.monOwner = new Map(); // 몬스터 id → { sid, d: 거리(m), at: 마지막으로 알려 온 시각 }
+    const setOwner = (id, sid) => {
+      const cur = this.monOwner.get(id);
+      if (cur?.sid === sid) return;
+      if (cur) this.clients.getById(cur.sid)?.send('monOwn', [id, 0]);
+      if (sid) this.clients.getById(sid)?.send('monOwn', [id, 1]);
+    };
+    this.freeMonsters = (sid) => { // 나간 학생이 맡던 몬스터를 풀어 줌 (다음 monNear 때 다른 학생에게)
+      for (const [id, o] of this.monOwner) if (o.sid === sid) this.monOwner.delete(id);
+    };
+    this.onMessage('monNear', (client, list) => {
+      if (!Array.isArray(list) || !this.state.players.has(client.sessionId)) return;
+      const now = Date.now();
+      const sid = client.sessionId;
+      for (const e of list.slice(0, 80)) {
+        if (!Array.isArray(e)) continue;
+        const id = monId(e[0]);
+        const d = Number(e[1]) / 100;
+        if (!id || !Number.isFinite(d) || d < 0 || d > MON_CLAIM) continue;
+        const cur = this.monOwner.get(id);
+        if (cur && cur.sid === sid) { cur.d = d; cur.at = now; continue; }
+        if (cur && now - cur.at < MON_STALE && d + MON_SWITCH >= cur.d) continue; // 맡은 학생이 아직 가까이 있음
+        setOwner(id, sid);
+        this.monOwner.set(id, { sid, d, at: now });
+      }
+    });
+    this.onMessage('monSync', (client, list) => {
+      if (!Array.isArray(list)) return;
+      const sid = client.sessionId;
+      const mine = list.slice(0, 80).filter((e) => Array.isArray(e) && e.length <= 12 && this.monOwner.get(monId(e[0]))?.sid === sid);
+      if (mine.length) this.broadcast('monSync', mine, { except: client });
+    });
+    this.clock.setInterval(() => { // 오랫동안 알려 오지 않는 학생(멀리 갔거나 다른 맵)이 맡던 몬스터는 풀어 줌
+      const now = Date.now();
+      for (const [id, o] of this.monOwner) if (now - o.at > MON_STALE) { setOwner(id, null); this.monOwner.delete(id); }
+    }, 1000);
     this.clock.setInterval(() => { // 오래된 기록 치우기
       const now = Date.now();
       for (const [id, f] of this.monFight) if (now - f.at > forgetOf(id)) this.monFight.delete(id);
@@ -746,6 +791,7 @@ class VillageRoom extends Room {
     }
     this.bye.delete(client.sessionId);
     this.stopFishing?.(client.sessionId);
+    this.freeMonsters?.(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.last.delete(client.sessionId);
     console.log(`퇴장: ${p.name} (현재 ${this.clients.length}명)`);

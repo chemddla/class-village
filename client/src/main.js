@@ -300,7 +300,7 @@ function reportHit(mon, h, ax, az, k) {
 // 다른 학생이 함께 잡는 몬스터를 때렸다 (서버가 전해 줌): 그 학생 화면에서 굴린 피해 그대로 맞는다
 function monHitFrom(sid, id, ax, az, dmg, k) {
   const mon = [...plazaMonsters, ...fieldMonsters].find((m) => m.id === id);
-  const h = mon?.applyHit(ax, az, k ? dmg : 0);
+  const h = mon?.applyHit(ax, az, k ? dmg : 0, sid);
   if (!h || !mon.root.visible) return; // 다른 맵에 있는 몬스터는 체력만 맞추고 보이지 않는다
   const gy = (others.get(sid)?.char ?? me)?.groundY ?? 0; // 때린 학생이 선 땅 높이
   if (k) FX.burst('star', 8, h.x, gy + h.y, h.z, { floor: gy, spread: Math.PI, power: 0.8 });
@@ -778,7 +778,7 @@ fieldJobs.push(() => (boss = createChulBoss(scene, { id: 'b0', // 모두의 화�
     return true;
   },
   summon(kind, x, z, lv, id) { // 공격형으로 불려 나와 싸우는 캐릭터에게 덤빔 (id: 서버가 정한 졸개 이름, 모두의 화면에서 같음)
-    const m = createPlazaMonsters(scene, { ...monsterOpts, id, x, z, r: 0.6, kind, lv, temper: 'aggro', phase: Math.random() * 30 });
+    const m = createPlazaMonsters(scene, { ...monsterOpts, id, x, z, r: 0.6, kind, lv, temper: 'aggro', phase: id ? (Number(id.slice(1)) * 7.3) % 30 : Math.random() * 30 }); // 이름이 같으면 일정도 같게
     m.root.visible = onField;
     fieldMonsters.push(m);
     return m;
@@ -789,6 +789,50 @@ fieldJobs.push(() => (boss = createChulBoss(scene, { id: 'b0', // 모두의 화�
     m.root.removeFromParent();
   },
 })));
+// ── 몬스터 함께 보기: 서버가 몬스터마다 가장 가까운 학생 한 명에게 맡긴다 (monOwn). 맡은 화면이 할 일을 정해 상태를 보내고(monSync),
+// 다른 화면은 받은 대로 따라 그린다 → 모든 학생 화면에서 같은 몬스터가 같은 학생을 쫓고 같은 때 공격한다
+// 이 화면은 1초마다 둘레 몬스터와 거리를 알려 맡을 몬스터를 정하게 한다 (monNear)
+const MON_CLAIM = 30; // 이만큼(m) 안의 몬스터만 알림 (서버 MON_CLAIM 과 같게)
+const ownedMons = new Set(); // 서버가 이 화면에 맡긴 몬스터 id
+let monNearAt = 0;
+const monById = (id) => plazaMonsters.find((m) => m.id === id) ?? fieldMonsters.find((m) => m.id === id);
+// 몬스터가 상대할 수 있는 학생: 나와 같은 맵에 있는 학생들 (다른 학생은 화면에 그리는 자리로)
+const monCtx = { sid: null, people: [] };
+function monPeople() {
+  monCtx.sid = room?.sessionId ?? null;
+  monCtx.people.length = 0;
+  if (!room) return null;
+  if (me) monCtx.people.push({ sid: room.sessionId, x: me.x, z: me.z });
+  for (const [sid, o] of others) {
+    const c = o.char;
+    if (c.root.parent && inField(c.x, c.z) === onField) monCtx.people.push({ sid, x: c.x, z: c.z });
+  }
+  return monCtx;
+}
+// 장면마다: 맡은 몬스터 상태 보내기 · 1초마다 둘레 몬스터 알리기
+function syncMonsters(now) {
+  if (!room) return;
+  const out = [];
+  for (const m of hereMonsters()) {
+    if (!m.id) continue;
+    const own = ownedMons.has(m.id);
+    if (own !== m.owned) m.setOwned(own);
+    if (!own) continue;
+    const s = m.syncOut(now);
+    if (s) out.push([m.id, ...s]);
+  }
+  if (out.length) room.send('monSync', out);
+  if (me && now - monNearAt > 1000) {
+    monNearAt = now;
+    const near = [];
+    for (const m of hereMonsters()) {
+      if (!m.id) continue;
+      const d = Math.hypot(m.root.position.x - me.x, m.root.position.z - me.z);
+      if (d < MON_CLAIM) near.push([m.id, Math.round(d * 100)]);
+    }
+    if (near.length) room.send('monNear', near);
+  }
+}
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -2144,6 +2188,12 @@ function attach(r) {
   $(r.state).rocksGone.onRemove((_, key) => { ROCKS_GONE.delete(Number(key)); village.setRockGone(Number(key), false); });
   // 함께 잡는 몬스터: 다른 학생이 때린 피해 (그 학생 화면에서 굴린 값)
   r.onMessage('monHit', ([sid, id, x, z, d10, k]) => monHitFrom(sid, id, fromCm(x), fromCm(z), d10 / 10, k === 2 ? 2 : k));
+  // 몬스터 함께 보기: 서버가 이 화면에 맡기거나 거둠 · 맡은 화면이 보낸 몬스터 상태
+  ownedMons.clear(); // 새로 들어온 방에서는 처음부터
+  r.onMessage('monOwn', ([id, on]) => { if (on) ownedMons.add(id); else ownedMons.delete(id); });
+  r.onMessage('monSync', (list) => {
+    for (const [id, ...s] of list) monById(id)?.syncIn(s);
+  });
   // 보스가 졸개를 쏟음 (누구 화면의 보스가 쏟으려 했든 서버가 정한 같은 종류·이름으로 모두 같이)
   r.onMessage('bossSpill', ([id, kinds, ids]) => { if (id === 'b0') boss?.spill(kinds, ids); });
   r.onMessage('rockHit', ([sid, i, hp]) => {
@@ -2815,6 +2865,7 @@ function frame() {
   // (+3m: 높이 나는 종류)
   const monFar = VIEW.reach + 3;
   let mi = 0;
+  const ctx = monPeople();
   for (const m of hereMonsters()) {
     m.lag = (m.lag ?? 0) + dt;
     viewSphere.center.copy(m.root.position);
@@ -2823,9 +2874,10 @@ function frame() {
     m.root.visible = seen;
     for (const b of m.root.userData.batches) b.visible = seen;
     if (!seen && (frameNo + mi++) % 2) continue;
-    m.update(Math.min(m.lag, 0.1), me);
+    m.update(Math.min(m.lag, 0.1), me, ctx);
     m.lag = 0;
   }
+  syncMonsters(now);
   viewSphere.radius = 3;
   arrows.update(dt);
   // 활을 당기는 동안: 지금 놓으면 화살이 날아갈 길을 희미하게 보여 준다 (당긴 만큼 길어진다)

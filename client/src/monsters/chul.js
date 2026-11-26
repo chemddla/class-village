@@ -572,6 +572,7 @@ const PHASE_HP = 0.3; // 체력이 이만큼 아래로 떨어지면 화난 단�
 const SPILL_UP = 2.2; // 쏟은 졸개 모형이 벌떡 일어나 진짜 몬스터로 바뀌는 때 (쏟기 시작부터 초, 하나마다 0.15초씩 늦게)
 const FLINCH_GUARD = 3; // 한 번 움찔한 뒤 이 동안은 맞아도 움찔하지 않음 (보스라 잘 안 밀림)
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const BOSS_STATES = ['sleep', 'wake', 'fight', 'return', 'awake', 'doze', 'dead', 'gone']; // 주고받는 상태 번호
 // 둥근 지평선 위에 놓기: 크고 납작한 몸이라 가운데 높이만 맞추면 멀리 있을 때 앞쪽 모서리가 땅에 묻힌다 →
 // 그 자리 땅의 기울기(curveDrop 이 바뀌는 정도)만큼 몸을 기울여 바닥 전체를 땅에 붙인다
 const UP = new THREE.Vector3(0, 1, 0);
@@ -641,10 +642,26 @@ export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARE
   let ringFade = 0;
   let clock = 0;
   const minions = []; // 불러낸 졸개
-  const play = (key) => { motion = CHUL_BY_KEY[key]; motionT = 0; hitDone = false; };
+  let mseq = 0; // 동작을 시작한 횟수 (받는 화면이 새 동작을 알아챔)
+  const play = (key) => { motion = CHUL_BY_KEY[key]; motionT = 0; hitDone = false; mseq = (mseq + 1) % 1000; };
   const busy = () => !motion.loop && motionT < motion.dur;
   const clearMinions = () => { while (minions.length) unsummon?.(minions.pop()); P.minsOut = false; };
   const meIn = (me) => me && Math.hypot(me.x - HX, me.z - HZ) <= ARENA;
+  // ── 함께 보기 (plaza-monsters 와 같음): 서버가 맡긴 화면만 싸움(쫓기·물기·내려찍기·쏟기·돌아가기)을 정하고, 다른 화면은 받은 대로 따름
+  let owned = false, followUntil = 0, foeSid = null, seenSeq = -1, snap = null, sentKey = '', sentAt = -1e9;
+  const isFollow = () => !owned && performance.now() < followUntil;
+  // 상대할 학생: 따르는 화면은 받은 학생 · 정하는 화면은 싸움터 안에서 싸우던 학생, 없으면 싸움터 안 가장 가까운 학생 (아무도 없으면 가장 가까운 학생)
+  const pickFoe = (meLocal, ctx, follow) => {
+    if (!ctx) return meLocal;
+    const find = (sid) => ctx.people.find((p) => p.sid === sid) ?? null;
+    if (follow) return foeSid ? find(foeSid) : null;
+    const cur = foeSid && find(foeSid);
+    if (cur && meIn(cur)) return cur;
+    let best = null, bd = Infinity;
+    for (const p of ctx.people) { const d = Math.hypot(p.x - px, p.z - pz) + (meIn(p) ? 0 : 1000); if (d < bd) { bd = d; best = p; } }
+    foeSid = best?.sid ?? null;
+    return best;
+  };
   const startFight = () => { state = 'fight'; calm = 0; };
 
   // 길 찾기: 가려는 쪽 앞(LOOK m 안)에 나무·바위가 있거나 싸움터 밖이면 조금씩 옆으로 틀어 빈 쪽을 찾는다
@@ -741,8 +758,46 @@ export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARE
     },
     // 다른 학생이 때린 피해를 그대로 받는다 (그 학생 화면에서 굴린 값이 서버를 거쳐 옴): 모두의 화면에서 체력이 같게
     // dmg: 방어력까지 뺀 실제 피해 · 사라졌거나 쓰러지는 중이면 null
-    applyHit(ax, az, dmg) {
+    setOwned(v) { owned = !!v; if (owned) { followUntil = 0; sentKey = ''; } },
+    get owned() { return owned; },
+    // 맡은 화면: [x cm, z cm, 방향 0~255, 상태 번호, 동작 이름, 동작 횟수, 체력 ×10, 상대 학생, 화난 단계]
+    syncOut(t) {
+      const si = BOSS_STATES.indexOf(state);
+      const key = `${si}|${mseq}|${foeSid}|${phase2}`;
+      if (t - sentAt < (key !== sentKey ? 50 : state === 'fight' || state === 'return' || state === 'wake' ? 200 : 2000)) return null;
+      sentKey = key;
+      sentAt = t;
+      return [Math.round(px * 100), Math.round(pz * 100), Math.round((((heading % (PI * 2)) + PI * 2) % (PI * 2)) / (PI * 2) * 256) & 255,
+        si, motion.key, mseq, Math.round(Math.max(0, hp) * 10), foeSid ?? '', phase2 ? 1 : 0];
+    },
+    // 따르는 화면: 받은 상태대로 (졸개 쏟기는 서버의 bossSpill 로 모두 같이 하므로 동작 이름이 spill 이어도 여기서 틀지 않음)
+    syncIn([x, z, h, si, key, seq, hp10, fs, p2]) {
+      if (owned) return;
+      const t = performance.now();
+      const fresh = t >= followUntil;
+      followUntil = t + 1500;
+      snap = { x: x / 100, z: z / 100, h: (h / 256) * PI * 2 };
+      foeSid = fs || null;
+      phase2 = !!p2;
+      const s = BOSS_STATES[si] ?? state;
+      if (s !== state) {
+        if (s === 'dead') { if (state !== 'gone') { state = 'dead'; play('die'); clearMinions(); } }
+        else if (state === 'gone' || state === 'dead') {
+          if (s !== 'gone') { state = s; hp = STATS.hp; root.visible = true; px = snap.x; pz = snap.z; heading = snap.h; play(s === 'sleep' ? 'sleep' : 'idle'); }
+        } else {
+          if (state === 'fight' && s === 'return') clearMinions();
+          state = s;
+        }
+      }
+      if (seq !== seenSeq && !fresh && key !== 'spill' && CHUL_BY_KEY[key] && state !== 'dead' && state !== 'gone' && key !== motion.key) play(key);
+      else if (seq !== seenSeq && !fresh && (key === 'bite' || key === 'slam') && key === motion.key) play(key); // 같은 공격을 또
+      seenSeq = seq;
+      const nh = hp10 / 10;
+      if (state !== 'dead' && state !== 'gone' && Math.abs(nh - hp) > 0.05) hp = nh;
+    },
+    applyHit(ax, az, dmg, sid = null) {
       if (state === 'gone' || state === 'dead') return null;
+      if (sid && !isFollow() && !(foeSid && state === 'fight')) foeSid = sid; // 싸우는 상대가 없으면 때린 학생과 싸움
       const d = Math.hypot(ax - px, az - pz) || 1;
       const at = [px + ((ax - px) / d) * BODY_R * 0.85, pz + ((az - pz) / d) * BODY_R * 0.85]; // 때린 쪽 몸 가장자리
       if (!dmg) return { x: at[0], z: at[1], y: 0.5, dmg: 0 };
@@ -769,7 +824,10 @@ export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARE
       }
       return { x: at[0], z: at[1], y, dmg, kind: 'chul', lv: STATS.lv, id, dead: hp <= 0 };
     },
-    update(dt, me) {
+    // meLocal: 내 캐릭터 · ctx: { sid, people: 같은 맵 학생들 [{ sid, x, z }] } — 아래의 me 는 보스가 상대하는 학생, 공격이 닿았는지는 내 캐릭터로
+    update(dt, meLocal, ctx = null) {
+      const follow = isFollow();
+      const me = pickFoe(meLocal, ctx, follow);
       clock += dt;
       motionT += dt;
       calm += dt;
@@ -799,7 +857,8 @@ export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARE
         if (motionT > motion.dur) { startFight(); play('idle'); }
       } else if (state === 'fight') {
         calm = 0;
-        if (!meIn(me)) { // 싸우던 캐릭터가 싸움터를 벗어남: 졸개를 거두고 제자리로
+        if (follow) { /* 따르는 화면: 할 일·동작은 받은 대로 (syncIn) */ }
+        else if (!meIn(me)) { // 싸우던 캐릭터가 싸움터를 벗어남: 졸개를 거두고 제자리로
           state = 'return';
           clearMinions();
           play('walk');
@@ -832,7 +891,7 @@ export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARE
         }
         if (motion.key === 'spill') spillStep();
         // 공격이 닿는 순간
-        if (motion.hitAt && !hitDone && motionT >= motion.hitAt) { hitDone = true; strike(me); }
+        if (motion.hitAt && !hitDone && motionT >= motion.hitAt) { hitDone = true; strike(meLocal); } // 내 캐릭터에 닿았는지
       } else if (state === 'return') {
         const d = Math.hypot(HX - px, HZ - pz);
         if (d < 0.15) { state = 'awake'; calm = 0; play('idle'); }
@@ -858,6 +917,17 @@ export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARE
       }
       // 한 번 하는 동작이 끝나면 하던 대로
       if (!motion.loop && motionT > motion.dur && state !== 'dead' && state !== 'gone') play(state === 'sleep' ? 'sleep' : 'idle');
+      // 따르는 화면: 맡은 화면의 자리·방향으로 부드럽게 맞춤 (아주 멀면 바로)
+      if (follow && snap && state !== 'gone') {
+        const ex = snap.x - px, ez = snap.z - pz;
+        if (Math.hypot(ex, ez) > 4) { px = snap.x; pz = snap.z; }
+        else {
+          const k = 1 - Math.exp(-4 * dt);
+          px += ex * k;
+          pz += ez * k;
+          heading += wrap(snap.h - heading) * k;
+        }
+      }
 
       // 자세
       if (state !== 'gone') {

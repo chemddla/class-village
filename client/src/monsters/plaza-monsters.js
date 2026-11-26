@@ -436,6 +436,11 @@ function scheduleAt(t, plan = PLAN) {
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 // 일정과 상관없이 날개콩이 직접 하는 동작 (맞음·쓰러짐 등): 이 동안에는 일정을 따르지 않는다
 const BUSY = new Set(['hit', 'die', 'gone', 'spawn']);
+// 함께 보기: 학생을 상대하는 중인 할 일 · 주고받는 할 일 번호 (합동·나들이는 모든 화면이 시계로 같이 정하므로 '제 길'로 보냄)
+const ENGAGED = new Set(['rage', 'chase', 'spot', 'flee', 'spotAgain']);
+const MODES = ['route', 'rage', 'chase', 'spot', 'flee', 'hunt', 'sulk'];
+const MODE_CODE = { route: 0, duo: 0, trip: 0, rage: 1, chase: 2, spot: 3, spotAgain: 3, flee: 4, hunt: 5, sulk: 6 };
+const TAU = Math.PI * 2;
 
 // spot: 빙 도는 가운데와 반지름 (기본은 광장 분수 둘레, 분수와 벤치 사이 길) · phase: 일정을 이만큼(초) 어긋나게 (여럿이 같은 동작을 하지 않게)
 // kind: 'nalgae'(날개콩) | 'mongdang'(몽당연필) | 'banjjok'(반쪽이) | 'haak'(하악냥) · temper: 성격 (없으면 종류의 기본 성격)
@@ -577,6 +582,32 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
   let duoT = 0; // 이 단계를 시작한 지 (초)
   let asideX = 0, asideZ = 0; // 연필이 낙서를 마치고 비켜설 자리
   let noErase = 0; // 반쪽이가 하나도 못 지운 채 지난 시간 (초)
+  // ── 함께 보기 (모든 화면에서 같게): 서버가 이 몬스터를 맡긴 화면(owned)만 할 일(쫓기·도망·공격·사냥)을 정하고 상태를 보낸다(syncOut).
+  // 다른 화면은 받은 상태(syncIn)대로 같은 학생을 쫓고 같은 때 공격하며, 자리가 어긋나면 부드럽게 맞춘다 (follow)
+  // 맞는지는 각자 화면에서 제 캐릭터로 본다. 아무도 안 맡았으면(접속 전 등) 이 화면이 스스로 정한다
+  let owned = false;
+  let followUntil = 0; // 이때까지 받은 상태를 따름 (performance.now ms): 소식이 끊기면 스스로 정함
+  let foeSid = null; // 상대하는 학생 (쫓거나 도망치거나 노려보는)
+  let mySid = null;
+  let atkSeq = 0; // 공격을 시작한 횟수 (받는 화면이 새 공격을 알아챔)
+  let atkSeen = -1;
+  let snap = null; // 마지막으로 받은 상태 { x, z, h, t, vx, vz }
+  let sentKey = '', sentAt = -1e9;
+  const isFollow = () => !owned && performance.now() < followUntil;
+  // 상대할 학생 고르기: 따르는 화면은 받은 학생 · 정하는 화면은 상대하던 학생을 놓지 않고, 아니면 가장 가까운 학생
+  const pickFoe = (meLocal, ctx, follow) => {
+    if (!ctx) return meLocal;
+    mySid = ctx.sid;
+    const find = (sid) => ctx.people.find((p) => p.sid === sid) ?? null;
+    if (follow) return foeSid ? find(foeSid) : null;
+    const cur = foeSid && find(foeSid);
+    if (cur && (angry || targeting || ENGAGED.has(mode))) return cur;
+    let best = null, bd = Infinity;
+    const ox = px ?? f.x, oz = px === null ? f.z : pz;
+    for (const p of ctx.people) { const d = Math.hypot(p.x - ox, p.z - oz); if (d < bd) { bd = d; best = p; } }
+    foeSid = best?.sid ?? null;
+    return best;
+  };
   // 사냥 그만두기: 곤충이 날아갔으면 시무룩, 아니면 그냥 제 길로
   const endHunt = (sulk) => {
     preyId = null;
@@ -1053,10 +1084,66 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
     id, // 모두의 화면에서 같은 몬스터를 가리키는 이름 (없으면 내 화면에서만 셈)
     // 다른 학생이 때린 피해를 그대로 받는다 (그 학생 화면에서 굴린 값이 서버를 거쳐 옴): 모두의 화면에서 체력이 같게
     // dmg: 방어력까지 뺀 실제 피해 · 사라졌거나 쓰러지는 중이면 null
-    applyHit(ax, az, dmg) {
+    // sid: 때린 학생 — 할 일을 정하는 화면이면 그 학생에게 화가 나서 쫓아감
+    applyHit(ax, az, dmg, sid = null) {
       if (px === null || mon.state === 'gone' || mon.state === 'die' || mon.state === 'spawn') return null;
       if (!dmg) return { x: px, z: pz, y: 0.07 * S, dmg: 0 };
+      if (sid && !isFollow()) { angry = true; foeSid = sid; }
       return this.takeHit(ax, az, dmg, false);
+    },
+    // 서버가 이 화면에 몬스터를 맡김(true) · 거둠(false)
+    setOwned(v) {
+      owned = !!v;
+      if (owned) { followUntil = 0; sentKey = ''; }
+    },
+    get owned() { return owned; },
+    // 맡은 화면: 보낼 상태 (보낼 때가 아니면 null). 할 일이 바뀌면 바로, 상대하는 중엔 0.2초마다, 한가하면 2초마다
+    // [x cm, z cm, 방향 0~255, 할 일 번호, 상대 학생, 표시(1 화남 · 2 노려봄), 체력 ×10, 공격 횟수, 쫓는 곤충]
+    syncOut(t) {
+      if (px === null) return null;
+      const code = MODE_CODE[mode] ?? 0;
+      const fl = (angry ? 1 : 0) | (targeting ? 2 : 0);
+      const key = `${code}|${foeSid}|${fl}|${atkSeq}|${preyId}|${mon.state === 'gone'}`;
+      const active = code !== 0 || sinceHit < 3 || Math.hypot(kx, kz) > 0.05;
+      if (t - sentAt < (key !== sentKey ? 50 : active ? 200 : 2000)) return null;
+      sentKey = key;
+      sentAt = t;
+      return [Math.round(px * 100), Math.round(pz * 100), Math.round((((heading % TAU) + TAU) % TAU) / TAU * 256) & 255,
+        code, foeSid ?? '', fl, Math.round(Math.max(0, hp) * 10), atkSeq, preyId ?? ''];
+    },
+    // 따르는 화면: 맡은 화면이 보낸 상태를 받음
+    syncIn([x, z, h, code, fs, fl, hp10, atk, prey]) {
+      if (owned) return;
+      const t = performance.now();
+      const fresh = t >= followUntil; // 한동안 소식이 없다가 처음 받음
+      followUntil = t + 1500;
+      const nx = x / 100, nz = z / 100;
+      let vx = 0, vz = 0;
+      if (snap && !fresh) {
+        const st = Math.max(0.05, (t - snap.t) / 1000);
+        vx = THREE.MathUtils.clamp((nx - snap.x) / st, -5, 5);
+        vz = THREE.MathUtils.clamp((nz - snap.z) / st, -5, 5);
+      }
+      snap = { x: nx, z: nz, h: (h / 256) * TAU, t, vx, vz };
+      const alive = !BUSY.has(mon.state) || mon.state === 'hit';
+      const m = MODES[code] ?? 'route';
+      if (m !== mode && !(m === 'route' && (mode === 'duo' || mode === 'trip'))) {
+        if (alive && m === 'rage') { rageLeft = RAGE_TIME; mon.play('angry'); }
+        else if (alive && m === 'spot') { spotLeft = SPOT_TIME; mon.play('notice'); }
+        else if (alive && m === 'sulk') mon.play('sulk');
+        else if (m === 'flee') { fleeT = 0; fleeRun = 0; }
+        if (m !== 'hunt') swatting = false;
+        mode = m;
+      }
+      angry = !!(fl & 1);
+      targeting = !!(fl & 2);
+      foeSid = fs || null;
+      preyId = m === 'hunt' || m === 'sulk' ? prey || null : null;
+      if (!fresh && atk !== atkSeen && alive && mon.state !== 'hit') { mon.play('attack'); attackT = 0; attackCool = ATTACK_COOL; }
+      atkSeen = atk;
+      const nh = hp10 / 10;
+      if (Math.abs(nh - hp) > 0.05) hp = nh;
+      if (hp <= 0 && alive && mon.state !== 'spawn') { attackT = -1; mon.play('die'); }
     },
     // 맞음: (ax, az) 쪽에서 dmg(방어력까지 뺀 값)만큼 맞는다
     takeHit(ax, az, dmg, byMe) {
@@ -1070,7 +1157,7 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
       if (!armored) heading = Math.atan2(ax - px, az - pz); // 때린 쪽을 돌아봄
       hp -= dmg;
       sinceHit = 0;
-      if (byMe) angry = true; // 성격과 상관없이 나한테 맞으면 화가 나서 쫓아와 반격 (멀어지면 잊음)
+      if (byMe) { angry = true; if (mySid && !isFollow()) foeSid = mySid; } // 성격과 상관없이 나한테 맞으면 화가 나서 쫓아와 반격 (멀어지면 잊음)
       if (hp <= 0) {
         attackT = -1;
         mon.play('die');
@@ -1083,9 +1170,13 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
       }
       return { x: px, z: pz, y: 0.07 * S, dmg, kind, lv: STATS.lv, id, dead: hp <= 0 };
     },
-    // me: 내 캐릭터 (없으면 아직 입장 전)
-    update(dt, me) {
+    // meLocal: 내 캐릭터 (없으면 아직 입장 전) · ctx: { sid: 내 학생 번호, people: 같은 맵 학생들 [{ sid, x, z }] } (없으면 나만 봄)
+    // 아래에서 me 는 이 몬스터가 상대하는 학생 (pickFoe) — 공격이 닿았는지만 내 캐릭터(meLocal)로 본다
+    update(dt, meLocal, ctx = null) {
       frameDt = dt;
+      const follow = isFollow();
+      const me = pickFoe(meLocal, ctx, follow);
+      if (follow && !me && ENGAGED.has(mode)) mode = 'route'; // 상대하던 학생이 이 맵에 없음
       const { s, th, x: tx, z: tz } = target();
       extraY = 0;
       if (qMark) qMark.visible = false;
@@ -1118,11 +1209,15 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
         attackT += dt;
         if (attackT >= STRIKE_AT) {
           attackT = -1;
-          if (me && near < BODY_R + ATTACK_REACH + 0.25) onAttack?.(px, pz, STATS, id);
+          if (meLocal && Math.hypot(meLocal.x - px, meLocal.z - pz) < BODY_R + ATTACK_REACH + 0.25) onAttack?.(px, pz, STATS, id); // 닿았는지는 내 캐릭터로
         }
       } else attackT = -1;
 
-      // 성격에 따라 할 일 정하기
+      // 성격에 따라 할 일 정하기 (따르는 화면은 받은 할 일 그대로: 동작이 끝나기까지 시간만 셈)
+      if (follow) {
+        if (mode === 'rage') rageLeft -= dt;
+        if (mode === 'spot') spotLeft -= dt;
+      } else {
       const hostile = TEMPER === 'aggro' || angry;
       // 나를 볼 수 있는지: 가까이 있고, 바라보는 쪽 앞에 있음 (뒤에서 다가가면 모른다)
       // 자는 중엔 눈을 감고 있어서 아주 가까이 와야(발소리) 깸
@@ -1182,6 +1277,7 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
         } else if (calm) mode = 'route';
       } else mode = 'route';
       if (mode !== 'hunt' && mode !== 'sulk') preyId = null;
+      }
       // 합동 모션 중: 아무 일 없으면(제 길로 돌아갈 차례면) 계속하고, 맞거나 나를 보고 놀라는 등 다른 일이 생기면 그만둠
       if (FLY) {
         if (busy) { if (trip) stopTrip(); if (self.duo) endDuo(self.duo); } // 맞으면 나들이·합동 그만
@@ -1236,12 +1332,12 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
       }
       for (const m of FADING) m.fade();
       // 제 길에서 너무 멀어지면 그만두고 돌아감
-      if ((mode === 'flee' || mode === 'chase' || mode === 'rage') && Math.hypot(tx - px, tz - pz) > (angry || mode === 'flee' ? ANGRY_LEASH : LEASH)) {
+      if (!follow && (mode === 'flee' || mode === 'chase' || mode === 'rage') && Math.hypot(tx - px, tz - pz) > (angry || mode === 'flee' ? ANGRY_LEASH : LEASH)) {
         mode = 'route';
         angry = false;
       }
       // 맞는 중(busy)이 아닌데 쫓지 않게 되면 나를 잊음: 다음에 다시 알아채면 또 '화남!'부터
-      if (!busy && mode !== 'chase' && mode !== 'rage') targeting = false;
+      if (!follow && !busy && mode !== 'chase' && mode !== 'rage') targeting = false;
       mon.setMood(targeting || duoMood ? 'angry' : null);
 
       if (mon.state === 'gone') {
@@ -1303,10 +1399,11 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
         } else {
           heading += wrap(want - heading) * Math.min(1, dt * 8);
           if (mon.state === 'walk') mon.play('idle');
-          if (attackCool <= 0 && Math.abs(wrap(want - heading)) < 0.6) {
+          if (!follow && attackCool <= 0 && Math.abs(wrap(want - heading)) < 0.6) { // 따르는 화면은 받은 공격 횟수로 (syncIn)
             mon.play('attack');
             attackT = 0;
             attackCool = ATTACK_COOL;
+            atkSeq = (atkSeq + 1) % 1000;
           }
         }
         lastKey = s.key;
@@ -1316,7 +1413,7 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
         if (mon.state === 'swat') {
           if (b) heading += wrap(Math.atan2(b.x - px, b.z - pz) - heading) * Math.min(1, dt * 6);
           // 두 번째 툭에 곤충이 놀라 날아감
-          if (taps < tapsAt.length && mon.time >= tapsAt[taps]) { taps++; if (taps === tapsAt.length && b) onSwat(preyId, px, pz); }
+          if (taps < tapsAt.length && mon.time >= tapsAt[taps]) { taps++; if (taps === tapsAt.length && b && !follow) onSwat(preyId, px, pz); } // 곤충을 날려 보내는 건 정하는 화면만
         } else if (b) {
           const d = Math.hypot(b.x - px, b.z - pz);
           const want = Math.atan2(b.x - px, b.z - pz);
@@ -2187,6 +2284,19 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
         }
       }
 
+      // 따르는 화면: 맡은 화면의 자리로 부드럽게 맞춤 (받은 뒤 움직인 만큼 앞질러 어림). 한가할 땐 모두 시계로 같은 길을 가므로 크게 어긋났을 때만
+      if (follow && snap && mon.state !== 'gone') {
+        const ahead = Math.min(0.3, (performance.now() - snap.t) / 1000);
+        const ex = snap.x + snap.vx * ahead - px, ez = snap.z + snap.vz * ahead - pz, e = Math.hypot(ex, ez);
+        const calm = mode === 'route' || mode === 'duo' || mode === 'trip';
+        if (e > 3) { px += ex; pz += ez; }
+        else if (!calm || e > 1) {
+          const k = 1 - Math.exp(-4 * dt);
+          px += ex * k;
+          pz += ez * k;
+          if (!calm) heading += wrap(snap.h - heading) * k;
+        }
+      }
       // 그래도 겹쳐 있으면(맞고 밀려났거나 같은 자리에서 다시 나타남) 서로 조금씩 밀어냄. 벽 너머로는 밀리지 않는다
       self.solid = mon.state !== 'gone' && mon.state !== 'die' && air < 0.1; // 날고 있는 구구는 다른 몬스터와 안 부딪힘
       if (self.solid) {
