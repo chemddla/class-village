@@ -72,6 +72,7 @@ function drawFieldBackground() {
   };
   dots(FIELD_MAP.trees, '#5f9a52', 1.6);
   dots(FIELD_MAP.rocks, '#a9a294', 1.2);
+  dots(FIELD_MAP.propCircles, '#b8a173', 1.2); // 통나무·덤불·건초더미·바위 언덕
   dots([{ ...PORTALS[1], r: 0.9 }], '#a98cff', 1);
   return bg;
 }

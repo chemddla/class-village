@@ -242,7 +242,7 @@ export const kPhase = (t, period, speed, n = 48) => {
   const I = (to) => { let sum = 0; const h = to / n; for (let i = 0; i < n; i++) sum += speed((i + 0.5) * h) * h; return sum; };
   return Math.floor(t / period) * I(period) + I(t % period);
 };
-export const kStand = (P, fold = 1) => { P.foldWings(fold); P.fly.position.y = STAND_Y; P.body.rotation.x = 0.05; };
+export const kStand = (P, fold = 1) => { P.foldWings(fold); P.fly.position.y = STAND_Y; P.body.rotation.x = 0.05; P.feet.forEach((f) => (f.rotation.x = 0)); }; // 발: 기본값은 날 때처럼 뒤로 접힌 자세(1.3)라 섰을 땐 똑바로 내림
 
 // ── 게임에 쓸 동작 ──
 kmotion('대기', '파닥파닥 몇 번 치고 날개 반쯤 접어 쓱 미끄러짐, 꽁지 길게 끌며 물결', (P, t) => {
@@ -578,6 +578,7 @@ export function createKkakkak({ onDone = null, outlineScale = 1 } = {}) {
   const M = Object.fromEntries(KKAK_MOTIONS.map((m) => [m.name, m]));
   const X = { 맞음: M['맞음'].extra(P), 쓰러짐: M['쓰러짐'].extra(P) };
   root.traverse((o) => { if (o.isMesh) o.userData.outlineWidth = FOOT.has(o.name) ? 0.0012 : 0.002; });
+  const feathers = root.children.filter((o) => o.name === '깃털'); // 맞음·쓰러짐 깃털: 그 동작이 끝나도 남지 않게 매 프레임 먼저 숨김 (깃대는 깃털 자식이라 같이 숨음)
   const smooth = poseSmoother([root]); // 동작이 바뀌어도 자세가 툭 튀지 않게
   const run = (name, c) => M[name].update(P, c, X[name] ?? {});
 
@@ -604,6 +605,7 @@ export function createKkakkak({ onDone = null, outlineScale = 1 } = {}) {
     t += dt;
     u += dt;
     kReset(P, t);
+    feathers.forEach((f) => (f.visible = false));
     if (state === 'idle') { // 서서 꽁지 까딱, 고개 휙휙 두리번 (화나 있으면 노려봄)
       kStand(P);
       P.tail.rotation.x = Math.max(0, Math.sin(t * 7)) * 0.3 * (t % 5 < 2 ? 1 : 0.3);

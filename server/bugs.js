@@ -2,10 +2,11 @@
 // 잠자리채에 잡힌다. 위치는 상태(state.bugs)로 모두에게 같게 보이고, 잡혔는지·도망갔는지는 서버가 정한다.
 import {
   ANIM, BUGS, BUG_SHY, RARITY, NET_CATCH, NET_ROOM, BUG_COUNT, BAG_MAX, XP,
-  WORLD, HALF, PLAZA, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm,
+  WORLD, HALF, PLAZA, riverCenterZ, RIVER_HALF_WIDTH, onGrass, toCm, fromCm, FIELD, FIELD_POND, inField,
 } from '../shared/world.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
+const FIELD_SHARE = 0.35; // 새로 나타나는 곤충 중 들판에 나오는 몫
 const RUNNING = 4.0; // 이보다 빠르면 달리는 중 (m/초)
 const WALKING = 0.8; // 이보다 빠르면 걷는 중
 const SCARE = 1.7; // 헛손질하면 이만큼 안의 겁 많은 곤충이 (확률로) 놀라 도망감 (m)
@@ -29,10 +30,12 @@ export function setupBugs(room, Bug, speedOf) {
     }
     return pool[0];
   }
+  // 셋에 하나는 들판 풀밭에
   function grassSpot(tries = 40) {
+    const field = Math.random() < FIELD_SHARE;
     for (let i = 0; i < tries; i++) {
-      const x = rnd(-(HALF - 1), HALF - 1);
-      const z = rnd(-(HALF - 1), HALF - 1);
+      const x = field ? FIELD.x + rnd(-FIELD.r, FIELD.r) : rnd(-(HALF - 1), HALF - 1);
+      const z = field ? FIELD.z + rnd(-FIELD.r, FIELD.r) : rnd(-(HALF - 1), HALF - 1);
       if (onGrass(x, z)) return [x, z];
     }
     return null;
@@ -43,7 +46,15 @@ export function setupBugs(room, Bug, speedOf) {
   function place(sp) {
     const s = { sp, born: Date.now(), life: rnd(150, 300) * 1000, h: Math.random() * Math.PI * 2, fly: 0 };
     if (sp.move === 'fly') {
-      if (sp.where === 'river') {
+      if (sp.where === 'river' && Math.random() < FIELD_SHARE) {
+        // 들판 연못 위 잠자리
+        s.pond = 1;
+        s.hx = FIELD_POND.x + rnd(-2, 2);
+        s.hz = FIELD_POND.z + rnd(-2, 2);
+        s.base = rnd(0.6, 1.1);
+        s.R = rnd(1.2, 2);
+        s.w = rnd(0.4, 0.6);
+      } else if (sp.where === 'river') {
         const x = rnd(-(HALF - 2), HALF - 2);
         s.hx = x;
         s.hz = riverCenterZ(x) + rnd(-1.5, 1.5);
@@ -71,7 +82,7 @@ export function setupBugs(room, Bug, speedOf) {
       s.next = Date.now() + rnd(18, 35) * 1000;
     } else if (sp.move === 'tree') {
       const fruit = new Set(WORLD.fruitTrees);
-      const free = WORLD.trees.map((t, i) => ({ t, i })).filter(({ t, i }) => !fruit.has(i) && t.kind === 0 && !taken.has(`t${i}`) && Math.abs(t.x) < 29 && Math.abs(t.z) < 29);
+      const free = WORLD.trees.map((t, i) => ({ t, i })).filter(({ t, i }) => !fruit.has(i) && t.kind === 0 && !taken.has(`t${i}`) && ((Math.abs(t.x) < 29 && Math.abs(t.z) < 29) || inField(t.x, t.z)));
       const pick = free[Math.floor(Math.random() * free.length)];
       if (!pick) return null;
       const { t, i } = pick;
@@ -150,7 +161,8 @@ export function setupBugs(room, Bug, speedOf) {
       // 집(home) 둘레를 팔랑팔랑, 가끔 집을 조금 옮김 (잠자리는 더 빠르고 넓게)
       if (now > s.nextHome) {
         s.nextHome = now + rnd(12, 22) * 1000;
-        for (let i = 0; i < 10; i++) {
+        if (s.pond) { s.gx = FIELD_POND.x + rnd(-3, 3); s.gz = FIELD_POND.z + rnd(-3, 3); }
+        for (let i = 0; i < 10 && !s.pond; i++) {
           const gx = s.hx + rnd(-5, 5);
           const gz = s.sp.where === 'river' ? riverCenterZ(gx) + rnd(-1.5, 1.5) : s.hz + rnd(-5, 5);
           if (s.sp.where === 'river' ? Math.abs(gx) < HALF : onGrass(gx, gz)) { s.gx = gx; s.gz = gz; break; }

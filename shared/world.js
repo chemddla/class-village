@@ -73,6 +73,7 @@ export const LIFE_SPOTS = [
 export const FRUITS = ['peach', 'apple', 'orange', 'pear'];
 export const FRUIT_NAMES = { peach: '복숭아', apple: '사과', orange: '오렌지', pear: '배' };
 export const VILLAGE_FRUIT = 'peach'; // 마을 과일나무에 열리는 과일
+export const FIELD_FRUIT = 'apple'; // 들판 과일나무에 열리는 과일
 export const FRUIT_MAX = 5; // 과일나무 한 그루에 열리는 개수
 export const FRUIT_REGROW = 45; // 딴 과일이 다시 열리기까지 (초)
 export const BAG_MAX = 99; // 가방에 넣을 수 있는 과일 한 종류의 최대 개수
@@ -219,7 +220,7 @@ export const NIBBLE_MS = 260; // 톡 한 번에 입을 찌에 댔다 떼는 빠�
 export const REEL_SLACK = 0.3; // 인터넷이 늦게 닿는 만큼 봐주는 시간 (초)
 // 이 자리에서 낚시할 수 있는 물: 'river' · 'sea' · null (강둑·바닷가 가까이에 서 있어야 함)
 export function waterNear(x, z) {
-  if (inField(x, z)) return null; // 들판 연못은 아직 낚시 못 함
+  if (inField(x, z)) return Math.hypot(x - FIELD_POND.x, z - FIELD_POND.z) - FIELD_POND.r < CAST_REACH ? 'river' : null; // 들판 연못: 민물고기(강과 같은 물고기)
   const river = Math.abs(z - riverCenterZ(x)) - RIVER_HALF_WIDTH;
   const sea = shoreN(x, z) - islandN(x, z);
   if (river < CAST_REACH && river <= sea) return 'river';
@@ -231,7 +232,7 @@ export function waterNear(x, z) {
 export const BOB_AHEAD = 0.95 * 1.7;
 // 찌가 떨어진 자리의 물: 'river' · 'sea' · null (물이 아니면 던질 수 없음)
 export function waterAt(x, z) {
-  if (inField(x, z)) return null;
+  if (inField(x, z)) return Math.hypot(x - FIELD_POND.x, z - FIELD_POND.z) < FIELD_POND.r - 0.15 ? 'river' : null;
   if (shoreN(x, z) - islandN(x, z) < 0.15) return 'sea'; // 물가(파도가 닿는 곳)부터 바다
   if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH - 0.15) return 'river';
   return null;
@@ -436,21 +437,78 @@ function generateField(seed = 20261123) {
       all.push(rock);
     }
   }
-  const colliders = all.map((o) => ({ x: o.x, z: o.z, r: o.r }));
+  // 지형지물 (부딪힘): 쓰러진 통나무 · 그루터기 · 덤불 · 건초더미 · 돌탑 · 큰 바위 언덕(여러 덩이, 삽으로 못 깸) · 버섯 무리(장식, 안 부딪힘)
+  // [종류, 개수, 부딪힘 반지름(크기 1), 높이(크기 1), 띄울 거리]
+  const props = [];
+  const KINDS = [['log', 10, 0.32, 0.55, 2.2], ['stump', 14, 0.38, 0.45, 1], ['bush', 22, 0.6, 0.85, 1], ['hay', 8, 0.65, 1.1, 1.6],
+    ['cairn', 6, 0.45, 1.1, 1.4], ['outcrop', 4, 2.4, 1.7, 2.5], ['mushroom', 22, 0, 0, 0.4]];
+  for (const [kind, n, r, h, margin] of KINDS) {
+    for (let i = 0, made = 0; i < 900 && made < n; i++) {
+      const x = FIELD.x + rnd();
+      const z = FIELD.z + rnd();
+      const s = 0.85 + rand() * 0.4;
+      if (!ok(x, z, margin + r * s, all)) continue;
+      const o = { kind, x, z, s, rot: rand() * Math.PI * 2, r: r * s, h: h * s };
+      props.push(o);
+      if (r) all.push(o);
+      made++;
+    }
+  }
+  // 부딪힘 원: 통나무는 길쭉해서 원 셋을 늘어놓고, 바위 언덕은 덩이마다 (모양은 field.js 와 맞춤)
+  const propCircles = props.flatMap((o) => {
+    if (o.kind === 'log') return [-0.85, 0, 0.85].map((k) => ({ x: o.x + Math.cos(o.rot) * k * o.s, z: o.z - Math.sin(o.rot) * k * o.s, r: 0.3 * o.s, h: o.h }));
+    if (o.kind === 'outcrop') return outcropStones(o).map((b) => ({ x: b.x, z: b.z, r: b.r * 0.9, h: b.r * 1.3 }));
+    return o.r ? [{ x: o.x, z: o.z, r: o.r, h: o.h }] : [];
+  });
+  // 꺾을 수 있는 들꽃(채집·무당벌레·꿀벌 자리): 무리 지어 핀다
+  const flowers = [];
+  for (let i = 0; i < 3000 && flowers.length < 160; i++) {
+    const c = flowers.length % 8 ? flowers[flowers.length - 1] : null; // 8송이마다 새 무리
+    const x = c ? c.x + (rand() * 2 - 1) * 1.6 : FIELD.x + rnd();
+    const z = c ? c.z + (rand() * 2 - 1) * 1.6 : FIELD.z + rnd();
+    if (ok(x, z, 0.4, all) && Math.hypot(x - FIELD.x, z - FIELD.z) > 3.6) flowers.push({ x, z, c: Math.floor(rand() * 4), s: 0.7 + rand() * 0.5 });
+  }
+  // 사과나무: 가운데 공터에서 가까운 둥근 나무 4그루 (FIELD_MAP.trees 번호)
+  const fruitTrees = trees.map((t, i) => ({ i, d: Math.hypot(t.x - FIELD.x, t.z - FIELD.z), k: t.kind }))
+    .filter((o) => o.k === 0 && o.d > 6).sort((a, b) => a.d - b.d).slice(0, 4).map((o) => o.i);
+  const colliders = [...trees, ...rocks].map((o) => ({ x: o.x, z: o.z, r: o.r }));
+  rocks.forEach((_, k) => { colliders[trees.length + k].rock = k; }); // 마을 목록에 합칠 때 번호를 고친다 (아래)
   colliders.push(...portalPillars(gate));
   colliders.push({ x: gate.x + 2.6, z: gate.z - 1.2, r: 0.2 }); // 들판 표지판
-  return { trees, rocks, colliders };
+  colliders.push(...propCircles);
+  return { trees, rocks, colliders, props, propCircles, flowers, fruitTrees };
+}
+// 바위 언덕 하나를 이루는 덩이들 { x, z, r } (늘 같은 모양: 자리로 정함)
+export function outcropStones(o) {
+  const out = [];
+  for (let k = 0; k < 4; k++) {
+    const a = o.rot + k * 1.7;
+    const d = k ? 0.9 + ((k * 0.37 + o.x) % 0.5) : 0;
+    out.push({ x: o.x + Math.cos(a) * d * o.s, z: o.z + Math.sin(a) * d * o.s, r: (k ? 0.75 - k * 0.08 : 1.05) * o.s });
+  }
+  return out;
 }
 
 // 한 번만 만들어 두고 함께 쓴다
 export const WORLD = generateWorld();
 WORLD.colliders.push(...portalPillars(PORTALS[0]));
 export const FIELD_MAP = generateField();
+// 들판 나무·바위·꽃도 마을 목록 뒤에 이어 붙인다: 벌목·바위 깨기·과일·채집·곤충이 번호 하나로 마을과 똑같이 돈다
+// (들판 k 번째 나무 = WORLD.trees[FIELD_MAP.base.trees + k]). 부딪힘은 들판 것(FIELD_MAP.colliders)을 따로 본다
+FIELD_MAP.base = { trees: WORLD.trees.length, rocks: WORLD.rocks.length, fruit: WORLD.fruitTrees.length };
+for (const c of FIELD_MAP.colliders) if (c.rock !== undefined) c.rock += FIELD_MAP.base.rocks;
+WORLD.fruitTrees.push(...FIELD_MAP.fruitTrees.map((k) => FIELD_MAP.base.trees + k));
+WORLD.trees.push(...FIELD_MAP.trees);
+WORLD.rocks.push(...FIELD_MAP.rocks);
+WORLD.flowers.push(...FIELD_MAP.flowers);
+// 과일나무 k(WORLD.fruitTrees 순서)에 열리는 과일
+export const fruitOf = (k) => (k >= FIELD_MAP.base.fruit ? FIELD_FRUIT : VILLAGE_FRUIT);
 
 function fieldBlocked(x, z, radius) {
   if (Math.hypot(x - FIELD.x, z - FIELD.z) > fieldEdge(x, z) - radius) return true;
   if (Math.hypot(x - FIELD_POND.x, z - FIELD_POND.z) < FIELD_POND.r + radius * 0.3) return true;
   for (const c of FIELD_MAP.colliders) {
+    if (c.rock !== undefined && ROCKS_GONE.has(c.rock)) continue;
     const rr = c.r + radius;
     if ((x - c.x) ** 2 + (z - c.z) ** 2 < rr * rr) return true;
   }
@@ -584,10 +642,11 @@ export const BUG_SHY = {
 };
 export const NET_CATCH = 0.42; // 그물 테가 지나간 길에서 이만큼 안에 있던 곤충이 잡힌다 (m)
 export const NET_ROOM = 3.2; // 휘두른 길은 캐릭터 둘레 이만큼 안이어야 믿는다 (m)
-export const BUG_COUNT = 44; // 마을에 늘 있는 곤충 수
+export const BUG_COUNT = 64; // 마을·들판에 늘 있는 곤충 수 (셋에 하나쯤 들판)
 // 곤충이 머무를 수 있는 풀밭: 갈 수 있는 곳이면서 광장·길·모래사장·강에서 떨어진 곳
 export function onGrass(x, z) {
   if (isBlocked(x, z, 0.3)) return false;
+  if (inField(x, z)) return Math.hypot(x - FIELD_POND.x, z - FIELD_POND.z) > FIELD_POND.r + 1 && Math.hypot(x - FIELD.x, z - FIELD.z) > 3.5;
   if (shoreN(x, z) - islandN(x, z) < BEACH.grass + 1) return false;
   if (Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + 1) return false;
   if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < PLAZA.r + 0.5) return false;
@@ -644,16 +703,16 @@ export function rollWood(i, rnd = Math.random) {
 // (사람이 지나가는 부딪힘 원 isBlocked 와 달리 물·강은 막지 않고, 높이를 본다: 낮은 벤치 위로 높게 휘두르면 지나가고,
 //  분수 위 접시 아래 빈 곳은 지나간다). 나무는 줄기만 (잎은 부드러워 통과). 모양은 village.js 의 실제 크기에 맞춘다
 const FOUNTAIN_TIERS = { low: { y: 1.0, r: 0.95 }, top: { y: 1.62, r: 0.5 } }; // village.js FOUNTAIN 과 같게
-function buildSolids(trees, rocks, extra) {
+function buildSolids(trees, rocks, extra, t0 = 0, r0 = 0) {
   return [
-    ...trees.map((t, i) => ({ x: t.x, z: t.z, r: 0.24 * t.s, h: 1.6 * t.s, kind: 'tree', i })),
-    ...rocks.map((o, i) => ({ x: o.x, z: o.z, r: o.r * 0.9, h: 0.9 * o.r, kind: 'rock', i })),
+    ...trees.map((t, i) => ({ x: t.x, z: t.z, r: 0.24 * t.s, h: 1.6 * t.s, kind: 'tree', i: t0 + i })),
+    ...rocks.map((o, i) => ({ x: o.x, z: o.z, r: o.r * 0.9, h: 0.9 * o.r, kind: 'rock', i: r0 + i })),
     ...extra,
   ];
 }
 const pillarSolids = (p) => portalPillars(p).map((c) => ({ ...c, h: 3, kind: 'post' }));
 const F = PLAZA.fountain;
-export const VILLAGE_SOLIDS = buildSolids(WORLD.trees, WORLD.rocks, [
+export const VILLAGE_SOLIDS = buildSolids(WORLD.trees.slice(0, FIELD_MAP.base.trees), WORLD.rocks.slice(0, FIELD_MAP.base.rocks), [
   // 예정지 표지판: 기둥 + 옆으로 긴 판 (village.js buildPlots)
   ...PLOTS.flatMap((p) => {
     const sz = p.z + p.d / 2 + 0.2;
@@ -683,7 +742,8 @@ export const VILLAGE_SOLIDS = buildSolids(WORLD.trees, WORLD.rocks, [
 export const FIELD_SOLIDS = buildSolids(FIELD_MAP.trees, FIELD_MAP.rocks, [
   ...pillarSolids(PORTALS[1]),
   { x: PORTALS[1].x + 2.6, z: PORTALS[1].z - 1.2, r: 0.2, h: 1.4, kind: 'sign' }, // 들판 표지판
-]);
+  ...FIELD_MAP.propCircles.map((c) => ({ ...c, kind: 'prop' })), // 통나무·덤불·건초더미 등
+], FIELD_MAP.base.trees, FIELD_MAP.base.rocks);
 // 땅 위 자리에서 단단한 것까지의 거리 (둥근 기둥은 가운데에서, 길쭉한 것은 선분에서)
 function solidDist(s, x, z) {
   if (!s.seg) return Math.hypot(x - s.x, z - s.z);
@@ -697,7 +757,7 @@ function solidDist(s, x, z) {
 export function solidAt(x, y, z, extra = [], pad = 0) {
   for (const list of [inField(x, z) ? FIELD_SOLIDS : VILLAGE_SOLIDS, extra]) {
     for (const s of list) {
-      if (s.kind === 'rock' && list === VILLAGE_SOLIDS && ROCKS_GONE.has(s.i)) continue; // 깨뜨린 바위
+      if (s.kind === 'rock' && ROCKS_GONE.has(s.i)) continue; // 깨뜨린 바위
       if (y < (s.y0 ?? 0) - pad || y > s.h + pad) continue;
       if (solidDist(s, x, z) < s.r + pad) return s;
     }

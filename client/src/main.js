@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, fruitOf, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
   SKILLS, SKILL_TYPES, inStrike,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
@@ -426,7 +426,7 @@ function hitFx(char, action) {
         village.shakeRock(pend.rock, fx, fz, 1.2);
       }
     }
-    const rock = action === 'fill' ? -1 : pend?.rock ?? (onField ? -1 : village.nearRock(px, pz, 0.5));
+    const rock = action === 'fill' ? -1 : pend?.rock ?? village.nearRock(px, pz, 0.5);
     if (action === 'fill') {
       // 덮기: 흙(모래)이 구덩이로 쏟아지며 먼지가 퐁
       const h = pend?.fill ? holes.get(pend.fill) : null;
@@ -680,7 +680,7 @@ const monsterOpts = {
 // 구구(비둘기)가 날아가 앉을 만한 곳: 마을 둥근 나무 꼭대기 언저리, 한동안 가만히 서 있는 캐릭터 머리 위
 // get() 은 지금 앉을 자리(월드)를, 못 앉게 되면(캐릭터가 움직이거나 떠남) null 을 돌려줌 → 앉아 있던 구구는 화들짝 날아감
 const PERCH_STILL = 3; // 캐릭터가 이만큼(초) 가만히 서 있어야 머리에 앉음
-const TREE_PERCHES = [...WORLD.trees.map((t, i) => treePerch(t, i)), ...FIELD_MAP.trees.map((t) => treePerch(t, -1, t.kind === 1 ? 1 : 0))].filter(Boolean)
+const TREE_PERCHES = WORLD.trees.map((t, i) => treePerch(t, i)).filter(Boolean) // 들판 나무도 WORLD.trees 뒤에 붙어 있다
   .map((p) => ({ x: p.x, z: p.z, get: () => ({ x: p.x, y: p.y - curveDrop(p.x, p.z), z: p.z }) }));
 const stillSince = new WeakMap(); // 캐릭터 → 마지막으로 움직인 자리·시각
 const headTopOff = new WeakMap(); // 캐릭터 → 머리 꼭대기가 머리 관절보다 얼마나 높은지 (m)
@@ -711,7 +711,7 @@ const fieldMonsters = [];
 const fieldJobs = FIELD_MONSTERS.map((spot, i) => () => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 // 들판 구구: 하악냥 자리(가장 넓음) 안쪽 작은 원을 돌게 해서(같은 원이면 하악냥에 막혀 줄만 섬) 하악냥과 합동 모션이 나게
 fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
-// 들판 깍깍이 (공격형 까치): 들판 곳곳 네 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
+// 들판 깍깍이 (중립형 까치): 들판 곳곳 네 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
 for (const i of [4, 10, 16, 22]) fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[i], r: FIELD_MONSTERS[i].r / 2, kind: 'kkakkak', phase: 6.1 + i * 1.7, perches: guguPerches }));
 // 들판 끄레용 (크레파스): 몽당연필 자리 안쪽 작은 원
 fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[1], r: FIELD_MONSTERS[1].r / 2, kind: 'kkreyong', phase: 9.4 }));
@@ -721,6 +721,7 @@ const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
 function showMap(f) {
   onField = f;
   village.group.visible = !f;
+  village.fieldPart.visible = f;
   field.group.visible = f;
   for (const m of plazaMonsters) m.root.visible = !f;
   for (const m of fieldMonsters) m.root.visible = f;
@@ -1395,7 +1396,7 @@ function netBlocked([x, y, z], solid) {
   if (solid.kind === 'head') {
     // 다른 학생 머리: 별만 톡 (흔들기·움찔은 netBonk 에서)
   } else if (solid.kind === 'tree' || solid.kind === 'spot') {
-    if (solid.kind === 'tree' && !onField) village.shakeTree(solid.i, Math.sin(me.targetRot), Math.cos(me.targetRot), 0.45);
+    if (solid.kind === 'tree') village.shakeTree(solid.i, Math.sin(me.targetRot), Math.cos(me.targetRot), 0.45);
     FX.burst('leaf', 5, x, y, z, opts);
     FX.burst('wood', 4, x, y, z, opts);
   } else {
@@ -1548,10 +1549,8 @@ function shovelTarget() {
     if (d < best) { best = d; fill = { fill: id, x: h.x, z: h.z }; }
   }
   if (fill) return fill;
-  if (!onField) {
-    const rock = village.nearRock(ax, az, 0.5);
-    if (rock >= 0) return { rock, x: WORLD.rocks[rock].x, z: WORLD.rocks[rock].z };
-  }
+  const rock = village.nearRock(ax, az, 0.5);
+  if (rock >= 0) return { rock, x: WORLD.rocks[rock].x, z: WORLD.rocks[rock].z };
   return groundKind(ax, az) ? { dig: true, x: ax, z: az } : null;
 }
 function useShovel() {
@@ -1729,7 +1728,7 @@ const input = createInput({
       const d = local.clickDrop ?? nearDrop(me.x, me.z); // 마우스로 콕 누른 것이 있으면 그것부터
       local.clickDrop = null;
       const t = d ? null : findFruit(me.x, me.z);
-      if (!d && !t) { toast(`${FRUIT_NAMES[VILLAGE_FRUIT]}가 열린 과일나무에 바짝 붙어서 F를 눌러 보세요`); return; }
+      if (!d && !t) { toast(`${FRUIT_NAMES[fruitOf(onField ? WORLD.fruitTrees.length - 1 : 0)]}가 열린 과일나무에 바짝 붙어서 F를 눌러 보세요`); return; }
       const item = d && drops.get(d.id)?.f;
       if (d && (bag.get(item) ?? 0) >= BAG_MAX) { toast(`가방에 ${WOOD_BY_ID[item]?.name ?? STONE_BY_ID[item]?.name ?? FRUIT_NAMES[item] ?? '이것'}이(가) 가득 찼어요`); return; }
       const aim = d ?? t;
@@ -1921,7 +1920,7 @@ function attach(r) {
         createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts }),
         createPlazaMonsters(scene, { ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches }),
         createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkakkak', phase: 13.4, perches: guguPerches }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkreyong', phase: 19.6 })]; // 깍깍이: 공격형이라 다가가면 쫓아옴 · 끄레용: 도망형 크레파스
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkreyong', phase: 19.6 })]; // 깍깍이: 중립형이라 사람은 본 척도 안 함 · 끄레용: 중립형 크레파스
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });
@@ -2416,7 +2415,7 @@ function updateMe(dt) {
     const grab = nearDrop(me.x, me.z);
     const shake = !grab && findFruit(me.x, me.z);
     ui.pickBtn.classList.toggle('hidden', !grab && !shake);
-    const label = grab ? `${FRUIT_ICON[VILLAGE_FRUIT]}<span>F 줍기</span>` : '🌳<span>F 흔들기</span>';
+    const label = grab ? `${FRUIT_ICON[drops.get(grab.id)?.f] ?? (WOOD_BY_ID[drops.get(grab.id)?.f] ? '🪵' : '🪨')}<span>F 줍기</span>` : '🌳<span>F 흔들기</span>';
     if (ui.pickBtn.dataset.label !== label) { ui.pickBtn.dataset.label = label; ui.pickBtn.innerHTML = label; }
   }
   if (local.actLeft > 0) {

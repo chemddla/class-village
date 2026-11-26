@@ -7,7 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
-  WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
+  WORLD, fruitOf, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
   PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL, canWield,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
@@ -159,7 +159,7 @@ class VillageRoom extends Room {
         const d = new Drop();
         d.x = toCm(x);
         d.z = toCm(z);
-        d.f = VILLAGE_FRUIT;
+        d.f = fruitOf(k);
         d.k = k;
         this.state.drops.set(id, d);
         this.dropAt.set(id, now + DROP_LIFE * 1000);
@@ -293,7 +293,7 @@ class VillageRoom extends Room {
         const f = new Drop();
         f.x = toCm(fx);
         f.z = toCm(fz);
-        f.f = VILLAGE_FRUIT;
+        f.f = fruitOf(k);
         f.k = k;
         this.state.drops.set(fid, f);
         this.dropAt.set(fid, now + DROP_LIFE * 1000);

@@ -1,8 +1,10 @@
 // 들판(저렙 사냥터, 가명): 숲으로 둘러싸인 넓게 트인 풀밭. 남쪽 포탈에서 흙길이 가운데로 이어지고,
-// 서쪽에 작은 연못, 군데군데 키 큰 풀숲·바위·나무, 가운데 풀밭에서 날개콩들이 돌아다닌다
+// 서쪽에 작은 연못, 군데군데 키 큰 풀숲·바위·나무, 가운데 풀밭에서 날개콩들이 돌아다닌다.
+// 들판 안 나무·바위·꺾는 꽃은 마을 목록(WORLD)에 붙어 village.js 가 그린다 (벌목·바위 깨기·과일·채집이 마을과 똑같이 됨).
+// 여기서는 땅·연못·둘레 숲·풀숲·장식 꽃·지형지물(통나무·그루터기·덤불·건초더미·돌탑·바위 언덕·버섯)만 그린다
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { FIELD, FIELD_MAP, FIELD_POND, FIELD_MONSTERS, PORTALS, fieldEdge } from '../../shared/world.js';
+import { FIELD, FIELD_MAP, FIELD_POND, FIELD_MONSTERS, PORTALS, fieldEdge, outcropStones } from '../../shared/world.js';
 import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop, instancedCells, tiled } from './materials.js';
 import { roundCanopy, pineCanopy, ovalCanopy, trunkGeometry } from './village.js';
 import { makeLabel } from './label.js';
@@ -88,10 +90,10 @@ function buildPond(group) {
 }
 
 const TREE_CELL = 20;
-// 나무: 들판 안 나무(부딪힘) + 가장자리를 빽빽이 두르는 숲(장식, 어차피 못 들어감)
+// 나무: 가장자리를 빽빽이 두르는 숲(장식, 어차피 못 들어감). 들판 안 나무는 village.js 가 그린다
 function buildTrees(group, low) {
   const rand = seeded(20261124);
-  const list = FIELD_MAP.trees.map((t) => ({ ...t, look: t.kind === 1 ? 1 : 0 }));
+  const list = [];
   const ring = low ? 240 : 400;
   for (let i = 0; i < ring; i++) {
     const a = (i / ring) * Math.PI * 2 + rand() * 0.03;
@@ -164,21 +166,66 @@ function buildTrees(group, low) {
   };
 }
 
-function buildRocks(group) {
-  const geo = mergeGeometries([
-    new THREE.IcosahedronGeometry(0.72, 1).scale(1.1, 0.62, 0.95).translate(0, 0.3, 0),
-    new THREE.IcosahedronGeometry(0.42, 1).scale(1, 0.75, 1).translate(0.5, 0.2, 0.3),
-  ]);
-  const mat = toon(0xc9c1b0);
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const Y = new THREE.Vector3(0, 1, 0);
-  // 바위·풀·꽃도 나무처럼 칸으로 나눠 화면에 드는 칸만 그린다 (materials.js instancedCells)
-  instancedCells(group, FIELD_MAP.rocks, (n) => addOutline(new THREE.InstancedMesh(geo, mat, n)), (mesh, j, i) => {
-    const r = FIELD_MAP.rocks[i];
-    q.setFromAxisAngle(Y, r.rot);
-    mesh.setMatrixAt(j, m.compose(new THREE.Vector3(r.x, 0, r.z), q, new THREE.Vector3().setScalar(r.s)));
-  });
+// 지형지물: 종류마다 모양을 칠해 한 덩어리로 (몇십 개라 칸 나누기 없이). 자리·크기·부딪힘은 shared/world.js generateField
+const ni = (g) => (g.index ? g.toNonIndexed() : g);
+function propParts(o) {
+  const at = (g) => g.rotateY(o.rot).scale(o.s, o.s, o.s).translate(o.x, 0, o.z);
+  const local = [];
+  const p = (g, col) => local.push(paint(ni(g), col));
+  switch (o.kind) {
+    case 'log': // 쓰러진 통나무: 옆으로 누운 줄기 + 밝은 나이테 마구리 + 이끼 한 줌
+      p(new THREE.CylinderGeometry(0.28, 0.3, 2.2, 10).rotateZ(Math.PI / 2).translate(0, 0.27, 0), 0x9a6a45);
+      for (const k of [-1, 1]) p(new THREE.CircleGeometry(0.26, 10).rotateY(k * Math.PI / 2).translate(k * 1.105, 0.27, 0), 0xe8c48a);
+      p(new THREE.SphereGeometry(0.22, 8, 5).scale(1.6, 0.45, 1).translate(0.3, 0.52, 0.05), 0x7fae4f);
+      break;
+    case 'stump': // 그루터기: 짧은 줄기 + 나이테 윗면 + 뿌리
+      p(new THREE.CylinderGeometry(0.32, 0.4, 0.42, 10).translate(0, 0.21, 0), 0xa8764a);
+      p(new THREE.CircleGeometry(0.3, 10).rotateX(-Math.PI / 2).translate(0, 0.425, 0), 0xf0d39c);
+      p(new THREE.RingGeometry(0.14, 0.17, 10).rotateX(-Math.PI / 2).translate(0, 0.43, 0), 0xc99a68);
+      for (let k = 0; k < 4; k++) p(new THREE.CapsuleGeometry(0.07, 0.3, 2, 6).rotateZ(Math.PI / 2 - 0.3).translate(0.42, 0.05, 0).rotateY(k * 1.6 + 0.4), 0x9a6a45);
+      break;
+    case 'bush': // 덤불: 몽글몽글 초록 + 빨간 열매
+      for (const [x, y, z, r] of [[0, 0.42, 0, 0.5], [0.38, 0.3, 0.1, 0.36], [-0.34, 0.32, -0.08, 0.38], [0.05, 0.3, 0.36, 0.32]]) p(new THREE.IcosahedronGeometry(r, 1).translate(x, y, z), 0x6fae4c);
+      for (let k = 0; k < 6; k++) p(new THREE.SphereGeometry(0.06, 6, 4).translate(Math.cos(k * 1.1) * 0.46, 0.35 + (k % 3) * 0.12, Math.sin(k * 1.1) * 0.46), 0xe0453a);
+      break;
+    case 'hay': // 둥근 건초 더미 (옆으로 누운 원통) + 끈
+      p(new THREE.CylinderGeometry(0.6, 0.6, 0.95, 14).rotateZ(Math.PI / 2).translate(0, 0.6, 0), 0xe6c66a);
+      for (const k of [-1, 1]) p(new THREE.CircleGeometry(0.56, 14).rotateY(k * Math.PI / 2).translate(k * 0.48, 0.6, 0), 0xd4ad4e);
+      for (const k of [-0.22, 0.22]) p(new THREE.TorusGeometry(0.605, 0.025, 4, 16).rotateY(Math.PI / 2).translate(k, 0.6, 0), 0xa8764a);
+      break;
+    case 'cairn': { // 돌탑: 납작한 돌을 작아지게 쌓기
+      let y = 0;
+      for (let k = 0; k < 5; k++) {
+        const r = 0.42 - k * 0.07;
+        p(new THREE.IcosahedronGeometry(r, 1).scale(1, 0.5, 1).rotateY(k).translate(0, y + r * 0.45, 0), k % 2 ? 0xbdb6a8 : 0xa9a294);
+        y += r * 0.85;
+      }
+      break;
+    }
+    case 'mushroom': // 버섯 무리 (장식): 빨간 갓·흰 점, 몇 개는 갈색
+      for (let k = 0; k < 5; k++) {
+        const x = Math.cos(k * 2.3) * 0.3 * (k % 3);
+        const z = Math.sin(k * 2.3) * 0.3 * (k % 3);
+        const h = 0.12 + (k % 2) * 0.08;
+        p(new THREE.CylinderGeometry(0.03, 0.04, h, 6).translate(x, h / 2, z), 0xf3ead8);
+        p(new THREE.SphereGeometry(0.09 + (k % 2) * 0.03, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.7, 1).translate(x, h, z), k === 3 ? 0xb07a4a : 0xe2513f);
+      }
+      break;
+    default: break;
+  }
+  const parts = local.map(at);
+  // 바위 언덕: 큰 덩이 여럿 (자리는 outcropStones, 부딪힘과 같게)
+  if (o.kind === 'outcrop') {
+    for (const [k, b] of outcropStones(o).entries()) {
+      parts.push(paint(new THREE.IcosahedronGeometry(b.r, 1).scale(1.05, 0.85 + (k % 2) * 0.2, 0.95).rotateY(o.rot + k).translate(b.x, b.r * 0.55, b.z), k ? 0xb9b2a4 : 0xc9c1b0));
+      if (k) parts.push(paint(ni(new THREE.SphereGeometry(b.r * 0.5, 8, 4).scale(1.4, 0.3, 1).translate(b.x, b.r * 1.15, b.z)), 0x8fbf5e)); // 위에 풀
+    }
+  }
+  return parts;
+}
+function buildProps(group) {
+  const geo = mergeGeometries(FIELD_MAP.props.flatMap(propParts));
+  group.add(addOutline(new THREE.Mesh(geo, vertexColorToon), 0.02));
 }
 
 // 풀이 자랄 곳: 들판 안, 흙길·연못·바위·나무 밖
@@ -270,7 +317,7 @@ export function buildField(scene, { low = false } = {}) {
   group.add(buildGround());
   buildPond(group);
   const cullTrees = buildTrees(group, low);
-  buildRocks(group);
+  buildProps(group);
   buildMeadow(group, low);
   buildSign(group, labels);
   const portal = buildPortal(GATE);

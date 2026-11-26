@@ -21,21 +21,21 @@ import { syncToon, batchRigid } from '../villager/toon.js';
 //   'neutral' 중립형: 별다른 행동 없이 제 할 일만 함
 //   'aggro'   공격형: 다가와서 공격
 const KINDS = {
-  nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter', temper: 'flee' },
-  mongdang: { create: createMongdang, r: 0.042, special: 'scribble', temper: 'flee' },
-  banjjok: { create: createBanjjok, r: 0.04, special: 'rub', temper: 'flee', size: 1.35, shadow: [1, 0.62] }, // 납작해서 조금 크게 · 그림자는 길쭉하게 · 몸통박치기도 0.47초에 닿음
+  nalgae: { create: createNalgaekong, r: 0.065, special: 'flutter', temper: 'neutral' },
+  mongdang: { create: createMongdang, r: 0.042, special: 'scribble', temper: 'neutral' },
+  banjjok: { create: createBanjjok, r: 0.04, special: 'rub', temper: 'neutral', size: 1.35, shadow: [1, 0.62] }, // 납작해서 조금 크게 · 그림자는 길쭉하게 · 몸통박치기도 0.47초에 닿음
   haak: { create: createHaaknyang, r: 0.033, special: 'groom', temper: 'flee', run: 1.5, size: 1.15, shadow: [0.75, 1.15], hunts: true, // 둘레 곤충을 쫓아가 툭툭 침
     // 고양이답게: 돌아다니기보다 한 자리에서 오래 낮잠 자고 그루밍하다가, 가끔 조금 걸어 자리를 옮김
     plan: [['walk', 2.5], ['idle', 2], ['special', 2.7], ['special', 2.7], ['sleep', 20], ['idle', 2.5], ['special', 2.7], ['walk', 2], ['idle', 4], ['sleep', 14], ['idle', 2]] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
   // 구구(비둘기): 중립형이라 사람을 봐도 제 할 일만. 뒤뚱뒤뚱 걷다 모이 콕콕, 가끔 짝! 날아올랐다 내려앉음 · 하악냥보다 작게
   gugu: { create: createGugu, r: 0.03, special: 'peck', temper: 'neutral', size: 0.75, shadow: [0.8, 1.1],
     plan: [['walk', 4], ['idle', 2.5], ['special', 2], ['walk', 3], ['special', 2], ['fly', 3.4], ['idle', 2], ['walk', 5], ['special', 2], ['idle', 3]], flies: {} },
-  // 깍깍이(까치): 공격형 깡패. 깡총깡총 다니며 깍깍, 사람을 보면 화내고 쫓아와 덮쳐 쪼기. 구구처럼 나들이를 다니는데 더 높이·멀리·자주
-  kkakkak: { create: createKkakkak, r: 0.03, special: 'caw', temper: 'aggro', size: 0.85, shadow: [0.8, 1.2],
+  // 깍깍이(까치): 중립형 깡패. 깡총깡총 다니며 깍깍, 사람은 본 척도 안 함 (몬스터들만 괴롭힘). 구구처럼 나들이를 다니는데 더 높이·멀리·자주
+  kkakkak: { create: createKkakkak, r: 0.03, special: 'caw', temper: 'neutral', size: 0.85, shadow: [0.8, 1.2],
     plan: [['walk', 3], ['idle', 2.5], ['special', 3], ['walk', 4], ['idle', 2], ['walk', 3], ['special', 3], ['idle', 2.5]],
     flies: { speed: 3.4, chance: 0.1, cool: 7, far: 0.5, farDist: [20, 34], farArc: 5, nearArc: 1.0 } }, // 나들이 설정 (없는 값은 구구 값)
-  // 끄레용(크레파스): 도망형. 콩콩 다니다 물구나무 서서 바닥에 빙글빙글 낙서, 가만히 있으면 종이옷이 줄줄 흘러내림
-  kkreyong: { create: createKkreyong, r: 0.025, special: 'scribble', temper: 'flee', size: 1.3 },
+  // 끄레용(크레파스): 중립형. 콩콩 다니다 물구나무 서서 바닥에 빙글빙글 낙서, 가만히 있으면 종이옷이 줄줄 흘러내림
+  kkreyong: { create: createKkreyong, r: 0.025, special: 'scribble', temper: 'neutral', size: 1.3 },
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -97,11 +97,13 @@ const NALGAE_TOP = 0.0618; // 날개콩 몸 공 가운데에서 정수리까지 
 const sm = (x, a, b) => THREE.MathUtils.smoothstep(x, a, b);
 // 구구가 날 때 넘어가야 하는 것들: 둥근 기둥 { x, z, r, top(땅에서 높이 m) } — 나무는 잎까지, 바위, 분수·벤치·가로등·표지판·포탈 기둥
 // shortcut: 높이는 모양별 어림값(나무 잎 덩어리 크기 1.3·높이 3.9 × 크기), 새 물체를 마을에 놓으면 여기도 넣어야 함
-const SKY = [WORLD, FIELD_MAP].flatMap((m) => [
-  ...m.trees.map((t) => ({ x: t.x, z: t.z, r: 1.3 * t.s, top: 3.9 * t.s })),
-  ...m.rocks.map((o) => ({ x: o.x, z: o.z, r: 0.9 * o.s, top: 0.8 * o.s })),
-  ...m.colliders.slice(m.trees.length + m.rocks.length).map((c) => ({ x: c.x, z: c.z, r: c.r + 0.2, top: c.r >= 1 ? 2.2 : c.r >= 0.5 ? 0.8 : 2.8 })),
-]);
+// (들판 나무·바위는 WORLD.trees·rocks 뒤에 붙어 있다. 부딪힘 목록은 마을·들판 따로, 앞쪽 나무·바위 몫을 건너뛴다)
+const SKY = [
+  ...WORLD.trees.map((t) => ({ x: t.x, z: t.z, r: 1.3 * t.s, top: 3.9 * t.s })),
+  ...WORLD.rocks.map((o) => ({ x: o.x, z: o.z, r: 0.9 * o.s, top: 0.8 * o.s })),
+  ...[...WORLD.colliders.slice(FIELD_MAP.base.trees + FIELD_MAP.base.rocks), ...FIELD_MAP.colliders.slice(FIELD_MAP.trees.length + FIELD_MAP.rocks.length)]
+    .map((c) => ({ x: c.x, z: c.z, r: c.r + 0.2, top: c.h ? c.h + 0.1 : c.r >= 1 ? 2.2 : c.r >= 0.5 ? 0.8 : 2.8 })),
+];
 const GUGU_CLEAR = 0.3; // 물체 위를 이만큼 띄워 넘어감 (m)
 // 직선으로 날 때 물체를 뚫지 않으려면 포물선 꼭대기(arc)가 얼마나 높아야 하나 (출발·도착 자리를 덮는 물체 = 앉을 나무 등은 뺌)
 function clearArc(f, p, h0, h1, arc) {

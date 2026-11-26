@@ -18,6 +18,19 @@ assert.ok(isBlocked(FIELD.x, FIELD.z - 80)); // 들판 바깥 숲
 assert.ok(isBlocked(FIELD_POND.x, FIELD_POND.z));
 for (const m of FIELD_MONSTERS) assert.ok(!isBlocked(m.x + m.r, m.z), '날개콩 길');
 assert.equal(waterNear(FIELD.x, FIELD.z), null);
+assert.equal(waterNear(FIELD_POND.x + FIELD_POND.r + 0.5, FIELD_POND.z), 'river'); // 연못가에서는 낚시
+// 들판 나무·바위·꽃은 마을 목록 뒤에 붙고, 지형지물은 막히며 길·몬스터 자리를 막지 않는다
+import { WORLD, FIELD_MAP, fruitOf, ROCKS_GONE } from './world.js';
+assert.equal(WORLD.trees[FIELD_MAP.base.trees], FIELD_MAP.trees[0]);
+assert.equal(fruitOf(WORLD.fruitTrees.length - 1), 'apple');
+assert.equal(fruitOf(0), 'peach');
+for (const c of FIELD_MAP.propCircles) assert.ok(isBlocked(c.x, c.z), '지형지물은 부딪힘');
+const r0 = FIELD_MAP.base.rocks;
+assert.ok(isBlocked(WORLD.rocks[r0].x, WORLD.rocks[r0].z));
+ROCKS_GONE.add(r0);
+assert.ok(!isBlocked(WORLD.rocks[r0].x, WORLD.rocks[r0].z), '깨진 들판 바위는 지나감');
+ROCKS_GONE.delete(r0);
+console.log('지형지물', Object.entries(FIELD_MAP.props.reduce((t, o) => ({ ...t, [o.kind]: (t[o.kind] ?? 0) + 1 }), {})), '꽃', FIELD_MAP.flowers.length, '사과나무', FIELD_MAP.fruitTrees.length);
 console.log('world.check (들판): ok');
 
 // 레벨: 경계에서 정확히 오르고, 남은 경험치가 다음 레벨 몫으로 넘어간다

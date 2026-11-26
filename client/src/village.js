@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import {
   WORLD, HALF, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, RIVER_BANK_CLEAR, riverCenterZ,
   islandN, shoreN, islandRadius, BEACH, FISH, FISH_APPROACH, LURE_HESITATE, NIBBLE_MS, shadowLen, rollFish, NOTICE,
-  VILLAGE_FRUIT, FRUIT_MAX, PORTALS, WOOD_BY_ID, LIFE_SPOTS, STONE_BY_ID, DIG_HOLE, ROCKS_GONE,
+  fruitOf, FIELD_POND, inField, FRUIT_MAX, PORTALS, WOOD_BY_ID, LIFE_SPOTS, STONE_BY_ID, DIG_HOLE, ROCKS_GONE,
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
@@ -577,11 +577,11 @@ function buildTrees(group) {
   const fruitMeshes = new Map(); // 나무 번호 → 잎+과일 덩어리
   for (const { t, i } of kinds[3]) {
     const b = base[i];
-    const mesh = new THREE.Mesh(fruitCanopy(VILLAGE_FRUIT), leafMat);
+    const mesh = new THREE.Mesh(fruitCanopy(fruitOf(WORLD.fruitTrees.indexOf(i))), leafMat);
     mesh.matrixAutoUpdate = false;
     mesh.matrix.compose(b.pos, b.q, s.setScalar(t.s));
     b.leaves = (mm) => { mesh.matrix.copy(mm); mesh.matrixWorldNeedsUpdate = true; };
-    group.add(addOutline(mesh, 0.025, { sway: true }));
+    group.add(addOutline(mesh, 0.025, { sway: true }), t.z);
     fruitMeshes.set(i, mesh);
   }
 
@@ -601,7 +601,7 @@ function buildTrees(group) {
     // 과일나무 k(WORLD.fruitTrees 순서)에 남은 과일 수만큼만 매단다
     setFruitLeft(k, n) {
       const mesh = fruitMeshes.get(WORLD.fruitTrees[k]);
-      const geo = fruitCanopy(VILLAGE_FRUIT, Math.max(0, Math.min(FRUIT_MAX, n)));
+      const geo = fruitCanopy(fruitOf(k), Math.max(0, Math.min(FRUIT_MAX, n)));
       if (!mesh || mesh.geometry === geo) return;
       mesh.geometry = geo;
       mesh.clear(); // 외곽선도 새 모양에 맞춰 다시 두른다
@@ -1410,7 +1410,7 @@ function buildFishShadows(group) {
   const inner = basic(0x123246, { transparent: true, opacity: 0.32, depthWrite: false });
   const outer = basic(0x123246, { transparent: true, opacity: 0.1, depthWrite: false }); // 물에 번진 듯한 가장자리
   const fish = [];
-  const make = (kind, y) => {
+  const make = (kind, y, pond = false) => {
     const parts = [[inner, 1], [outer, 1.18]].map(([mat, k]) => {
       const m = new THREE.Mesh(base.clone(), mat);
       m.userData.k = k;
@@ -1418,7 +1418,7 @@ function buildFishShadows(group) {
       group.add(m);
       return m;
     });
-    const f = { kind, parts, base: base.attributes.position.array.slice(), ph: rand() * 6, wag: 0, x: 0, z: 0, hx: 1, hz: 0, away: 0 };
+    const f = { kind, pond, parts, base: base.attributes.position.array.slice(), ph: rand() * 6, wag: 0, x: 0, z: 0, hx: 1, hz: 0, away: 0 };
     spawn(f);
     return f;
   };
@@ -1426,7 +1426,11 @@ function buildFishShadows(group) {
   function spawn(f) {
     f.len = shadowLen(rollFish(f.kind, rand).size) * (0.92 + rand() * 0.16);
     for (const m of f.parts) m.scale.setScalar(f.len * m.userData.k);
-    if (f.kind === 'river') {
+    if (f.pond) {
+      f.a = rand() * Math.PI * 2;
+      f.d = 0.8 + rand() * (FIELD_POND.r - 1.4); // 연못 가운데에서 떨어진 거리
+      f.v = (rand() < 0.5 ? -1 : 1) * (0.2 + rand() * 0.25);
+    } else if (f.kind === 'river') {
       f.rx = (rand() * 2 - 1) * (HALF + 2);
       f.off = (rand() * 2 - 1) * 1.1;
       f.v = (rand() < 0.5 ? -1 : 1) * (0.22 + rand() * 0.3); // 느긋하게 (m/초)
@@ -1439,6 +1443,7 @@ function buildFishShadows(group) {
   }
   for (let i = 0; i < 20; i++) fish.push(make('river', -0.045));
   for (let i = 0; i < 80; i++) fish.push(make('sea', SEA_Y + 0.003)); // 섬 둘레가 길어서 넉넉히
+  for (let i = 0; i < 7; i++) fish.push(make('river', -0.06, true)); // 들판 연못 (민물고기, 물 높이 -0.07 바로 위)
   const showFish = (f, on) => { for (const m of f.parts) m.visible = on; };
   return {
     // 찌(bx, bz)를 입 앞에 둔 물고기 (입에서 NOTICE.dist 안, 헤엄치는 방향에서 NOTICE.angle 안) 중 가장 가까운 것
@@ -1468,7 +1473,15 @@ function buildFishShadows(group) {
         const burst = 0.45 + 0.8 * Math.max(0, Math.sin(t * 1.1 + f.ph)) ** 2;
         const step = f.v * burst * dt;
         f.wag += dt * (3 + 6 * burst);
-        if (f.kind === 'river') {
+        if (f.pond) {
+          // 연못: 가운데를 빙빙 돌며, 거리가 천천히 들쭉날쭉
+          const r = f.d + Math.sin(t * 0.3 + f.ph) * 0.4;
+          f.a += step / r;
+          f.x = FIELD_POND.x + Math.cos(f.a) * r;
+          f.z = FIELD_POND.z + Math.sin(f.a) * r;
+          f.hx = -Math.sin(f.a) * Math.sign(f.v);
+          f.hz = Math.cos(f.a) * Math.sign(f.v);
+        } else if (f.kind === 'river') {
           // 물살 따라 오가다가 강 끝(바다)에 가까워지면 돌아선다
           f.rx += step;
           if (Math.abs(f.rx) > 33) { f.v = -f.v; f.rx = Math.sign(f.rx) * 33; }
@@ -1780,18 +1793,26 @@ export function buildVillage(scene, { low = false } = {}) {
   const river = buildRiver();
   group.add(river.group);
   group.add(buildBridge());
-  const trees = buildTrees(group);
-  const rocks = buildRocks(group);
-  const holes = buildHoles(group);
-  buildMeadow(group, { low });
+  // 들판 나무·바위·꽃도 여기서 그린다(번호가 마을 목록에 이어 붙어 있음): 들판 쪽 칸은 들판에 있을 때만 보이는 fieldPart 에 넣는다
+  const fieldPart = new THREE.Group();
+  fieldPart.visible = false;
+  scene.add(fieldPart);
+  const into = { add: (m, z = m.boundingSphere.center.z) => (inField(0, z) ? fieldPart : group).add(m) };
+  // 구덩이·떨어진 물건·곤충·물고기·찌는 마을·들판 어디서나 보인다
+  const live = new THREE.Group();
+  scene.add(live);
+  const trees = buildTrees(into);
+  const rocks = buildRocks(into);
+  const holes = buildHoles(live);
+  buildMeadow(into, { low });
   buildPlots(group, labels);
   const fountain = buildPlaza(group);
   const clouds = buildClouds(group);
   const sea = buildSea(group);
-  const fishShadows = buildFishShadows(group);
-  const lure = buildLure(group);
-  const bugs = buildBugs(group);
-  const drops = buildDrops(group);
+  const fishShadows = buildFishShadows(live);
+  const lure = buildLure(live);
+  const bugs = buildBugs(live);
+  const drops = buildDrops(live);
   const portal = buildPortal(PORTALS[0]); // 광장 → 들판
   group.add(portal.group, portal.label);
   labels.push(portal.label);
@@ -1811,6 +1832,7 @@ export function buildVillage(scene, { low = false } = {}) {
 
   return {
     group,
+    fieldPart,
     labels,
     size: HALF,
     nearTree: (x, z, reach = 1) => nearest(WORLD.trees, x, z, reach),
