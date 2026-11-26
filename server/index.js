@@ -622,7 +622,11 @@ class VillageRoom extends Room {
       if (!Array.isArray(list)) return;
       const sid = client.sessionId;
       const mine = list.slice(0, 80).filter((e) => Array.isArray(e) && e.length <= 12 && this.monOwner.get(monId(e[0]))?.sid === sid);
-      if (mine.length) this.broadcast('monSync', mine, { except: client });
+      if (!mine.length) return;
+      // 맡은 학생과 같은 맵(들판/마을)에 있는 학생에게만: 몬스터는 가까운 학생이 맡으므로 맡은 학생 맵 = 몬스터 맵
+      const onMap = (q) => q && inField(fromCm(q.x), fromCm(q.z));
+      const field = onMap(this.state.players.get(sid));
+      for (const c of this.clients) if (c !== client && onMap(this.state.players.get(c.sessionId)) === field) c.send('monSync', mine);
     });
     this.clock.setInterval(() => { // 오랫동안 알려 오지 않는 학생(멀리 갔거나 다른 맵)이 맡던 몬스터는 풀어 줌
       const now = Date.now();
