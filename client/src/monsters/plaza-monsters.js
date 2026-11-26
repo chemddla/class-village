@@ -13,6 +13,7 @@ import { createGugu } from './gugu.js';
 import { createKkakkak, KKAK_JAB } from './kkakkak.js';
 import { createKkreyong } from './kkreyong.js';
 import { canvasTexture } from '../villager/textures.js';
+import { syncToon, batchRigid } from '../villager/toon.js';
 
 // 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격 · size(크기 배율, 없으면 1) · shadow(발밑 그림자 좌우·앞뒤 배율, 없으면 동그랗게)
 // 성격(temper): 캐릭터를 발견했을 때 어떻게 하는지
@@ -467,6 +468,9 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   };
   const mon = K.create({ fxParent: scene, outlineScale: OUTLINE_SCALE });
   mon.root.scale.setScalar(S);
+  // 부품을 재질마다 한 메시로 묶어 그리기 횟수를 줄인다 (묶은 메시는 스스로 화면 밖인지 못 가리므로 main 이 batches 를 숨긴다)
+  syncToon(mon.root, true, OUTLINE_SCALE);
+  mon.root.userData.batches = batchRigid(mon.root);
   // 동작이 바뀌면 바로 앞 자세를 적어 두고, 새 동작 자세로 BLEND 초 동안 이어 붙임 (나는 종류는 스스로 이어 붙임)
   // 나타나기·사라지기(spawn·gone)는 크기가 0에서/0으로 가는 동작이라 이어 붙이지 않음
   const poseNodes = [];

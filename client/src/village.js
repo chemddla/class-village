@@ -8,7 +8,7 @@ import {
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
-  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME, instancedCells, cullCells,
+  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME, instancedCells, cullCells, tiled, curveDrop,
 } from './materials.js';
 import { makeLabel } from './label.js';
 
@@ -61,7 +61,7 @@ function buildGround() {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  return new THREE.Mesh(geo, vertexColorToon);
+  return tiled(geo, seg, vertexColorToon);
 }
 
 function buildBridge() {
@@ -1156,6 +1156,7 @@ function holeParts(kind, seed) {
 function buildHoles(group) {
   const list = new Map(); // 번호 → { g, t, gone }
   const GROW = 0.25;
+  const ball = new THREE.Sphere(new THREE.Vector3(), 2); // 구덩이 + 흙무더기 둘레 (여유 포함)
   return {
     add(id, x, z, kind, fresh) {
       const parts = holeParts(kind, Number(id) * 31 + 7);
@@ -1174,8 +1175,11 @@ function buildHoles(group) {
       g.scale.setScalar(fresh ? 0.3 : 1);
     },
     remove(id) { const h = list.get(id); if (h) h.gone = 0; },
-    update(dt) {
+    // frustum: 화면에 드는 구덩이만 그린다 (조각 4개씩이라 80개면 그리기 320번). 조각은 둥근 지평선만큼 내려 그려지므로 그 자리로 견준다
+    update(dt, frustum) {
       for (const [id, h] of list) {
+        const { x, z } = h.g.position;
+        h.g.visible = !frustum || frustum.intersectsSphere(ball.set(ball.center.set(x, -curveDrop(x, z), z), 2));
         if (h.gone >= 0) {
           h.gone += dt;
           const k = Math.max(0, 1 - h.gone / 0.3);
@@ -1837,7 +1841,7 @@ export function buildVillage(scene, { low = false } = {}) {
     setRockGone: rocks.setGone,
     holes, // 삽으로 판 구덩이 (서버 상태를 따라 그림)
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
-    update(dt, t) {
+    update(dt, t, frustum) {
       TIME.value = t;
       cullCells();
       river.update(t);
@@ -1850,7 +1854,7 @@ export function buildVillage(scene, { low = false } = {}) {
       drops.update(dt);
       trees.update(dt);
       rocks.update(dt);
-      holes.update(dt);
+      holes.update(dt, frustum);
       portal.update(t);
     },
   };

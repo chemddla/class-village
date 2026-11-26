@@ -360,6 +360,19 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
   const ws = { u: 0, uv: 0, b: 0, bv: 0, e: 0, ev: 0, tx: 0, txv: 0, tz: 0, tzv: 0, trx: 0, trz: 0, tprev: null, tp: new THREE.Vector3(), tv: new THREE.Vector3(), t: null, prev: null, tmp: new THREE.Vector3(), vel: new THREE.Vector3(), q: new THREE.Quaternion() };
   const solid = [];
   move.traverse((o) => { if (o.isMesh && ['몸', '머리', '다리'].includes(o.name)) solid.push(o); }); // 꼬리는 빼서 늘어진 꼬리가 몸을 들어 올리지 않게
+  // 가장 낮은 점은 겉으로 가장 튀어나온 꼭짓점에서만 나온다: 사방 128방향마다 가장 먼 꼭짓점만 미리 골라 두고 ground 는 그것만 본다
+  // (전에는 매 장면 꼭짓점 2,900개를 훑어 한 마리에 0.25ms 가 들었다. 어긋남은 몸 반지름의 1% 남짓)
+  const tips = new Map(solid.map((m) => {
+    const p = m.geometry.attributes.position, pick = new Set();
+    for (let d = 0; d < 128; d++) {
+      const y = 1 - (2 * d + 1) / 128, r = Math.sqrt(1 - y * y), a = d * 2.399963;
+      const dx = Math.cos(a) * r, dz = Math.sin(a) * r;
+      let best = 0, far = -Infinity;
+      for (let i = 0; i < p.count; i++) { const k = p.getX(i) * dx + p.getY(i) * y + p.getZ(i) * dz; if (k > far) { far = k; best = i; } }
+      pick.add(best);
+    }
+    return [m, [...pick]];
+  }));
   return {
     // 땅 밑으로 파고든 만큼 통째로 들어 올림 (기울거나 찌부러져도 몸이 땅에 묻히지 않게)
     ground() {
@@ -373,14 +386,14 @@ function makeHaak({ eye = HAAK_EYES.bean.build } = {}) { // 기본 눈: 세로 �
         const p = m.geometry.attributes.position, e = m.matrixWorld.elements;
         if (m.isSkinnedMesh) { // 굽힌 다리: 무릎 뼈를 따라 옮긴 자리로
           m.skeleton.update();
-          for (let i = 0; i < p.count; i += 3) {
+          for (const i of tips.get(m)) {
             const v = m.applyBoneTransform(i, ws.tmp.fromBufferAttribute(p, i));
             const wy = e[1] * v.x + e[5] * v.y + e[9] * v.z + e[13];
             if (wy < min) min = wy;
           }
           continue;
         }
-        for (let i = 0; i < p.count; i += 2) {
+        for (const i of tips.get(m)) {
           const wy = e[1] * p.getX(i) + e[5] * p.getY(i) + e[9] * p.getZ(i) + e[13];
           if (wy < min) min = wy;
         }

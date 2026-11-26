@@ -251,6 +251,18 @@ button, input, textarea, select { font-family: inherit; }
 #join-btn:disabled { opacity: 0.6; }
 .error { color: #d0543c; min-height: 1.2em; margin: 10px 0 0; font-size: 14px; }
 
+/* 로딩 화면: 마을을 만드는 동안 화면이 멈춰 있어도 돌아가게, 동그라미는 transform 으로만 돌린다 */
+#loading {
+  position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; background: #bfe6ff; font-weight: 700; font-size: 17px;
+}
+#loading .spin {
+  width: 46px; height: 46px; border-radius: 50%; border: 5px solid #fff; border-top-color: var(--accent);
+  animation: loading-spin 0.9s linear infinite; will-change: transform;
+}
+#loading p { margin: 0; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+
 /* 도감 */
 #dex-btn {
   position: fixed; top: max(100px, calc(env(safe-area-inset-top) + 88px)); right: 12px;

@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FIELD, FIELD_MAP, FIELD_POND, FIELD_MONSTERS, PORTALS, fieldEdge } from '../../shared/world.js';
-import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop } from './materials.js';
+import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop, instancedCells, tiled } from './materials.js';
 import { roundCanopy, pineCanopy, ovalCanopy, trunkGeometry } from './village.js';
 import { makeLabel } from './label.js';
 import { buildPortal } from './portal.js';
@@ -57,7 +57,7 @@ function buildGround() {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  return new THREE.Mesh(geo, vertexColorToon);
+  return tiled(geo, seg, vertexColorToon);
 }
 
 function buildPond(group) {
@@ -169,15 +169,16 @@ function buildRocks(group) {
     new THREE.IcosahedronGeometry(0.72, 1).scale(1.1, 0.62, 0.95).translate(0, 0.3, 0),
     new THREE.IcosahedronGeometry(0.42, 1).scale(1, 0.75, 1).translate(0.5, 0.2, 0.3),
   ]);
-  const rocks = new THREE.InstancedMesh(geo, toon(0xc9c1b0), FIELD_MAP.rocks.length);
+  const mat = toon(0xc9c1b0);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const Y = new THREE.Vector3(0, 1, 0);
-  FIELD_MAP.rocks.forEach((r, i) => {
+  // 바위·풀·꽃도 나무처럼 칸으로 나눠 화면에 드는 칸만 그린다 (materials.js instancedCells)
+  instancedCells(group, FIELD_MAP.rocks, (n) => addOutline(new THREE.InstancedMesh(geo, mat, n)), (mesh, j, i) => {
+    const r = FIELD_MAP.rocks[i];
     q.setFromAxisAngle(Y, r.rot);
-    rocks.setMatrixAt(i, m.compose(new THREE.Vector3(r.x, 0, r.z), q, new THREE.Vector3().setScalar(r.s)));
+    mesh.setMatrixAt(j, m.compose(new THREE.Vector3(r.x, 0, r.z), q, new THREE.Vector3().setScalar(r.s)));
   });
-  group.add(addOutline(rocks));
 }
 
 // 풀이 자랄 곳: 들판 안, 흙길·연못·바위·나무 밖
@@ -211,14 +212,14 @@ function buildMeadow(group, low) {
     if (noise(x * 1.7, z * 1.7) < 0.5 || !grassy(x, z)) continue; // 무리 지어
     tufts.push({ x, z, s: 0.8 + rand() * 0.8 });
   }
-  const tuftMesh = new THREE.InstancedMesh(tuftGeo, windToon(0xffffff), tufts.length);
+  const tuftMat = windToon(0xffffff);
   const col = new THREE.Color();
-  tufts.forEach((t, i) => {
-    q.setFromEuler(e.set(0, rand() * Math.PI * 2, 0));
-    tuftMesh.setMatrixAt(i, m.compose(p.set(t.x, 0, t.z), q, s.set(t.s, t.s * (0.9 + rand() * 0.5), t.s)));
-    tuftMesh.setColorAt(i, col.setHSL(0.24 + rand() * 0.06, 0.5, 0.42 + rand() * 0.1));
+  for (const t of tufts) Object.assign(t, { rot: rand() * Math.PI * 2, tall: 0.9 + rand() * 0.5, hue: 0.24 + rand() * 0.06, light: 0.42 + rand() * 0.1 }); // 칸 순서와 상관없이 늘 같은 모양
+  instancedCells(group, tufts, (n) => new THREE.InstancedMesh(tuftGeo, tuftMat, n), (mesh, j, i) => {
+    const t = tufts[i];
+    mesh.setMatrixAt(j, m.compose(p.set(t.x, 0, t.z), q.setFromEuler(e.set(0, t.rot, 0)), s.set(t.s, t.s * t.tall, t.s)));
+    mesh.setColorAt(j, col.setHSL(t.hue, 0.5, t.light));
   });
-  group.add(tuftMesh);
 
   // 들꽃: 노랑·하양·주홍 (마을보다 들판다운 색)
   const palette = [0xfff08a, 0xffffff, 0xffbe94, 0xffd35c].map((c) => new THREE.Color(c));
@@ -230,15 +231,14 @@ function buildMeadow(group, low) {
     const z = FIELD.z + (rand() * 2 - 1) * FIELD.r;
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.7 + rand() * 0.5 });
   }
-  const stems = new THREE.InstancedMesh(stem, windToon(0x6aa84f), flowers.length);
-  const heads = new THREE.InstancedMesh(head, windToon(0xffffff, { vertexColors: true }), flowers.length);
-  flowers.forEach((f, i) => {
-    m.compose(p.set(f.x, 0, f.z), q.identity(), s.setScalar(f.s));
-    stems.setMatrixAt(i, m);
-    heads.setMatrixAt(i, m);
-    heads.setColorAt(i, palette[f.c]);
+  const stemMat = windToon(0x6aa84f);
+  const headMat = windToon(0xffffff, { vertexColors: true });
+  const pose = (i) => m.compose(p.set(flowers[i].x, 0, flowers[i].z), q.identity(), s.setScalar(flowers[i].s));
+  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(stem, stemMat, n), (mesh, j, i) => mesh.setMatrixAt(j, pose(i)));
+  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(head, headMat, n), (mesh, j, i) => {
+    mesh.setMatrixAt(j, pose(i));
+    mesh.setColorAt(j, palette[flowers[i].c]);
   });
-  group.add(stems, heads);
 }
 
 // 포탈 옆 나무 표지판 + 길가 울타리 몇 칸

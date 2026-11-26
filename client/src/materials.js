@@ -215,12 +215,14 @@ export function instancedCells(group, items, make, init) {
     const mesh = make(ids.length);
     ids.forEach((i, j) => { slot[i] = { mesh, j }; init(mesh, j, i); });
     mesh.computeBoundingSphere();
-    cellSpheres.push({ s: mesh.boundingSphere, y: mesh.boundingSphere.center.y, r: mesh.boundingSphere.radius });
+    cullCurved(mesh.boundingSphere);
     for (const o of mesh.children) if (o.isInstancedMesh) o.boundingSphere = mesh.boundingSphere; // 외곽선도 같은 공으로
     group.add(mesh);
   }
   return slot;
 }
+// 둘레 공 s 를 매 장면 둥근 지평선에 맞춰 늘릴 목록에 올린다 (cullCells 가 고친다)
+function cullCurved(s) { cellSpheres.push({ s, y: s.center.y, r: s.radius }); }
 // 매 장면: 그릴 때 둥근 지평선만큼 내려가므로(멀수록 많이, 십수 m까지) 둘레 공도 그만큼 아래로 늘려야 멀리서 내려와 화면에 드는 것이 빠지지 않는다
 export function cullCells() {
   for (const { s, y, r } of cellSpheres) {
@@ -229,6 +231,35 @@ export function cullCells() {
     s.center.y = y - drop / 2;
     s.radius = r + drop / 2 + 1; // +1m: 바람에 흔들리는 잎·외곽선 두께
   }
+}
+
+// 넓은 땅(PlaneGeometry, 한 변 seg 칸)을 한 장으로 두면 화면 밖까지 늘 다 그린다 (마을 땅 26만 삼각형):
+// 꼭짓점은 함께 쓰고 삼각형만 TILE 칸(30m)씩 나눈 조각으로 그려 화면 밖 조각은 빠지게 한다
+export function tiled(geo, seg, material) {
+  const TILE = 60;
+  const all = geo.index.array; // 칸마다 6개씩, 줄(iy) 차례로
+  const pos = geo.attributes.position;
+  const tiles = new THREE.Group();
+  const v = new THREE.Vector3();
+  for (let ty = 0; ty < seg; ty += TILE) {
+    for (let tx = 0; tx < seg; tx += TILE) {
+      const idx = [];
+      const box = new THREE.Box3();
+      for (let y = ty; y < Math.min(seg, ty + TILE); y++) {
+        for (let i = (y * seg + tx) * 6; i < (y * seg + Math.min(seg, tx + TILE)) * 6; i++) {
+          idx.push(all[i]);
+          box.expandByPoint(v.fromBufferAttribute(pos, all[i]));
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      for (const k in geo.attributes) g.setAttribute(k, geo.attributes[k]);
+      g.setIndex(idx);
+      g.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+      cullCurved(g.boundingSphere);
+      tiles.add(new THREE.Mesh(g, material));
+    }
+  }
+  return tiles;
 }
 
 // 꼭짓점마다 색을 넣은 도형을 하나로 합칠 때 쓰는 재질 (캐릭터 등)

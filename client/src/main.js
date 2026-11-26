@@ -705,13 +705,16 @@ const headPerch = (c) => ({
 });
 const guguPerches = () => [...TREE_PERCHES, ...[me, ...[...others.values()].map((o) => o.char)].filter(Boolean).map(headPerch)];
 const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
-const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
+// 들판 몬스터는 시작할 때 한꺼번에 만들지 않고(30마리에 0.5초 넘게 멈춘다), 첫 화면이 뜬 뒤 장면마다 한 마리씩 만든다 (frame 에서)
+// 자리와 동작은 시계로 정해지므로 늦게 만들어도 모두의 화면에서 같다
+const fieldMonsters = [];
+const fieldJobs = FIELD_MONSTERS.map((spot, i) => () => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 // 들판 구구: 하악냥 자리(가장 넓음) 안쪽 작은 원을 돌게 해서(같은 원이면 하악냥에 막혀 줄만 섬) 하악냥과 합동 모션이 나게
-fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
+fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
 // 들판 깍깍이 (공격형 까치): 들판 곳곳 네 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
-for (const i of [4, 10, 16, 22]) fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[i], r: FIELD_MONSTERS[i].r / 2, kind: 'kkakkak', phase: 6.1 + i * 1.7, perches: guguPerches }));
+for (const i of [4, 10, 16, 22]) fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[i], r: FIELD_MONSTERS[i].r / 2, kind: 'kkakkak', phase: 6.1 + i * 1.7, perches: guguPerches }));
 // 들판 끄레용 (크레파스): 몽당연필 자리 안쪽 작은 원
-fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[1], r: FIELD_MONSTERS[1].r / 2, kind: 'kkreyong', phase: 9.4 }));
+fieldJobs.push(() => createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[1], r: FIELD_MONSTERS[1].r / 2, kind: 'kkreyong', phase: 9.4 }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -2478,7 +2481,7 @@ function updateOthers(now) {
 
 // 개발 중 점검용 (그리기 횟수 등 확인)
 // step: 화면이 가려져 그리기가 멈춘 동안에도 내 캐릭터만 정해진 시간만큼 움직여 보는 점검용
-if (import.meta.env.DEV) window.__game = { field, renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, stats, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
+if (import.meta.env.DEV) window.__game = { field, village, renderer, scene, camera, others, cam, local, input, FX, arrows, setArrows, hereMonsters, stats, get me() { return me; }, get room() { return room; }, step(dt) { updateMe(dt); me?.update(dt); } };
 
 // ── 매 장면 ──
 const clock = new THREE.Clock();
@@ -2520,6 +2523,7 @@ function setMapSize(px) {
   addEventListener('resize', () => { if (store.get(localStorage, 'mapPx') !== null) setMapSize(mapNow()); });
 }
 const viewFrustum = new THREE.Frustum();
+const loading = document.getElementById('loading');
 const viewMatrix = new THREE.Matrix4();
 const viewSphere = new THREE.Sphere(new THREE.Vector3(), 3); // 캐릭터 + 머리 위 이름·든 물건·휘두른 궤적
 const FAR_ANIM = 9;
@@ -2564,7 +2568,7 @@ function frame() {
   const now = performance.now();
   // 히트스톱: 맞는 순간 아주 잠깐 캐릭터·파티클을 멈춰 '퍽' 하는 손맛을 준다 (카메라·풍경은 계속)
   const dt = FX.simDt(realDt);
-  village.update(realDt, now / 1000);
+  village.update(realDt, now / 1000, viewFrustum); // viewFrustum 은 앞 장면 것 (구덩이 가림용, 여유를 두고 견준다)
   field.update(now / 1000);
   if (me && inField(me.x, me.z) !== onField) showMap(!onField);
 
@@ -2627,7 +2631,20 @@ function frame() {
     char.lag = 0;
   }
   checkNetBonks(); // 다른 학생들도 움직인 뒤에
-  for (const m of hereMonsters()) m.update(dt, me);
+  // 화면 밖 몬스터는 두 장면에 한 번만 움직인다 (그동안 흐른 시간을 모아서 넘긴다): 들판 27마리의 움직임 계산이 장면당 3.5ms 라 크다
+  // 공은 넉넉히 6m: 높이 나는 종류(구구·깍깍이)와 둥근 지평선으로 내려 그려지는 만큼
+  let mi = 0;
+  for (const m of hereMonsters()) {
+    m.lag = (m.lag ?? 0) + dt;
+    viewSphere.center.copy(m.root.position);
+    viewSphere.radius = 6;
+    const seen = viewFrustum.intersectsSphere(viewSphere);
+    for (const b of m.root.userData.batches) b.visible = seen;
+    if (!seen && (frameNo + mi++) % 2) continue;
+    m.update(Math.min(m.lag, 0.1), me);
+    m.lag = 0;
+  }
+  viewSphere.radius = 3;
   arrows.update(dt);
   // 활을 당기는 동안: 지금 놓으면 화살이 날아갈 길을 희미하게 보여 준다 (당긴 만큼 길어진다)
   const aiming = me && local.act === ANIM.BOW_AIM && local.actLeft > 0 && me.anim === ANIM.BOW_AIM && me.aimAt != null;
@@ -2644,16 +2661,25 @@ function frame() {
   }
 
   renderer.render(scene, camera);
+  if (loading.isConnected) { // 첫 장면까지 그렸으면 로딩 화면을 걷는다
+    loading.remove();
+    performance.measure('first-frame', { start: now }); // 점검용: 첫 장면(셰이더 컴파일·도형 올리기)에 걸린 시간
+  } else if (fieldJobs.length) {
+    const m = fieldJobs.shift()();
+    m.root.visible = onField;
+    fieldMonsters.push(m);
+  }
   if (me) minimap.draw(me, [...others.values()].map((o) => o.char), cam.yaw);
 
   fpsFrames++;
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
     ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS${qStep ? ` · 화질 -${qStep}` : ''}`;
-    // 자동 화질: 2초 넘게 30fps 에 못 미치면 한 단계씩 낮춘다. 해상도 0.75배까지(20%씩) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지
+    // 자동 화질: 2초 넘게 27fps 에 못 미치면 한 단계씩 낮춘다. 해상도 0.75배까지(20%씩) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지
     // 해상도는 화면 칠하기가 벅찬 기기(태블릿)에, 외곽선은 그리기 횟수가 벅찬 기기에 듣는다
     // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
-    slowFor = slowFrames > 5 && slowTime / slowFrames > 1 / 30 ? slowFor + 1 : 0;
+    // 기준은 27fps: 화면이 30Hz 인 기기는 멀쩡해도 딱 30fps 라, 30을 기준으로 하면 끝 단계까지 내려가 (기억까지 돼) 머문다
+    slowFor = slowFrames > 5 && slowTime / slowFrames > 1 / 27 ? slowFor + 1 : 0;
     slowFrames = slowTime = 0;
     if (slowFor >= 4 && (renderer.getPixelRatio() > 0.5 || !noLines)) {
       if (renderer.getPixelRatio() <= 0.75 && !noLines) {
@@ -2667,5 +2693,6 @@ function frame() {
     fpsTime = 0;
   }
 }
+performance.mark('main-ready'); // 점검용: 마을·들판을 다 만든 때
 renderer.setAnimationLoop(frame);
 if (import.meta.env.DEV) window.__game.frame = frame; // 점검용: 창이 가려져 있어도 한 장면에 드는 시간을 잴 수 있게

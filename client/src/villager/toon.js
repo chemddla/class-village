@@ -368,3 +368,74 @@ export function mergeSkinned(root, skip = () => false) {
     for (const m of list) { m.removeFromParent(); m.geometry.dispose(); m.skeleton.dispose(); }
   }
 }
+
+// 몬스터용: 굳은(휘지 않는) 부품을 재질마다 한 메시로 묶는다. 몬스터는 동작이 부품 하나하나를 직접 움직여서 미리 자리를 구워 넣을 수 없으므로,
+// 부품 자체를 뼈로 삼는다 (부품은 장면에 그대로 남아 움직이고, 묶은 메시가 그 자리를 따라 그린다). 깍깍이 한 마리 그리기 129번 → 20번 안팎.
+// 부품은 숨기지 않고 그리는 층(layers)만 바꿔 둔다: 동작이 부품을 숨기면(visible) 묶은 메시에서도 그 조각을 크기 0으로 접어 안 보이게 한다.
+// 돌려주는 값: 묶은 메시들 (화면 밖이면 통째로 숨기라고: 묶은 메시는 스스로 화면 밖인지 가리지 못한다)
+// shortcut: 묶은 뒤에 부품의 도형·재질을 바꿔 끼우면 반영되지 않는다 (지금 몬스터는 만들 때만 바꾼다), 그런 동작이 생기면 그 부품에 userData.noBatch 를 준다
+// shortcut: 묶은 뒤 새로 붙는 부품은 묶이지 않고 따로 그린다
+export function batchRigid(root) {
+  root.updateWorldMatrix(true, true);
+  const shown = (o) => { for (let p = o; p; p = p.parent) { if (!p.visible) return false; if (p === root) break; } return true; };
+  const rootSign = Math.sign(root.matrixWorld.determinant());
+  const groups = new Map();
+  root.traverse((m) => {
+    if (!m.isMesh || m.isSkinnedMesh || m.isInstancedMesh || m.userData.batched || m.userData.noBatch || !shown(m)) return;
+    const mat = m.material;
+    if (Array.isArray(mat) || mat.transparent || !m.geometry.attributes.normal) return;
+    // 표준 외곽선은 두께가 달라도 한 메시로 (두께는 꼭짓점 값 noLine 으로), 그 밖에는 재질이 같은 것끼리
+    const line = m.userData.isOutline && mat === outlineMaterial(m.userData.thickness, m.userData.color);
+    const key = line ? `o${m.userData.color}` : `${mat.id}:${m.renderOrder}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  });
+  const out = [];
+  for (const [key, list] of groups) {
+    if (list.length < 2) continue;
+    const line = key[0] === 'o';
+    const T = line ? Math.max(...list.map((m) => m.userData.thickness)) : 0;
+    const parts = list.map((m, b) => {
+      const src = m.geometry;
+      const n = src.attributes.position.count;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', src.attributes.position.clone());
+      g.setAttribute('normal', src.attributes.normal.clone());
+      const idx = src.index ? Array.from(src.index.array) : [...Array(n).keys()];
+      // 좌우를 뒤집어 붙인 부품(크기가 음수)은 면 방향이 반대라 삼각형 꼭짓점 순서를 바꿔 둔다
+      if (Math.sign(m.matrixWorld.determinant()) !== rootSign) for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]];
+      g.setIndex(idx);
+      if (line) {
+        const k = m.userData.thickness / T, nl = new Float32Array(n), at = src.attributes.noLine;
+        for (let i = 0; i < n; i++) nl[i] = 1 - (1 - (at ? at.getX(i) : 0)) * k;
+        g.setAttribute('noLine', new THREE.BufferAttribute(nl, 1));
+      } else {
+        g.setAttribute('uv', src.attributes.uv?.clone() ?? new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+        if (m.material.vertexColors) g.setAttribute('color', src.attributes.color?.clone() ?? new THREE.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
+      }
+      const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) { si[i * 4] = b; sw[i * 4] = 1; }
+      g.setAttribute('skinIndex', new THREE.BufferAttribute(si, 4));
+      g.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
+      return g;
+    });
+    const mesh = new THREE.SkinnedMesh(mergeGeometries(parts), line ? outlineMaterial(T, list[0].userData.color, null, true) : list[0].material);
+    mesh.name = '묶음';
+    mesh.renderOrder = list[0].renderOrder;
+    mesh.frustumCulled = false;
+    mesh.raycast = () => {};
+    mesh.userData.batched = mesh.userData.toon = true;
+    mesh.userData.isOutline = line;
+    root.add(mesh);
+    const sk = new THREE.Skeleton(list, list.map(() => new THREE.Matrix4()));
+    mesh.bind(sk, IDENTITY);
+    const base = sk.update.bind(sk);
+    sk.update = () => {
+      base();
+      list.forEach((m, i) => { if (!shown(m)) sk.boneMatrices.fill(0, i * 16, i * 16 + 16); });
+    };
+    for (const m of list) { m.userData.batched = true; m.layers.set(1); } // 카메라는 0번 층만 그린다
+    out.push(mesh);
+  }
+  return out;
+}
