@@ -8,6 +8,7 @@ import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, fruitOf, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
+  FOSSIL_SPOTS, pickFossil, FLOWER_ITEMS, PICK_FLOWER_REACH, PLANT, plantKind, plantItem, SEEDS, HALF, FIELD, inField,
   PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL, canWield,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
@@ -64,6 +65,20 @@ const Hole = schema({
   k: 'string', // 'grass' 풀밭(흙) · 'sand' 모래
 }, 'Hole');
 
+// 화석 자리: 땅에 금(✱)이 그려진 곳. 여기를 파면 화석이 나온다
+const FossilSpot = schema({
+  x: 'int16', // cm
+  z: 'int16', // cm
+}, 'FossilSpot');
+
+// 구덩이에 심은 과일·꽃 (새싹 → 자라는 중 → 다 자람)
+const Plant = schema({
+  x: 'int16', // cm
+  z: 'int16', // cm
+  f: 'string', // 심은 것: 과일 이름(FRUITS) 또는 꽃씨 id(SEEDS)
+  g: 'uint8', // 자란 단계 0 새싹 · 1 자라는 중 · 2 다 자람
+}, 'Plant');
+
 const VillageState = schema({
   players: { map: Player },
   freeLook: 'boolean',
@@ -72,6 +87,8 @@ const VillageState = schema({
   bugs: { map: Bug }, // 곤충: 번호 → 종류·자리
   holes: { map: Hole }, // 삽으로 판 구덩이: 번호 → 자리
   rocksGone: { map: 'uint8' }, // 삽으로 깨뜨려 지금 없는 바위: 바위 번호 → 1
+  plants: { map: Plant }, // 구덩이에 심은 과일·꽃: 번호 → 자리·단계
+  fossils: { map: FossilSpot }, // 화석 자리: 번호 → 자리
 }, 'VillageState');
 
 // ── 전송량 측정 ──
@@ -104,6 +121,11 @@ class VillageRoom extends Room {
     if (!this.state.drops) this.state.drops = new MapSchema();
     this.state.holes = new MapSchema();
     this.state.rocksGone = new MapSchema();
+    this.state.plants = new MapSchema();
+    this.state.fossils = new MapSchema();
+    this.fossilId = 0;
+    for (let i = 0; i < FOSSIL_SPOTS.village; i++) this.addFossilSpot(false);
+    for (let i = 0; i < FOSSIL_SPOTS.field; i++) this.addFossilSpot(true);
     if (!this.state.bugs) this.state.bugs = new MapSchema();
     // 학생마다 지금 움직이는 빠르기 (곤충이 놀라는지 볼 때 씀): 0.4초 넘게 움직임이 없으면 멈춘 것으로 본다
     this.speeds = new Map();
@@ -322,11 +344,82 @@ class VillageRoom extends Room {
       const k = groundKind(x, z);
       if (!k) return;
       for (const h of this.state.holes.values()) if (Math.hypot(fromCm(h.x) - x, fromCm(h.z) - z) < DIG_HOLE.r * 2) return;
+      for (const pl of this.state.plants.values()) if (Math.hypot(fromCm(pl.x) - x, fromCm(pl.z) - z) < DIG_HOLE.r * 1.6) return; // 심은 자리는 못 판다
       if (this.state.holes.size >= DIG_HOLE.max) this.state.holes.delete(this.state.holes.keys().next().value);
       const h = new Hole();
       h.x = toCm(x);
       h.z = toCm(z);
       h.k = k;
+      this.state.holes.set(String(++this.holeId), h);
+      // 화석 자리(✱)를 팠으면 화석이 나와 구덩이 옆에 놓이고, 그 자리는 사라졌다가 다른 곳에 새로 생긴다
+      let spot = null;
+      for (const [sid, f] of this.state.fossils) if (Math.hypot(fromCm(f.x) - x, fromCm(f.z) - z) < FOSSIL_SPOTS.reach) spot = sid;
+      if (spot) {
+        const field = inField(fromCm(this.state.fossils.get(spot).x), fromCm(this.state.fossils.get(spot).z));
+        this.state.fossils.delete(spot);
+        this.clock.setTimeout(() => this.addFossilSpot(field), FOSSIL_SPOTS.respawn * 1000);
+        const px = fromCm(p.x) - x;
+        const pz = fromCm(p.z) - z;
+        const L = Math.hypot(px, pz) || 1;
+        const side = Math.random() < 0.5 ? 1 : -1;
+        const d = new Drop();
+        d.x = toCm(x + (px / L) * 0.15 + (pz / L) * 0.75 * side); // 구덩이 옆 (판 학생 발밑이 아니라)
+        d.z = toCm(z + (pz / L) * 0.15 - (px / L) * 0.75 * side);
+        d.f = pickFossil().id;
+        d.k = -1;
+        const id = String(++this.dropId);
+        this.state.drops.set(id, d);
+        this.dropAt.set(id, Date.now() + DROP_LIFE * 1000);
+      }
+    });
+    // 심기: [구덩이 번호, 심을 것]. 가방의 과일·꽃 하나를 구덩이에 넣고 덮는다. 단계마다 PLANT.grow 초 뒤에 자란다
+    this.plantId = 0;
+    this.onMessage('plant', (client, msg) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !Array.isArray(msg) || !shovelReady(client)) return;
+      const hid = String(msg[0]);
+      const key = String(msg[1]); // 가방 열쇠: 심을 것 (파낸 것이면 '심은것@단계')
+      const h = this.state.holes.get(hid);
+      const kind = plantKind(key);
+      if (!h || !kind || !(p.bag.get(key) > 0)) return;
+      const { item, g: from } = plantItem(key);
+      if (Math.hypot(fromCm(h.x) - fromCm(p.x), fromCm(h.z) - fromCm(p.z)) > DIG_HOLE.reach + 0.3) return;
+      this.state.holes.delete(hid);
+      const left = p.bag.get(key) - 1;
+      if (left > 0) p.bag.set(key, left); else p.bag.delete(key);
+      if (this.state.plants.size >= PLANT.max) this.state.plants.delete(this.state.plants.keys().next().value);
+      const pl = new Plant();
+      pl.x = h.x;
+      pl.z = h.z;
+      pl.f = item;
+      pl.g = from;
+      const id = String(++this.plantId);
+      this.state.plants.set(id, pl);
+      // 파냈다가 다시 심은 것은 자라던 단계부터 이어서 자란다
+      const grow = PLANT.grow[FREE_LOOK ? 'test' : 'real'][kind];
+      grow.forEach((sec, i) => {
+        if (i < from) return;
+        this.clock.setTimeout(() => {
+          const cur = this.state.plants.get(id);
+          if (cur === pl) cur.g = i + 1;
+        }, (sec - (from > 0 ? grow[from - 1] : 0)) * 1000);
+      });
+    });
+    // 파내기: [심은 것 번호]. 삽으로 파서 가방에 넣고(자란 단계 그대로), 그 자리는 구덩이가 된다 (다른 곳에 다시 심을 수 있다)
+    this.onMessage('unplant', (client, id) => {
+      const p = this.state.players.get(client.sessionId);
+      const pl = this.state.plants.get(String(id));
+      if (!p || !pl || !shovelReady(client)) return;
+      if (Math.hypot(fromCm(pl.x) - fromCm(p.x), fromCm(pl.z) - fromCm(p.z)) > DIG_HOLE.reach + 0.3) return;
+      const key = pl.g > 0 ? `${pl.f}@${pl.g}` : pl.f;
+      const have = p.bag.get(key) ?? 0;
+      if (have >= BAG_MAX) return;
+      this.state.plants.delete(String(id));
+      p.bag.set(key, have + 1);
+      const h = new Hole();
+      h.x = pl.x;
+      h.z = pl.z;
+      h.k = groundKind(fromCm(pl.x), fromCm(pl.z)) ?? 'grass';
       this.state.holes.set(String(++this.holeId), h);
     });
     this.onMessage('fill', (client, id) => {
@@ -367,6 +460,22 @@ class VillageRoom extends Room {
         this.state.rocksGone.delete(String(i));
         ROCKS_GONE.delete(i);
       }, ROCK_REGROW * 1000);
+    });
+
+    // 꽃 꺾기: [꽃 번호 (WORLD.flowers)]. 가까이 있으면 그 색 꽃 하나를 가방에 넣는다 (꽃은 그대로 남는다)
+    this.onMessage('pickFlower', (client, i) => {
+      const p = this.state.players.get(client.sessionId);
+      const f = WORLD.flowers[Number(i)];
+      if (!p || !f) return;
+      const now = Date.now();
+      if (now - (client.userData?.flowerAt ?? 0) < 500) return;
+      if (Math.hypot(fromCm(p.x) - f.x, fromCm(p.z) - f.z) > PICK_FLOWER_REACH + 0.4) return;
+      const item = FLOWER_ITEMS[f.c % FLOWER_ITEMS.length].id;
+      const have = p.bag.get(item) ?? 0;
+      if (have >= BAG_MAX) return;
+      client.userData = { ...client.userData, flowerAt: now };
+      p.bag.set(item, have + 1);
+      p.xp += XP.grab;
     });
 
     // 떨어진 과일·목재 줍기: [번호]. 가까이 있을 때만 가방에 넣는다
@@ -475,6 +584,26 @@ class VillageRoom extends Room {
     });
   }
 
+  // 화석 자리 하나를 마을(또는 들판)의 팔 수 있는 빈 땅에 새로 만든다
+  addFossilSpot(field = false) {
+    for (let tries = 0; tries < 200; tries++) {
+      const x = field ? FIELD.x + (Math.random() * 2 - 1) * FIELD.r * 0.8 : (Math.random() * 2 - 1) * HALF * 0.9;
+      const z = field ? FIELD.z + (Math.random() * 2 - 1) * FIELD.r * 0.8 : (Math.random() * 2 - 1) * HALF * 0.9;
+      if (inField(x, z) !== field || !groundKind(x, z)) continue;
+      if (!field && Math.hypot(x - SPAWN.x, z - SPAWN.z) < 8) continue; // 광장 바로 옆은 피한다
+      let near = false;
+      for (const o of [...this.state.fossils.values(), ...this.state.holes.values(), ...this.state.plants.values()]) {
+        if (Math.hypot(fromCm(o.x) - x, fromCm(o.z) - z) < 3) near = true;
+      }
+      if (near) continue;
+      const f = new FossilSpot();
+      f.x = toCm(x);
+      f.z = toCm(z);
+      this.state.fossils.set(String(++this.fossilId), f);
+      return;
+    }
+  }
+
   onJoin(client, options = {}) {
     meter(client);
     // 처음 위치: 광장 근처의 빈자리
@@ -504,6 +633,8 @@ class VillageRoom extends Room {
     p.color = Math.max(0, Math.min(COLORS.length - 1, Number(options.color) | 0));
     p.look = FREE_LOOK ? cleanLook(options.look) : '';
     if (!p.bag) p.bag = new MapSchema();
+    // 테스트 서버: 상점이 아직 없으니 꽃씨를 몇 개씩 넣어 준다 (심기 시험용)
+    if (FREE_LOOK) for (const sd of SEEDS) if (!p.bag.has(sd.id)) p.bag.set(sd.id, 5);
     if (!p.dex) p.dex = new MapSchema();
     p.xp = 0; // 정하지 않으면 undefined 라서 += 하면 NaN
     p.job = '';

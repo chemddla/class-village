@@ -4,7 +4,7 @@ import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
   ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, fruitOf, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
-  SKILLS, SKILL_TYPES, inStrike,
+  SKILLS, SKILL_TYPES, inStrike, FOSSILS, FOSSIL_BY_ID, FLOWER_ITEMS, FLOWER_BY_ID, PICK_FLOWER_REACH, SEEDS, SEED_BY_ID, PLANT, plantItem as plantKey, plantKind,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
 import { buildField } from './field.js';
@@ -420,6 +420,12 @@ function hitFx(char, action) {
       local.shovel = null;
       wearTool('shovel');
       if (pend.dig) room?.send('dig', [toCm(pend.x), toCm(pend.z)]);
+      else if (pend.plant) room?.send('plant', [pend.plant, pend.item]);
+      else if (pend.unplant) {
+        room?.send('unplant', pend.unplant);
+        const pl = plants.get(pend.unplant);
+        if (pl) toast(`🌱 ${eul(plantLabel(pl.g > 0 ? `${pl.f}@${pl.g}` : pl.f))} 파서 가방에 넣었어요. 구덩이 옆에서 가방을 눌러 다시 심을 수 있어요`);
+      }
       else if (pend.fill) room?.send('fill', pend.fill);
       else if (pend.rock !== undefined) {
         room?.send('smash', pend.rock);
@@ -429,7 +435,7 @@ function hitFx(char, action) {
     const rock = action === 'fill' ? -1 : pend?.rock ?? village.nearRock(px, pz, 0.5);
     if (action === 'fill') {
       // 덮기: 흙(모래)이 구덩이로 쏟아지며 먼지가 퐁
-      const h = pend?.fill ? holes.get(pend.fill) : null;
+      const h = pend?.fill || pend?.plant ? holes.get(pend.fill ?? pend.plant) : null;
       burst('dust', 12, at(h?.x ?? px, h?.z ?? pz, 0.05), { ring: true, power: 0.8 });
       burst('wood', 5, at(h?.x ?? px, h?.z ?? pz, 0.15), { spread: Math.PI, power: 0.4 }); // 흙덩이
     } else if (rock >= 0) {
@@ -454,13 +460,21 @@ function hitFx(char, action) {
     if (pend) {
       local.picked = null;
       const f = drops.get(pend.grab)?.f;
-      const w = WOOD_BY_ID[f] ?? STONE_BY_ID[f];
+      const w = WOOD_BY_ID[f] ?? STONE_BY_ID[f] ?? FOSSIL_BY_ID[f];
       room?.send('grab', pend.grab);
-      if (w) toast(`${STONE_BY_ID[f] ? '🪨' : '🪵'} ${eul(w.name)} 주웠다! ${stars(w.rarity)} ${RARITY[w.rarity].name}`);
+      if (w) toast(`${FOSSIL_BY_ID[f] ? FOSSIL_ICON[w.shape] : STONE_BY_ID[f] ? '🪨' : '🪵'} ${eul(w.name)} 주웠다! ${stars(w.rarity)} ${RARITY[w.rarity].name}`);
     }
     burst('sparkle', 8, at(char.x + fx * 0.45, char.z + fz * 0.45, 0.25), { spread: Math.PI });
   } else if (action === 'gather') {
     const t = findTarget('none', char.x, char.z, lifeSpots) ?? { x: char.x + fx * 0.6, z: char.z + fz * 0.6 };
+    if (char === me) { // 꺾은 꽃은 가방으로 (구덩이에 심을 수 있다)
+      const i = nearFlower(char.x, char.z);
+      if (i >= 0) {
+        const it = FLOWER_ITEMS[WORLD.flowers[i].c % FLOWER_ITEMS.length];
+        if ((bag.get(it.id) ?? 0) >= BAG_MAX) toast(`가방에 ${it.name}이(가) 가득 찼어요`);
+        else { room?.send('pickFlower', i); toast(`🌸 ${eul(it.name)} 꺾었다!`); }
+      }
+    }
     burst('petal', 7, at(t.x, t.z, 0.3), { spread: Math.PI, power: 0.8 });
     burst('sparkle', 8, at(t.x, t.z, 0.45), { spread: Math.PI });
   } else if (action === 'fish') {
@@ -597,6 +611,7 @@ const TOOL_ICON = { none: '✋', axe: '🪓', rod: '🎣', club: '🏏', woodSwo
 const LIFE_ICON = { none: '🌼', axe: '🌳', rod: '🐟', net: NET_ICON, shovel: SHOVEL_ICON };
 const LIFE_LABEL = { none: '채집', axe: '벌목', rod: '낚시', net: '곤충', shovel: '삽질' };
 const QUICK_SLOTS = 4;
+const FOSSIL_ICON = { bone: '🦴', shell: '🐚', slab: '🪨', amber: '🟠', egg: '🥚' };
 const FRUIT_ICON = { peach: '🍑', apple: '🍎', orange: '🍊', pear: '🍐' };
 const bag = new Map(); // 내 가방에 든 과일: 이름 → 개수 (서버가 정함)
 const drops = new Map(); // 땅에 떨어진 과일: 번호 → { x, z, f } (서버가 정함)
@@ -959,9 +974,37 @@ function renderInv() {
     add('arrow', info(cell('➶', { cls: activeArrow === 'arrow' ? 'active' : '', count: local.arrows, title: `화살 ×${local.arrows}` }),
       local.arrows ? `화살 ×${local.arrows}: 활을 들면 등의 화살통에 들어가요 (한 발에 하나씩 써요)` : '화살을 다 썼어요. 화살이 있어야 활을 쏠 수 있어요'));
   }
+  // 심을 수 있는 것 (과일·꽃): 구덩이 옆에서 누르면 심는다
+  const plantable = (b, item, name, text) => {
+    b.onclick = () => {
+      invInfo = plantItem(item, name) ? `${name}을(를) 구덩이에 심었어요` : `${text} (삽으로 판 구덩이 옆에서 누르면 심을 수 있어요)`;
+      renderInv();
+    };
+    return b;
+  };
   for (const f of FRUITS.filter((x) => bag.get(x) > 0)) {
-    add(`f:${f}`, info(cell(FRUIT_ICON[f], { count: bag.get(f), title: `${FRUIT_NAMES[f]} ×${bag.get(f)}` }),
-      `${FRUIT_NAMES[f]} ×${bag.get(f)}: 상점이 열리면 팔 수 있어요`));
+    add(`f:${f}`, plantable(cell(FRUIT_ICON[f], { count: bag.get(f), title: `${FRUIT_NAMES[f]} ×${bag.get(f)}` }), f, FRUIT_NAMES[f],
+      `${FRUIT_NAMES[f]} ×${bag.get(f)}: 상점이 열리면 팔 수 있어요. 심으면 어린 과일나무로 자라요`));
+  }
+  for (const fl of FLOWER_ITEMS.filter((x) => bag.get(x.id) > 0)) {
+    add(`flower:${fl.id}`, info(cell('🌸', { count: bag.get(fl.id), title: `${fl.name} ×${bag.get(fl.id)}`, color: `#${fl.color.toString(16).padStart(6, '0')}` }),
+      `${fl.name} ×${bag.get(fl.id)}: 꽃 앞에서 G로 꺾었어요`));
+  }
+  for (const sd of SEEDS.filter((x) => bag.get(x.id) > 0)) {
+    add(`seed:${sd.id}`, plantable(cell('🌰', { count: bag.get(sd.id), title: `${sd.name} ×${bag.get(sd.id)}`, color: `#${sd.color.toString(16).padStart(6, '0')}` }), sd.id, sd.name,
+      `${sd.name} ×${bag.get(sd.id)}: 구덩이에 심으면 ${FLOWER_BY_ID[sd.flower].name}이 피어요`));
+  }
+  // 삽으로 파낸 것 (자란 단계 그대로 다시 심을 수 있다)
+  for (const [key, n] of bag) {
+    if (!key.includes('@') || !(n > 0) || !plantKind(key)) continue;
+    const { item } = plantKey(key);
+    const name = plantLabel(key);
+    add(`dug:${key}`, plantable(cell(SEED_BY_ID[item] ? '🌷' : '🌳', { count: n, title: `${name} ×${n}` }), key, name,
+      `${name} ×${n}: 삽으로 파낸 것이에요. 심으면 자라던 데서부터 이어서 자라요`));
+  }
+  for (const fo of FOSSILS.filter((x) => bag.get(x.id) > 0)) {
+    add(`fossil:${fo.id}`, info(cell(FOSSIL_ICON[fo.shape], { count: bag.get(fo.id), title: `${fo.name} ×${bag.get(fo.id)}`, color: `#${fo.color.toString(16).padStart(6, '0')}` }),
+      `${fo.name} ×${bag.get(fo.id)} (${RARITY[fo.rarity].name}): 땅을 파다 찾은 화석이에요. 상점에서 ${fo.price.toLocaleString()}원에 비싸게 팔 수 있어요`));
   }
   for (const f of FISH.filter((x) => bag.get(x.id) > 0)) {
     const color = `#${f.color.toString(16).padStart(6, '0')}`;
@@ -1535,6 +1578,16 @@ function drawBow() {
 // ── 삽: 앞 땅(DIG_AHEAD)을 보고 할 일을 고른다. 가까이 구덩이가 있으면 덮고, 앞에 바위가 있으면 치고(여러 번 치면 깨짐),
 // 아니면 풀밭·모래를 판다. 실제 파기·덮기·치기는 삽날이 땅에 꽂히는 순간(hitFx 'dig')에 서버로 보낸다
 const holes = new Map(); // 번호 → { x, z, k } (서버가 정함)
+const plants = new Map(); // 심은 것: 번호 → { x, z, f, g } (서버가 정함)
+// 심을 수 있는 가방 물건 이름: 과일·꽃씨, 파낸 것은 '사과나무 (어린 나무)'처럼 자란 단계를 붙인다
+function plantLabel(key) {
+  const { item, g } = plantKey(key);
+  const kind = plantKind(key);
+  const sd = SEED_BY_ID[item];
+  if (!g) return sd ? sd.name : FRUIT_NAMES[item];
+  const base = sd ? FLOWER_BY_ID[sd.flower].name : `${FRUIT_NAMES[item]}나무`;
+  return `${base} (${PLANT.stageName[kind][g]})`;
+}
 const HOLE_BLOCK = DIG_HOLE.r * 0.8; // 구덩이가 막는 둘레 (테두리 흙은 밟을 수 있게 구멍보다 조금 작게)
 const HOLE_JUMP_AFTER = 0.3; // 구덩이 앞에서 방향키를 이만큼(초) 누르고 있으면 뛰어 넘는다
 function shovelTarget() {
@@ -1551,6 +1604,7 @@ function shovelTarget() {
   if (fill) return fill;
   const rock = village.nearRock(ax, az, 0.5);
   if (rock >= 0) return { rock, x: WORLD.rocks[rock].x, z: WORLD.rocks[rock].z };
+  for (const [id, pl] of plants) if (Math.hypot(pl.x - ax, pl.z - az) < DIG_HOLE.r * 1.6) return { unplant: id, x: pl.x, z: pl.z };
   return groundKind(ax, az) ? { dig: true, x: ax, z: az } : null;
 }
 function useShovel() {
@@ -1558,9 +1612,41 @@ function useShovel() {
   if (toolBroken('shovel')) { toast('삽이 부서져서 쓸 수 없어요. 대장간에서 새로 만들어야 해요'); return; }
   const t = shovelTarget();
   if (!t) { toast('여기는 팔 수 없어요. 풀밭이나 모래사장에서 G를 눌러 보세요'); return; }
-  if (t.fill || t.rock !== undefined) me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 덮을 구덩이·칠 바위 쪽으로 돌아섬
+  if (t.fill || t.unplant || t.rock !== undefined) me.setPose(me.x, me.z, Math.atan2(t.x - me.x, t.z - me.z)); // 덮을 구덩이·칠 바위 쪽으로 돌아섬
   local.shovel = t;
   startAct(t.fill ? ANIM.FILL : ANIM.DIG); // 덮을 때는 흙을 긁어 넣고 톡톡 다지는 동작
+}
+
+// 심기: 가방에서 과일·꽃을 누르면, 가까운 구덩이에 넣고 흙을 덮는다 (덮기 동작). 구덩이가 없으면 안내만
+function nearHole() {
+  let best = null;
+  let bestD = 1.6;
+  for (const [id, h] of holes) {
+    const d = Math.hypot(h.x - me.x, h.z - me.z);
+    if (d < bestD) { bestD = d; best = { id, ...h }; }
+  }
+  return best;
+}
+function plantItem(item, name) {
+  if (!me) return false;
+  const h = nearHole();
+  if (!h) return false;
+  if (local.actLeft > 0) return true;
+  me.setPose(me.x, me.z, Math.atan2(h.x - me.x, h.z - me.z));
+  local.shovel = { plant: h.id, item, x: h.x, z: h.z };
+  startAct(ANIM.FILL);
+  toast(`🌱 구덩이에 ${eul(name)} 심었어요! 조금 지나면 자라요`);
+  return true;
+}
+// 꽃 꺾기: 가까운 꽃 번호 (WORLD.flowers) 또는 -1
+function nearFlower(x, z) {
+  let best = -1;
+  let bestD = PICK_FLOWER_REACH;
+  WORLD.flowers.forEach((f, i) => {
+    const d = Math.hypot(f.x - x, f.z - z);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  return best;
 }
 
 function startAct(a) {
@@ -1730,7 +1816,7 @@ const input = createInput({
       const t = d ? null : findFruit(me.x, me.z);
       if (!d && !t) { toast(`${FRUIT_NAMES[fruitOf(onField ? WORLD.fruitTrees.length - 1 : 0)]}가 열린 과일나무에 바짝 붙어서 F를 눌러 보세요`); return; }
       const item = d && drops.get(d.id)?.f;
-      if (d && (bag.get(item) ?? 0) >= BAG_MAX) { toast(`가방에 ${WOOD_BY_ID[item]?.name ?? STONE_BY_ID[item]?.name ?? FRUIT_NAMES[item] ?? '이것'}이(가) 가득 찼어요`); return; }
+      if (d && (bag.get(item) ?? 0) >= BAG_MAX) { toast(`가방에 ${WOOD_BY_ID[item]?.name ?? STONE_BY_ID[item]?.name ?? FOSSIL_BY_ID[item]?.name ?? FRUIT_NAMES[item] ?? '이것'}이(가) 가득 찼어요`); return; }
       const aim = d ?? t;
       local.picked = d ? { grab: d.id, x: d.x, z: d.z } : { shake: t.pick, x: t.x, z: t.z };
       holdTool(0);
@@ -1938,7 +2024,17 @@ function attach(r) {
     const x = fromCm(d.x);
     const z = fromCm(d.z);
     drops.set(id, { x, z, f: d.f });
-    village.addDrop(id, d.f, x, z, d.k, dropsReady, d.t);
+    const fossil = FOSSIL_BY_ID[d.f];
+    let from = null;
+    if (fossil && dropsReady) { // 화석: 방금 판 구덩이에서 툭 튀어나온다
+      let best = 1.2;
+      for (const h of holes.values()) {
+        const dd = Math.hypot(h.x - x, h.z - z);
+        if (dd < best) { best = dd; from = [h.x, 0.05, h.z]; }
+      }
+      if (me && Math.hypot(me.x - x, me.z - z) < 3) toast(`${FOSSIL_ICON[fossil.shape]} 흙 속에서 무언가 나왔어요! 주워 보세요`);
+    }
+    village.addDrop(id, d.f, x, z, d.k, dropsReady, d.t, from);
     if (dropsReady && d.k >= 0) {
       const t = WORLD.trees[WORLD.fruitTrees[d.k]];
       if (t) village.shakeTree(WORLD.fruitTrees[d.k], (x - t.x) * 0.3, (z - t.z) * 0.3, 0.6);
@@ -1955,6 +2051,19 @@ function attach(r) {
     village.holes.add(id, x, z, h.k, dropsReady);
   });
   $(r.state).holes.onRemove((_, id) => { holes.delete(id); village.holes.remove(id); });
+  // 화석 자리 (땅의 금 ✱)
+  village.fossilMarks.clear();
+  $(r.state).fossils.onAdd((f, id) => village.fossilMarks.add(id, fromCm(f.x), fromCm(f.z)));
+  $(r.state).fossils.onRemove((_, id) => village.fossilMarks.remove(id));
+  // 심은 과일·꽃
+  village.plants.clear();
+  plants.clear();
+  $(r.state).plants.onAdd((pl, id) => {
+    plants.set(id, { x: fromCm(pl.x), z: fromCm(pl.z), f: pl.f, g: pl.g });
+    village.plants.add(id, fromCm(pl.x), fromCm(pl.z), pl.f, pl.g, dropsReady);
+    $(pl).listen('g', (g) => { const cur = plants.get(id); if (cur) cur.g = g; village.plants.grow(id, g); });
+  });
+  $(r.state).plants.onRemove((_, id) => { plants.delete(id); village.plants.remove(id); });
   for (const i of ROCKS_GONE) village.setRockGone(i, false);
   ROCKS_GONE.clear();
   $(r.state).rocksGone.onAdd((_, key) => {
