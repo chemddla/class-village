@@ -87,25 +87,28 @@ export function levelOf(total) {
   return { lv, xp, need: xpNeed(lv) };
 }
 
-// 스텟: 레벨에 따라 저절로 오른다. Lv1 은 모두 1, JOB_LEVEL 까지(모험가)는 레벨마다 모두 +1,
-// 전직한 뒤에는 레벨마다 주스텟 +3 · 부스텟 +1 (언제 전직했든 JOB_LEVEL 에 전직한 것처럼 계산 → 직업을 바꿔도 꼬이지 않음)
+// 스텟: 레벨에 따라 저절로 오른다. Lv1 은 모두 1, 레벨마다 4포인트.
+// 모험가는 몽둥이 공격력(힘)으로 모두 가고, 전직하면 처음부터 그 직업이었던 것처럼 다시 짠다(주스텟 +3 · 부스텟 +1)
 export const STAT_NAMES = { str: '힘', dex: '민첩', int: '지능', luk: '운' };
 export const JOB_LEVEL = 10;
 export const JOBS = {
-  '': { name: '모험가' },
-  warrior: { name: '전사', main: 'str', sub: 'dex' },
-  archer: { name: '궁수', main: 'dex', sub: 'luk' },
-  mage: { name: '마법사', main: 'int', sub: 'luk' },
-  thief: { name: '도적', main: 'luk', sub: 'dex' },
+  '': { name: '모험가', weapon: 'club' },
+  warrior: { name: '전사', main: 'str', sub: 'dex', weapon: 'woodSword' },
+  archer: { name: '궁수', main: 'dex', sub: 'luk', weapon: 'bow' },
+  mage: { name: '마법사', main: 'int', sub: 'luk', weapon: 'staff' },
+  thief: { name: '도적', main: 'luk', sub: 'dex', weapon: 'dagger' },
 };
 export function statsOf(lv, job = '') {
   const s = { str: 1, dex: 1, int: 1, luk: 1 };
   const j = JOBS[job]?.main ? JOBS[job] : null;
   for (let l = 2; l <= lv; l++) {
-    if (j && l > JOB_LEVEL) { s[j.main] += 3; s[j.sub] += 1; } else for (const k in s) s[k] += 1;
+    if (j) { s[j.main] += 3; s[j.sub] += 1; } else s.str += 4;
   }
   return s;
 }
+// 싸움 무기: 몽둥이는 누구나, 그 밖의 무기는 전직한 직업의 무기만 (생활 도구는 언제나). 테스트 서버(free)에서는 무기 시험을 위해 모두 풀어 둔다
+export const WEAPONS = ['club', 'woodSword', 'bow', 'staff', 'dagger'];
+export const canWield = (tool, job, free = false) => free || tool === 'club' || !WEAPONS.includes(tool) || JOBS[job]?.weapon === tool;
 // 무기마다 공격력에 쓰는 스텟 (그 밖의 도구는 힘)
 export const WEAPON_STAT = { club: 'str', woodSword: 'str', axe: 'str', bow: 'dex', staff: 'int', dagger: 'luk' };
 // 능력치: 스텟 → 실제로 쓰는 값. Lv1(모두 1)이면 지금까지 쓰던 기본값 그대로. 몬스터와 싸울 때만 쓰고, 학생끼리는 기본값

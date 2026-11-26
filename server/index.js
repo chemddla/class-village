@@ -8,7 +8,7 @@ import { schema, MapSchema, ArraySchema } from '@colyseus/schema';
 import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, VILLAGE_FRUIT, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
-  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL,
+  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, levelOf, JOBS, JOB_LEVEL, canWield,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
 
@@ -459,7 +459,7 @@ class VillageRoom extends Room {
       p.z = cz;
       p.r = r & 255;
       p.a = a >= 0 && a <= ANIM_MAX ? a : 0;
-      p.t = tool >= 0 && tool < TOOLS.length ? tool : 0;
+      p.t = tool >= 0 && tool < TOOLS.length && canWield(TOOLS[tool], p.job, FREE_LOOK) ? tool : 0; // 전직 전에는 몽둥이만 (남의 화면에도)
       p.q = Math.max(0, Math.min(ARROW.max, arrows));
       p.s = stamp & 65535;
     });

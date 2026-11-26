@@ -25,7 +25,10 @@ const ball = (r, n = 32) => new THREE.SphereGeometry(r, n, Math.round(n * 0.75))
 // 끝이 짙은 뾰족한 날개깃, 끝에 검은 띠가 있는 부채꼴 꼬리, 주황 눈, 부리 위 하얀 혹, 짧은 빨간 발
 // 날개는 팔(안쪽)·손(바깥쪽) 두 마디라 파도치듯 접혔다 펴진다
 export const tmpV = new THREE.Vector3();
-export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d6470', neck = '#5f9a7e', neck2 = '#8e7ab0', fat = 1, wing = 1, eye = 'orange' } = {}) {
+export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d6470', neck = '#5f9a7e', neck2 = '#8e7ab0', fat = 1, wing = 1, eye = 'orange', pied = null, tailC = null, legC = '#e0605f', len = 1, neckH = 1, backLine = null, napeFill = 0, shoulderIn = 0 } = {}) {
+  // neckH: 목·머리 높이 배율 (1 보다 작으면 목이 짧아 머리가 어깨에 낮게 얹힘)
+  // len: 몸통(가슴~꽁지) 앞뒤 길이 배율. 뼈 크기로 줄이면 목덜미가 꺾이니 모양 자체를 줄인다 (머리·목은 그대로)
+  // pied: 까치처럼 흰 무늬 색 (배·어깨·날개깃 안쪽), 비둘기 날개 검은 줄은 없앰 / tailC: [뿌리, 끝] 꽁지 빛깔
   const g = new THREE.Group();
   const fly = new THREE.Group();
   fly.position.y = 0.13;
@@ -76,7 +79,7 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
     [0.002, -0.035, 0.026 * fat, 0.022 * fat], // 엉덩이
     [0, -0.008, 0.034 * fat, 0.031 * fat], // 몸통
     [0.006, 0.02, 0.032 * fat, 0.031 * fat], // 불룩한 가슴
-    [0.022, 0.033, 0.021 * fat, 0.021], // 목 밑
+    [0.022, 0.033, Math.max(0.021 * fat, 0.018), 0.021], // 목 밑 (몸이 가늘어도 목보다 가늘어지면 잘록해지니 최소 굵기)
     [0.036, 0.039, 0.0155, 0.015], // 목
     // 머리는 목을 위로 쭉 이어 둥글게 닫는다 (앞으로 확 꺾으면 목 앞이 접혀 눈 밑에 주름 선이 생김)
     [0.049, 0.043, 0.0165, 0.018], // 머리
@@ -84,8 +87,12 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
     [0.064, 0.044, 0.005, 0.005],
     [0.0655, 0.044, 0.0005, 0.0005], // 정수리 (닫힘)
   ];
-  const spine = new THREE.CatmullRomCurve3(SPINE.map(([y, z]) => new THREE.Vector3(0, y, z)));
-  const radii = new THREE.CatmullRomCurve3(SPINE.map(([, , rx, ry]) => new THREE.Vector3(rx, ry, 0)));
+  const bodyZ = (z) => (z < 0.02 ? z * len : z - 0.02 * (1 - len)); // 가슴(z 0.02)까지만 줄이고, 목·머리는 그만큼 뒤로 당겨 붙임
+  // 목(가슴 y 0.006 ~ 목 꼭대기 0.036)만 줄이고, 머리는 모양 그대로 그만큼 내려 붙임 (머리가 찌부되지 않게)
+  const neckY = (y) => (y <= 0.006 ? y : y <= 0.036 ? 0.006 + (y - 0.006) * neckH : y - 0.03 * (1 - neckH));
+  const spine = new THREE.CatmullRomCurve3(SPINE.map(([y, z]) => new THREE.Vector3(0, neckY(y), bodyZ(z))), false, 'catmullrom'); // 균일 매개변수: 반지름 곡선과 같은 빠르기로 지나가야 단면 이음에 꺾임(띠)이 없음
+  backLine = backLine?.map(([z, y]) => [bodyZ(z), y]); // 몸 길이(len)를 줄이면 등선도 같이 줄임
+  const radii = new THREE.CatmullRomCurve3(SPINE.map(([, , rx, ry]) => new THREE.Vector3(rx, ry, 0)), false, 'catmullrom');
   const NS = 60, NR = 28; // 등뼈 따라 / 둘레
   const pos = [], uvs = [], si = [], sw = [], idx = [];
   const X = new THREE.Vector3(1, 0, 0), U = new THREE.Vector3(), c = new THREE.Vector3(), r = new THREE.Vector3(), T = new THREE.Vector3();
@@ -93,14 +100,32 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   for (let i = 0; i <= NS; i++) {
     const u = i / NS; // 등뼈 점 i 는 u = i / 10 자리 (점 사이를 고르게 나눔)
     spine.getPoint(u, c);
+    // 단면 기울기는 앞뒤 넓게 본 방향으로: 몸을 짧게 줄이면 등뼈가 급히 꺾여 단면 고리끼리 겹쳐 접히고(등에 주름 띠) 울퉁불퉁해짐
+    T.subVectors(spine.getPoint(Math.min(1, u + 0.12)), spine.getPoint(Math.max(0, u - 0.12), r)).normalize();
     radii.getPoint(u, r);
-    spine.getTangent(u, T);
     U.crossVectors(T, X).normalize(); // 단면의 '위' 방향
     const wh = ease01((u - 0.6) / 0.1); // 목 → 머리 넘어가는 자리
     const wn = ease01((u - 0.4) / 0.1) * (1 - wh); // 가슴 → 목
+    // backLine [[z, y], ...] (z 오름차순): 옆에서 본 등선을 이 점들을 지나게 맞춤. 단면 위쪽 반만 늘이고 줄여서 배·가슴은 그대로
+    // 몸을 짧게 줄이면 등이 평평한 턱처럼 높고 목덜미에서 움푹 꺾이니, 목덜미에서 엉덩이까지 한 줄로 흘러내리게
+    let ryTop = r.y;
+    if (backLine && U.y > 0.3) {
+      for (let k = 0; k < 3; k++) { // 위 점의 z 가 ry 에 따라 살짝 움직이니 몇 번 맞춰 봄
+        const z = c.z + U.z * ryTop, n = backLine.length - 1;
+        if (z <= backLine[0][0] || z >= backLine[n][0]) { ryTop = r.y; break; }
+        let s = 0;
+        while (backLine[s + 1][0] < z) s++;
+        const [z0, y0] = backLine[s], [z1, y1] = backLine[s + 1];
+        const yt = y0 + ((y1 - y0) * (z - z0)) / (z1 - z0);
+        const w = ease01((z - backLine[0][0]) / 0.003) * ease01((backLine[n][0] - z) / 0.003); // 양 끝은 원래 모양으로 스르르
+        ryTop = r.y + w * ((yt - c.y) / U.y - r.y);
+      }
+    }
+    ryTop *= 1 + napeFill * Math.exp(-(((u - 0.625) / 0.035) ** 2)); // 등선과 목 뒤가 만나는 오목한 모서리를 둥글게 채움
     for (let j = 0; j <= NR; j++) {
       const a = -PI / 2 + (j / NR) * PI * 2; // 이음매는 배 밑으로 숨김
-      pos.push(c.x + Math.cos(a) * r.x, c.y + U.y * Math.sin(a) * r.y, c.z + U.z * Math.sin(a) * r.y);
+      const ry = Math.sin(a) > 0 ? ryTop : r.y;
+      pos.push(c.x + Math.cos(a) * r.x, c.y + U.y * Math.sin(a) * ry, c.z + U.z * Math.sin(a) * ry);
       uvs.push(j / NR, u);
       si.push(0, 1, 2, 0);
       sw.push(1 - wn - wh, wn, wh, 0);
@@ -120,28 +145,34 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   bodyGeo.setIndex(idx);
   bodyGeo.computeVertexNormals();
   // 몸 색: 회색 바탕에 목 둘레만 보라(아래)·초록(위)으로 반짝이는 띠가 부드럽게 번진다 (그림 위쪽이 머리 쪽)
-  const bodyTex = canvasTexture(`pigeonBody:${grey}:${neck}:${neck2}`, 8, 256, (g2, w, h) => {
+  const bodyTex = canvasTexture(`pigeonBody:${grey}:${neck}:${neck2}:${pied}`, pied ? 64 : 8, 256, (g2, w, h) => {
     g2.fillStyle = grey;
     g2.fillRect(0, 0, w, h);
     const band = (col, u0, u1) => {
       const gr = g2.createLinearGradient(0, (1 - u1) * h, 0, (1 - u0) * h);
-      gr.addColorStop(0, 'rgba(0,0,0,0)');
+      gr.addColorStop(0, `${col}00`); // 가장자리는 같은 색의 투명으로 (투명한 검정으로 흐리면 띠 경계마다 어두운 줄이 생김)
       gr.addColorStop(0.3, col);
       gr.addColorStop(0.7, col);
-      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      gr.addColorStop(1, `${col}00`);
       g2.fillStyle = gr;
       g2.fillRect(0, (1 - u1) * h, w, (u1 - u0) * h);
     };
     band(neck2, 0.42, 0.56);
     band(neck, 0.5, 0.66);
+    if (pied) { // 배·옆구리 무늬 (까치 흰 배): 그림 가로는 몸 둘레(양 끝이 배 밑). 가슴·꽁지 밑은 검게 남기고 옆구리 높이까지, 가장자리는 흐리게
+      g2.filter = 'blur(3px)';
+      g2.fillStyle = pied;
+      for (const x of [0, w]) { g2.beginPath(); g2.ellipse(x, (1 - 0.265) * h, w * 0.3, h * 0.105, 0, 0, PI * 2); g2.fill(); }
+      g2.filter = 'none';
+    }
   });
   const bodyBone = new THREE.Bone();
   body.add(bodyBone);
   const neckG = new THREE.Bone(); // 목 뼈 (화나면 빵빵하게 부풀린다)
-  neckG.position.set(0, 0.026, 0.03);
+  neckG.position.set(0, neckY(0.026), bodyZ(0.03));
   body.add(neckG);
   const head = new THREE.Bone(); // 머리 뼈: 부리·눈이 여기 붙는다
-  head.position.set(0, 0.05, 0.042);
+  head.position.set(0, neckY(0.05), bodyZ(0.042));
   body.add(head);
   const skin = new THREE.SkinnedMesh(bodyGeo, new THREE.MeshStandardMaterial({ roughness: 0.75, map: bodyTex }));
   skin.name = '몸';
@@ -163,7 +194,7 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   });
   // 날개 무늬: 팔은 회색 바탕에 검은 줄 두 줄 + 뒤쪽 깃털 결, 손은 끝으로 갈수록 짙어지는 날개깃 + 깃털 결
   // (그림 아래쪽이 날개 뒤 가장자리, 왼쪽이 뿌리)
-  const ARM_MAT = feather([`pigeonArm:${wingC}`, (g, w, h) => {
+  const ARM_MAT = feather([`pigeonArm:${wingC}:${pied}`, (g, w, h) => {
     g.fillStyle = wingC;
     g.fillRect(0, 0, w, h);
     g.strokeStyle = 'rgba(50,45,60,0.28)';
@@ -172,6 +203,13 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
       const x = w * (0.06 + i * 0.12);
       g.beginPath(); g.moveTo(x, h * 0.66); g.quadraticCurveTo(x + w * 0.01, h * 0.85, x + w * 0.03, h); g.stroke();
     }
+    if (pied) { // 까치 어깨깃: 날개 앞쪽 뿌리에 큰 흰 무늬
+      g.filter = 'blur(2px)';
+      g.fillStyle = pied;
+      g.beginPath(); g.ellipse(w * 0.3, h * 0.12, w * 0.42, h * 0.36, 0, 0, PI * 2); g.fill();
+      g.filter = 'none';
+      return;
+    }
     g.strokeStyle = '#3f3a44';
     g.lineCap = 'round';
     g.lineWidth = w * 0.06;
@@ -179,14 +217,25 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
       g.beginPath(); g.moveTo(w * x, h * 0.14); g.quadraticCurveTo(w * (x + 0.05), h * 0.48, w * (x + 0.02), h * 0.8); g.stroke();
     }
   }]);
-  const HAND_MAT = feather([`pigeonHand:${wingC}:${tipC}`, (g, w, h) => {
+  const HAND_MAT = feather([`pigeonHand:${wingC}:${tipC}:${pied}`, (g, w, h) => {
     const gr = g.createLinearGradient(0, 0, w, 0);
     gr.addColorStop(0.3, wingC);
     gr.addColorStop(0.62, tipC);
     g.fillStyle = gr;
     g.fillRect(0, 0, w, h);
-    g.strokeStyle = 'rgba(35,30,40,0.3)';
-    g.lineWidth = 2;
+    if (pied) { // 까치 날개깃: 뿌리는 파랑, 가운데는 흰 깃, 끝은 검정 — 검은 깃 결과 번갈아 흰·검 줄무늬가 된다
+      const pg = g.createLinearGradient(0, 0, w, 0);
+      pg.addColorStop(0.3, wingC);
+      pg.addColorStop(0.4, pied);
+      pg.addColorStop(0.78, pied);
+      pg.addColorStop(0.9, tipC);
+      g.fillStyle = pg;
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = tipC;
+      g.fillRect(0, 0, w, h * 0.12); // 앞 가장자리(바깥 깃 가장자리)는 검게
+    }
+    g.strokeStyle = pied ? tipC : 'rgba(35,30,40,0.3)';
+    g.lineWidth = pied ? 4 : 2;
     for (let i = 0; i < 7; i++) { // 날개깃 결: 뿌리 앞쪽에서 끝·뒤쪽으로 부채처럼
       g.beginPath(); g.moveTo(w * 0.05, h * 0.35); g.quadraticCurveTo(w * (0.25 + i * 0.08), h * 0.5, w * (0.18 + i * 0.13), h * (1 - i * 0.07)); g.stroke();
     }
@@ -194,7 +243,7 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   const wings = [-1, 1].map((s) => {
     const k = wing;
     const arm = new THREE.Group();
-    arm.position.set(s * 0.026 * fat, 0.02, 0.006);
+    arm.position.set(s * (0.026 * fat - shoulderIn), 0.02, bodyZ(0.006)); // shoulderIn: 어깨 축을 몸 안으로 (날개를 젖히거나 휘둘러도 뿌리가 몸 밖으로 뜨지 않게) // 몸을 짧게 줄이면 어깨도 같이 (안 그러면 날개 뿌리가 가는 목 밑에 걸려 몸 밖에 뜸)
     body.add(arm);
     // 팔: 앞 가장자리는 둥글게, 뒤 가장자리는 깃털 끝이 살짝 물결치게
     const ARM = smooth([[0, 0.011], [0.018, 0.014], [0.034, 0.012], [0.041, 0.004], [0.04, -0.02], [0.035, -0.024], [0.029, -0.022],
@@ -210,16 +259,25 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
     return [arm, s, hand];
   });
   const tail = new THREE.Group();
-  tail.position.set(0, 0.006, -0.045);
+  tail.position.set(0, 0.006, -0.045 * len);
   body.add(tail);
   // 꼬리: 부채꼴, 끝은 깃털 끝처럼 살짝 물결 + 끝의 검은 띠와 깃털 결은 그림으로
   const TAIL = smooth([[0, 0.007], [0.009, 0.005], [0.016, -0.016], [0.02, -0.031], [0.014, -0.037], [0.007, -0.036], [0, -0.04],
     [-0.007, -0.036], [-0.014, -0.037], [-0.02, -0.031], [-0.016, -0.016], [-0.009, 0.005]]);
-  const TAIL_MAT = feather([`pigeonTail:${wingC}`, (g, w, h) => {
-    g.fillStyle = wingC;
-    g.fillRect(0, 0, w, h);
-    g.fillStyle = '#3f3a44';
-    g.fillRect(0, h * 0.8, w, h * 0.2); // 끝의 검은 띠
+  const TAIL_MAT = feather([`pigeonTail:${wingC}:${tailC}`, (g, w, h) => {
+    if (tailC) { // 뿌리에서 끝으로 빛깔이 바뀌는 긴 꽁지 (까치: 청록 → 보라)
+      const gr = g.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, tailC[0]);
+      gr.addColorStop(0.8, tailC[1]);
+      gr.addColorStop(1, tipC); // 꽁지 끝은 날개깃 끝과 같은 짙은 색
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+    } else {
+      g.fillStyle = wingC;
+      g.fillRect(0, 0, w, h);
+      g.fillStyle = '#3f3a44';
+      g.fillRect(0, h * 0.8, w, h * 0.2); // 끝의 검은 띠
+    }
     g.strokeStyle = 'rgba(50,45,60,0.3)';
     g.lineWidth = 2;
     for (let i = 0; i < 7; i++) { // 꽁지깃 결: 뿌리에서 부채처럼
@@ -232,7 +290,7 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
     f.position.set(s * 0.011, -0.024 * fat, -0.004);
     body.add(f);
     // 비둘기 발: 짧은 분홍빛 빨간 다리, 앞으로 쫙 벌어진 긴 발가락 셋(가운데가 제일 김) + 뒤로 난 짧은 발가락 하나, 끝엔 까만 발톱
-    const R = mat('#e0605f', 0.55);
+    const R = mat(legC, 0.55);
     const CLAW = mat('#3a3036', 0.5);
     const leg = mesh(new THREE.CapsuleGeometry(0.0015, 0.0105, 4, 10).translate(0, -0.007, 0), R, f, '발');
     mesh(ball(0.0019, 12).translate(0, -0.0135, 0), R, f, '발'); // 발바닥 가운데 볼록
@@ -260,8 +318,8 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   // 땅에 파묻히지 않게 볼 검사 점: [부품, 그 부품 안의 자리, 여유]. 몸 끝·부리·날개 끝·꼬리 끝·발가락 끝처럼 튀어나온 곳만
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
   const probes = [
-    [body, V(0, -0.031 * fat, -0.006)], [body, V(0, -0.024 * fat, 0.024)], [body, V(0, -0.016, -0.036)], [body, V(0, 0.031 * fat, -0.008)],
-    [body, V(0.034 * fat, 0, -0.008)], [body, V(-0.034 * fat, 0, -0.008)], [body, V(0, 0.008, -0.06)],
+    [body, V(0, -0.031 * fat, -0.006 * len)], [body, V(0, -0.024 * fat, 0.024 * len)], [body, V(0, -0.016, -0.036 * len)], [body, V(0, 0.031 * fat, -0.008 * len)],
+    [body, V(0.034 * fat, 0, -0.008 * len)], [body, V(-0.034 * fat, 0, -0.008 * len)], [body, V(0, 0.008, -0.06 * len)],
     [head, V(0, -0.003, 0.028)], [head, V(0, -0.017, 0.002)], [head, V(0, 0.019, 0)], [head, V(0.017, 0, 0)], [head, V(-0.017, 0, 0)],
     [tail, V(0, 0, -0.038)], [tail, V(0.019, 0, -0.03)], [tail, V(-0.019, 0, -0.03)],
     ...wings.flatMap(([a, s, hd]) => [
@@ -274,7 +332,7 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   const parts = [fly, body, head, neckG, tail, ...wings.flatMap(([a, , h]) => [a, h]), ...feet, ...eyes];
   const rest = parts.map((o) => [o.position.clone(), o.rotation.clone(), o.scale.clone()]);
   const P = {
-    g, fly, body, head, neck: neckG, wings, tail, feet, eyes, beak,
+    g, fly, body, head, neck: neckG, wings, tail, feet, eyes, beak, probes, // probes: 다른 모양 날개·꽁지를 붙일 때 땅 검사 점을 더 넣음
     reset() { parts.forEach((o, i) => { o.position.copy(rest[i][0]); o.rotation.copy(rest[i][1]); o.scale.copy(rest[i][2]); }); },
     // 날갯짓: 아래로 세게 치고(빠르게) 위로 들 때 손마디가 늦게 따라와 접힌다
     flap(t, speed = 14, amp = 0.9, base = 0.2) {

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MONSTERS, FIELD_MAP, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, VILLAGE_FRUIT, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, WEAPON_STAT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
   SKILLS, SKILL_TYPES, inStrike,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
@@ -708,6 +708,8 @@ const FIELD_KINDS = ['nalgae', 'mongdang', 'banjjok', 'haak'];
 const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene, { ...monsterOpts, ...spot, phase: i * 7.3, kind: FIELD_KINDS[i % FIELD_KINDS.length] }));
 // 들판 구구: 하악냥 자리(가장 넓음) 안쪽 작은 원을 돌게 해서(같은 원이면 하악냥에 막혀 줄만 섬) 하악냥과 합동 모션이 나게
 fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
+// 들판 깍깍이 (공격형 까치): 날개콩 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
+fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[4], r: FIELD_MONSTERS[4].r / 2, kind: 'kkakkak', phase: 6.1, perches: guguPerches }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -761,8 +763,13 @@ function holdTool(t) {
   me?.setTool(t);
 }
 // 장비를 고른다 (퀵슬롯·Q·가방)
+let freeServer = false; // 테스트 서버(freeLook): 전직 전에도 모든 무기를 시험할 수 있다
+const wieldable = (t) => canWield(TOOLS[t], myJob, freeServer);
+// 이름 뒤에 받침에 맞는 '은/는' (전사는 · 도적은)
+const eun = (name) => { const c = (name.charCodeAt(name.length - 1) - 0xac00) % 28; return `${name}${c > 0 ? '은' : '는'}`; };
 function equipTool(t) {
   if (local.actLeft > 0) return;
+  if (!wieldable(t)) { toast(myJob ? `${eun(JOBS[myJob].name)} 몽둥이와 ${WEAPON_NAMES[JOBS[myJob].weapon]}만 쓸 수 있어요` : '전직하기 전에는 몽둥이만 쓸 수 있어요 (Lv 10에 전직)'); return; }
   local.equip = t;
   holdTool(t);
   showTool();
@@ -771,7 +778,7 @@ function equipTool(t) {
 }
 // Q: 맨손과 퀵슬롯에 넣은 무기를 차례로 돌려 든다 (생활 도구를 들고 있었으면 첫 무기부터)
 function nextQuick() {
-  const list = [0, ...quick.map((_, i) => slotItem(i)).filter((t) => t !== null)];
+  const list = [0, ...quick.map((_, i) => slotItem(i)).filter((t) => t !== null && wieldable(t))];
   if (list.length === 1) { toast('가방(I)에서 무기를 퀵슬롯에 넣어 보세요'); return; }
   const i = list.indexOf(local.equip);
   equipTool(list[(i + 1) % list.length]);
@@ -1180,13 +1187,12 @@ function renderInfo() {
     ${lv >= JOB_LEVEL ? `<p class="note">${myJob ? '다른 직업으로 바꿀 수도 있어요' : '⭐ 전직할 수 있어요! 직업을 골라요'}</p>
       <div class="job-pick">${Object.entries(JOBS).filter(([, j]) => j.main).map(([k, j]) => `<button type="button" data-job="${k}" class="${k === myJob ? 'on' : ''}">${JOB_ICON[k]} ${j.name}<small>${STAT_NAMES[j.main]}·${STAT_NAMES[j.sub]}</small></button>`).join('')}</div>`
     : `<p class="inv-help">Lv ${JOB_LEVEL}이 되면 전직할 수 있어요</p>`}
-    <h4>스텟 <small>(레벨이 오르면 저절로)</small></h4>
+    <h4>스텟 <small>(${myJob ? '레벨이 오르면 저절로' : '모험가는 힘만 올라요'})</small></h4>
     ${Object.entries(STAT_NAMES).map(([k, n]) => row(`${n}${tag(k)}`, st[k])).join('')}
     <h4>능력치</h4>
     ${row('최대 HP', Math.round(ab.hpMax))}${row('최대 MP', Math.round(ab.mpMax))}
     ${row('HP 회복', `${ab.hpRegen.toFixed(1)} / 초`)}${row('MP 회복', `${ab.mpRegen.toFixed(1)} / 초`)}
-    ${row('공격력 (칼·몽둥이)', ab.attack.str.toFixed(1))}${row('공격력 (활)', ab.attack.dex.toFixed(1))}
-    ${row('공격력 (지팡이)', ab.attack.int.toFixed(1))}${row('공격력 (단검)', ab.attack.luk.toFixed(1))}
+    ${row(`공격력 (${WEAPON_NAMES[job.weapon]})`, ab.attack[WEAPON_STAT[job.weapon]].toFixed(1))}
     ${row('치명타 확률', pct(ab.crit))}${row('치명타 피해', `${ab.critMult.toFixed(2)}배`)}
     ${row('빗나감', pct(ab.miss))}${row('구르기 대기', `${ab.dodgeCool.toFixed(2)}초`)}
     <h4>생활</h4>
@@ -1834,6 +1840,7 @@ function attach(r) {
         myJob = v ?? '';
         ab = abilitiesOf(statsOf(levelOf(myXp).lv, myJob));
         renderInfo();
+        if (!wieldable(local.equip)) equipTool(0); // 직업을 바꿔 못 쓰게 된 무기는 내려놓는다
         if (prev !== undefined && v) toast(`✨ ${ro(JOBS[v].name)} ${prev ? '바꿨어요' : '전직했어요!'}`);
       });
     } else {
@@ -1886,10 +1893,11 @@ function attach(r) {
   // (입장 직후에는 상태가 아직 안 왔을 수 있어 값이 들어올 때 반영)
   $(r.state).listen('freeLook', (v) => {
     const free = !!v;
+    freeServer = free;
     lookEditor.show(free);
     lifeSpots = free ? LIFE_SPOTS : [];
     if (free) { for (const k of WEAR_TOOLS) local.dura[k] = TOOL_DURABILITY[k]; saveDura(); } // 테스트 서버: 들어올 때마다 새 생활 도구 (아직 대장간이 없음)
-    setInvItems(free ? [1, 2, 3, 4, BOW, NET, STAFF, DAGGER, SHOVEL] : [1, 2, 4, NET, STAFF, DAGGER, SHOVEL]);
+    setInvItems(free ? [1, 2, 3, 4, BOW, NET, STAFF, DAGGER, SHOVEL] : [1, 2, 3, 4, NET, STAFF, DAGGER, SHOVEL]);
     // 활을 처음 받으면 빈 퀵슬롯에 넣어 준다 (한 번만). 테스트 서버에서는 들어올 때마다 화살통을 가득 채워 준다 (아직 화살을 얻는 곳이 없음)
     if (free && !store.get(localStorage, 'bowGiven')) {
       store.set(localStorage, 'bowGiven', '1');
@@ -1906,7 +1914,8 @@ function attach(r) {
       // 몽당연필·반쪽이·하악냥·구구는 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
       plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 }),
         createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches })];
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches }),
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkakkak', phase: 13.4, perches: guguPerches })]; // 깍깍이: 공격형이라 다가가면 쫓아옴
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });

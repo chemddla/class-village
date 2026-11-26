@@ -2,7 +2,7 @@
 // 가야 할 자리와 동작을 시계(Date.now)로 정하므로, 같은 서버에 들어온 사람들 화면에서 거의 같은 자리·같은 동작으로 보인다.
 // 맞는 판정도 (모두의 화면에 똑같이 보이는) 휘두르는 사람의 자리·방향으로 정하므로, 누가 때려도 모두의 화면에서 함께 맞는다.
 // (서버가 따로 몬스터를 관리하지 않는 맛보기용. 가까이 다가가면 내 화면에서만 깜짝 놀란다)
-import { PLAZA } from '../../../shared/world.js';
+import { PLAZA, WORLD, FIELD_MAP } from '../../../shared/world.js';
 import * as THREE from 'three';
 import { curveDrop, blobGeometry } from '../materials.js';
 import { createNalgaekong } from './nalgaekong.js';
@@ -10,6 +10,7 @@ import { createMongdang } from './mongdang.js';
 import { createBanjjok } from './banjjok.js';
 import { createHaaknyang, swatTaps } from './haaknyang.js';
 import { createGugu } from './gugu.js';
+import { createKkakkak, KKAK_JAB } from './kkakkak.js';
 import { canvasTexture } from '../villager/textures.js';
 
 // 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격 · size(크기 배율, 없으면 1) · shadow(발밑 그림자 좌우·앞뒤 배율, 없으면 동그랗게)
@@ -26,7 +27,11 @@ const KINDS = {
     plan: [['walk', 2.5], ['idle', 2], ['special', 2.7], ['special', 2.7], ['sleep', 20], ['idle', 2.5], ['special', 2.7], ['walk', 2], ['idle', 4], ['sleep', 14], ['idle', 2]] }, // 하악냥: 앞뒤로 길쭉해서 그림자도 앞뒤로 · 덮치기도 0.47초에 닿음
   // 구구(비둘기): 중립형이라 사람을 봐도 제 할 일만. 뒤뚱뒤뚱 걷다 모이 콕콕, 가끔 짝! 날아올랐다 내려앉음 · 하악냥보다 작게
   gugu: { create: createGugu, r: 0.03, special: 'peck', temper: 'neutral', size: 0.75, shadow: [0.8, 1.1],
-    plan: [['walk', 4], ['idle', 2.5], ['special', 2], ['walk', 3], ['special', 2], ['fly', 3.4], ['idle', 2], ['walk', 5], ['special', 2], ['idle', 3]] },
+    plan: [['walk', 4], ['idle', 2.5], ['special', 2], ['walk', 3], ['special', 2], ['fly', 3.4], ['idle', 2], ['walk', 5], ['special', 2], ['idle', 3]], flies: {} },
+  // 깍깍이(까치): 공격형 깡패. 깡총깡총 다니며 깍깍, 사람을 보면 화내고 쫓아와 덮쳐 쪼기. 구구처럼 나들이를 다니는데 더 높이·멀리·자주
+  kkakkak: { create: createKkakkak, r: 0.03, special: 'caw', temper: 'aggro', size: 0.85, shadow: [0.8, 1.2],
+    plan: [['walk', 3], ['idle', 2.5], ['special', 3], ['walk', 4], ['idle', 2], ['walk', 3], ['special', 3], ['idle', 2.5]],
+    flies: { speed: 3.4, chance: 0.1, cool: 7, far: 0.5, farDist: [20, 34], farArc: 5, nearArc: 1.0 } }, // 나들이 설정 (없는 값은 구구 값)
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -77,9 +82,36 @@ const GUGU_FAR = 0.25; // 나들이 가운데 멀리 날아가 다른 곳에서 
 const GUGU_FAR_DIST = [12, 20]; // 그때 날아가는 거리 (m, 이 사이)
 const GUGU_HIGH = 0.3; // 이보다 높이 떠 있으면 휘둘러도 안 맞음 (m)
 const CAT_NEAR = 4; // 하악냥이 이만큼 안에 있어야 장난을 검 (m)
+// 깍깍이 합동 (괴롭히기·쫓아내기·시비): 깍깍이 크기 기준 (마을에선 S배)
+const KK_GAP = 0.069; // 날개콩 옆에서 쫄 때 날개콩 가운데까지
+const KK_CAT_GAP = 0.097; // 하악냥 앞에서 쫄 때 하악냥 가운데까지
+const KK_BACK = 0.069; // 머리를 위에서 쫄 때 정수리에서 이만큼 뒤에 떠서 (몸을 숙이면 부리가 앞으로 나감)
+const KK_DROP = 0.039; // 그때 발이 정수리보다 이만큼 아래 (부리가 몸보다 위에 있어서)
+const HAAK_HEAD_R = 0.0288; // 하악냥 머리 공 반지름 (하악냥 크기 기준): 깍깍이가 정수리를 쫌
 const CAT_HOVER = 0.9; // 하악냥 머리 위에서 파닥이는 높이 (m): 폴짝 뛰면 앞발이 닿을락 말락
 const NALGAE_TOP = 0.0618; // 날개콩 몸 공 가운데에서 정수리까지 (날개콩 크기 기준)
 const sm = (x, a, b) => THREE.MathUtils.smoothstep(x, a, b);
+// 구구가 날 때 넘어가야 하는 것들: 둥근 기둥 { x, z, r, top(땅에서 높이 m) } — 나무는 잎까지, 바위, 분수·벤치·가로등·표지판·포탈 기둥
+// shortcut: 높이는 모양별 어림값(나무 잎 덩어리 크기 1.3·높이 3.9 × 크기), 새 물체를 마을에 놓으면 여기도 넣어야 함
+const SKY = [WORLD, FIELD_MAP].flatMap((m) => [
+  ...m.trees.map((t) => ({ x: t.x, z: t.z, r: 1.3 * t.s, top: 3.9 * t.s })),
+  ...m.rocks.map((o) => ({ x: o.x, z: o.z, r: 0.9 * o.s, top: 0.8 * o.s })),
+  ...m.colliders.slice(m.trees.length + m.rocks.length).map((c) => ({ x: c.x, z: c.z, r: c.r + 0.2, top: c.r >= 1 ? 2.2 : c.r >= 0.5 ? 0.8 : 2.8 })),
+]);
+const GUGU_CLEAR = 0.3; // 물체 위를 이만큼 띄워 넘어감 (m)
+// 직선으로 날 때 물체를 뚫지 않으려면 포물선 꼭대기(arc)가 얼마나 높아야 하나 (출발·도착 자리를 덮는 물체 = 앉을 나무 등은 뺌)
+function clearArc(f, p, h0, h1, arc) {
+  const ends = SKY.filter((o) => Math.hypot(o.x - f.x, o.z - f.z) < o.r || Math.hypot(o.x - p.x, o.z - p.z) < o.r);
+  for (let i = 1; i < 24; i++) {
+    const k = i / 24, e = sm(k, 0, 1);
+    const x = f.x + (p.x - f.x) * e, z = f.z + (p.z - f.z) * e;
+    let need = 0;
+    for (const o of SKY) if (!ends.includes(o) && Math.hypot(o.x - x, o.z - z) < o.r + 0.15) need = Math.max(need, o.top + GUGU_CLEAR);
+    if (need) arc = Math.max(arc, (need - (h0 + (h1 - h0) * e)) / Math.max(0.3, Math.sin(k * Math.PI)));
+  }
+  return Math.min(arc, 6);
+}
+console.assert(clearArc({ x: 1e4, z: 0 }, { x: 1e4, z: 1 }, 0, 0, 0.2) === 0.2, 'clearArc: 아무것도 없으면 그대로');
 const TMP = new THREE.Vector3();
 // 날개콩 머리 위에 뜨는 물음표 (뭐지?)
 const questionMark = () => {
@@ -105,6 +137,8 @@ const SHADOW_MAT = new THREE.MeshBasicMaterial({
   color: 0x2a3b1a, transparent: true, opacity: 0.24, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
 });
 const BLOB_R = 0.45; // blobGeometry 반지름 (m)
+const BLEND = 0.18; // 동작이 바뀔 때 앞 자세에서 새 동작으로 이만큼(초)에 걸쳐 스르륵 넘어감 (물구나무 → 맞음처럼 자세가 툭 튀지 않게)
+const TURN_MAX = 9; // 몸이 보이게 도는 가장 빠른 빠르기 (라디안/초): 방향을 홱 틀어도 한 프레임에 확 돌아 보이지 않게
 const PUSH = 6; // 다른 몬스터와 겹쳤을 때 밀려나는 빠르기 (겹친 만큼 × 이 값 / 초)
 const ALL = new Set(); // 소환된 몬스터 모두의 자리·몸 반지름 (몬스터끼리 서로 통과하거나 겹치지 않게)
 const groundY = (x, z) => (Math.hypot(x - PLAZA.fountain.x, z - PLAZA.fountain.z) < PLAZA.r ? PAVE : 0);
@@ -125,6 +159,31 @@ const SCRUB_SPEED = 0.32; // 지우며 움직이는 빠르기 (m/s)
 const SCRUB_REACH = 0.45; // 가장 가까운 낙서가 이보다 멀면 걸어가고, 가까우면 엎드려 지우며 다가감 (m)
 const ERASE_R = 0.3; // 엎드린 몸 앞 이만큼 안의 낙서가 지워짐 (m)
 const ERASE_GIVEUP = 4; // 이만큼 하나도 못 지우면(벽 너머 등) 포기 (초)
+// 다른 합동 모션 (모두 시안 크기가 아니라 마을 크기 m)
+const SEED_GAP = 0.09; // 몽당연필이 모이처럼 콕콕 찍는 점 사이 거리 (m)
+const PRINT_GAP = 0.11; // 구구 발자국 사이 거리 (m)
+const PRINT_ROUNDS = 3; // 구구가 발자국을 남기러 걸어가는 횟수: 세 번째를 다 지우면 반쪽이가 화냄
+const GUGU_WALK = 0.35; // 구구가 땅에서 걷는 빠르기 (m/s)
+const BANJJOK_TOP = 0.02; // 반쪽이 몸 가운데에서 윗면까지 (반쪽이 크기 기준): 날개콩이 올라섬
+// 내가 먼저 짝을 찾는 합동 모션: 내 종류 → [짝 종류, 합동 이름, 짝이 낮잠 자는 중이어야 하는지] (구구 짝은 구구 나들이에서 찾음)
+const DUO_PAIRS = {
+  mongdang: [['banjjok', 'scrub'], ['haak', 'tip'], ['nalgae', 'wings']],
+  banjjok: [['nalgae', 'lift'], ['haak', 'nap', true]],
+};
+// 몽당연필 물구나무 낙서 모양: [점 사이, 좌우 지그재그 폭, 그리는 시간(초), 처음 자리에서 퍼지는 거리]
+const DRAW = { scrub: [DOT_GAP, ZIG, DOODLE_TIME, DOODLE_SPREAD], seed: [SEED_GAP, 0, 4.2, 0.5], tip: [DOT_GAP, ZIG, 9, DOODLE_SPREAD] };
+// 날개콩 양옆 땅에 그리는 날개 한 짝 (날개콩 기준 x 옆·z 앞, m) — 어깨는 두 몸이 닿는 거리(약 0.54) 밖이라 연필이 걸어가 닿을 수 있음: 어깨에서 바깥 위로 뻗어 뾰족한 끝 → 아래쪽은 깃털 끝 네 개가 톱니처럼
+function wingPath(s) {
+  const pts = [];
+  for (let i = 0; i <= 24; i++) { const u = i / 24; pts.push({ x: s * (0.62 + 0.98 * u), z: 0.05 + 0.6 * u + 0.18 * Math.sin(Math.PI * u), pen: i > 0 }); }
+  for (let i = 1; i <= 40; i++) {
+    const v = i / 40;
+    pts.push({ x: s * (1.6 - 0.98 * v), z: 0.65 - 0.6 * v - 0.3 * Math.sin(Math.PI * v) - 0.2 * Math.abs(Math.sin(4 * Math.PI * v)) * (1 - 0.4 * v), pen: true });
+  }
+  return pts;
+}
+const WINGS = [...wingPath(1), { x: 0, z: -0.7, pen: false }, ...wingPath(-1)]; // 오른쪽 날개 → (펜 들고) 뒤로 돌아 → 왼쪽 날개
+console.assert(WINGS.length === 131 && Math.abs(WINGS[64].x - 0.62) < 1e-9 && Math.abs(WINGS[64].z - 0.05) < 1e-9, 'WINGS: 어깨에서 시작해 어깨로 돌아옴');
 const MARK_FADE = 3; // 합동 모션이 끊기면 남은 낙서가 이만큼에 걸쳐 흐려져 사라짐 (초)
 const MARK_GEO = new THREE.CircleGeometry(1, 10).rotateX(-Math.PI / 2);
 const HIDE = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -148,10 +207,10 @@ function seeded(seed) {
   };
 }
 // 땅에 남는 연필 낙서: 납작한 점들을 이어 찍는다 (한 번에 그리도록 점들을 하나로 묶음)
-function createMarks(scene) {
+function createMarks(scene, { color = 0x45454e, r: dotR = DOT_R } = {}) {
   const MAX = 900;
   const mat = new THREE.MeshBasicMaterial({
-    color: 0x45454e, transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    color, transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
   });
   const mesh = new THREE.InstancedMesh(MARK_GEO, mat, MAX);
   mesh.name = '연필낙서';
@@ -167,7 +226,7 @@ function createMarks(scene) {
     get alive() { return alive; },
     add(x, z) {
       if (pts.length >= MAX) return;
-      const r = DOT_R * (0.85 + Math.random() * 0.3); // 연필 자국 굵기가 조금씩 다르게
+      const r = dotR * (0.85 + Math.random() * 0.3); // 연필 자국 굵기가 조금씩 다르게
       m4.compose(v.set(x, groundY(x, z) - curveDrop(x, z) + 0.004, z), q.setFromAxisAngle(UP, Math.random() * 6), sc.set(r, 1, r));
       mesh.setMatrixAt(pts.length, m4);
       pts.push({ x, z, on: true });
@@ -264,11 +323,13 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   const K = KINDS[kind];
   const TEMPER = temper ?? K.temper;
   const RUN = K.run ?? 1; // 도망·쫓을 때 빠르기 배수 (하악냥은 더 빨리 달림)
+  // 나는 종류(구구·깍깍이)의 나들이: 빠르기 · 1초마다 떠날 확률 · 다녀온 뒤 쉬는 시간 · 멀리 가는 비율·거리·높이 · 가까운 곳 갈 때 높이
+  const FLY = K.flies && { speed: GUGU_FLY, chance: GUGU_TRIP_CHANCE, cool: GUGU_TRIP_COOL, far: GUGU_FAR, farDist: GUGU_FAR_DIST, farArc: 3, nearArc: 0.8, ...K.flies };
   const S = SCALE * (K.size ?? 1); // 이 몬스터의 크기
   const BODY_R = K.r * S; // 몸 반지름 (m): 캐릭터가 이 안으로 지나가지 못한다
   // 다른 몬스터 몸과 겹치는 자리인지 (몬스터끼리도 서로 통과하지 못한다)
   // kind·free·seen·duo·duoCool: 합동 모션 짝 찾기용 (free: 제 길을 따라 한가하게 걷거나 쉬는 중 · seen: 마지막으로 움직인 시각)
-  const self = { x: 0, z: 0, r: BODY_R, solid: false, kind, free: false, seen: 0, duo: null, duoCool: DUO_COOL * 0.4 };
+  const self = { x: 0, z: 0, r: BODY_R, solid: false, kind, free: false, seen: 0, duo: null, duoCool: DUO_COOL * 0.4, napping: false, h: 0 };
   ALL.add(self);
   const hitsMon = (bx, bz) => {
     for (const o of ALL) if (o !== self && o.solid && Math.hypot(bx - o.x, bz - o.z) < o.r + BODY_R) return true;
@@ -311,6 +372,38 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   };
   const mon = K.create({ fxParent: scene, outlineScale: OUTLINE_SCALE });
   mon.root.scale.setScalar(S);
+  // 동작이 바뀌면 바로 앞 자세를 적어 두고, 새 동작 자세로 BLEND 초 동안 이어 붙임 (나는 종류는 스스로 이어 붙임)
+  // 나타나기·사라지기(spawn·gone)는 크기가 0에서/0으로 가는 동작이라 이어 붙이지 않음
+  const poseNodes = [];
+  if (!K.flies) mon.root.children[0].traverse((o) => poseNodes.push(o));
+  const poseBuf = new Float32Array(poseNodes.length * 10);
+  let blendT = BLEND;
+  const play0 = mon.play;
+  mon.play = (name) => {
+    if (poseNodes.length && name !== mon.state && name !== 'spawn' && name !== 'gone' && mon.state !== 'gone' && mon.state !== 'spawn') {
+      poseNodes.forEach((o, i) => { o.position.toArray(poseBuf, i * 10); o.quaternion.toArray(poseBuf, i * 10 + 3); o.scale.toArray(poseBuf, i * 10 + 7); });
+      blendT = 0;
+    }
+    play0(name);
+  };
+  const BV = new THREE.Vector3(), BQ = new THREE.Quaternion();
+  const blendPose = (dt) => {
+    if (blendT >= BLEND) return;
+    blendT += dt;
+    const k = sm(blendT, 0, BLEND);
+    poseNodes.forEach((o, i) => {
+      BV.copy(o.position); o.position.fromArray(poseBuf, i * 10).lerp(BV, k);
+      BQ.copy(o.quaternion); o.quaternion.fromArray(poseBuf, i * 10 + 3).slerp(BQ, k);
+      BV.copy(o.scale); o.scale.fromArray(poseBuf, i * 10 + 7).lerp(BV, k);
+    });
+  };
+  // 걷다가 막히면 제자리에서 기다림: 한 프레임 막혔다 풀렸다 할 때마다 걷기↔쉬기가 깜빡이지 않게 잠깐 막힌 건 걷던 대로 둠
+  let stuckT = 0;
+  const stepLegs = (stuck, dt) => {
+    stuckT = stuck ? stuckT + dt : 0;
+    if (stuckT > 0.25) { if (mon.state === 'walk') mon.play('idle'); } else if (!stuck && mon.state !== 'walk') mon.play('walk');
+  };
+  let shownH = 0; // 보이는 방향 (heading 을 TURN_MAX 빠르기 넘지 않게 따라감)
   scene.add(mon.root);
   // 발밑 그림자: 몬스터와 함께 숨고 함께 돈다 (root 가 S배 커져 있으므로 그만큼 나눠서)
   const shadow = new THREE.Mesh(blobGeometry, SHADOW_MAT);
@@ -346,7 +439,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   let tapsAt = swatTaps(0); // 이번 툭툭에서 앞발이 닿는 순간들 (앉은 곤충·나는 곤충이 다름)
   let huntCool = 3 + Math.random() * 3; // 다시 곤충을 노리기까지 남은 시간 (초)
   const HUNTS = !!(K.hunts && prey && onSwat);
-  // 합동 모션 (몽당연필·반쪽이)
+  // 합동 모션 (구구 짝 말고 모두)
   let duoTick = -1; // 마지막으로 짝 찾기 주사위를 굴린 시각 (초)
   let myDuo = null; // 지금 하고 있는 합동 모션 (바뀌면 처음부터)
   let duoStep = ''; // 내 차례의 단계 — 연필: 'draw' 낙서 · 'land' 착지 · 'aside' 비켜서기 · 'watch' 구경 / 반쪽이: 'watch' 지켜봄 · 'erase' 지우기 · 'proud' 뿌듯
@@ -375,8 +468,9 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   // 단계를 차례로: { fly: () => 갈 자리(월드 x·y·z, y 없으면 땅), land, dur, arc } 날아감 · { sit | hover: () => 자리 } 앉아 쉼 · 떠서 기다림
   // · { wait, act } 땅에서 기다림 — 모두 dur 초 또는 until(T) 까지. start() 단계 시작 때 · tick(T) 매 프레임 · bail() 이면 마지막 단계(집으로)로 건너뜀
   let trip = null;
+  let frameDt = 1 / 60; // 이번 프레임 시간 (깍깍이가 머리 위를 부드럽게 따라갈 때)
   let air = 0; // 땅에서 떠 있는 높이 (m)
-  let tripCool = GUGU_TRIP_COOL * 0.5;
+  let tripCool = (FLY?.cool ?? 0) * 0.5;
   let tripTick = -1;
   let extraY = 0; // 날개콩이 방방 뛰는 높이 (m)
   let post = null; // 이번 프레임 몬스터 자세 위에 덧씌울 것 (합동 모션 중 날개콩 고개 젖히기·물음표)
@@ -384,6 +478,8 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   let qMark = null;
   const nBody = kind === 'nalgae' ? mon.root.getObjectByName('몸') : null;
   const core = nBody?.parent;
+  const bBody = kind === 'banjjok' ? mon.root.getObjectByName('몸') : null;
+  const hHead = kind === 'haak' ? mon.root.getObjectByName('머리') : null;
   const groundAt = (x, z) => groundY(x, z) - curveDrop(x, z);
   const home = () => { const { x, z } = target(); return { x, z }; };
   const stopTrip = () => { trip = null; air = 0; mon.setAir?.(0); };
@@ -400,22 +496,37 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       const f = trip.from;
       const toH = p.y == null ? 0 : p.y - groundAt(p.x, p.z);
       const dist = Math.hypot(p.x - f.x, p.z - f.z);
-      if (!trip.dur) trip.dur = st.dur ?? 0.5 + Math.hypot(dist, toH - f.h) / GUGU_FLY;
+      if (!trip.dur) {
+        trip.arc = clearArc(f, p, f.h, toH, st.arc ?? Math.min(FLY.nearArc, 0.15 + dist * 0.12));
+        trip.dur = st.dur ?? 0.5 + Math.hypot(dist, toH - f.h, trip.arc) / FLY.speed; // 높이 넘어가면 그만큼 오래
+      }
       if (mon.state !== 'air') mon.play('air');
       const lead = f.h < 0.05 ? 0.2 : 0; // 땅에서 뜰 땐 날개를 짝! 치고 나서 출발
       const k = THREE.MathUtils.clamp((T - lead) / trip.dur, 0, 1), e = sm(k, 0, 1);
       px = f.x + (p.x - f.x) * e;
       pz = f.z + (p.z - f.z) * e;
-      air = f.h + (toH - f.h) * e + (st.arc ?? Math.min(0.8, 0.15 + dist * 0.12)) * Math.sin(k * Math.PI);
+      air = f.h + (toH - f.h) * e + trip.arc * Math.sin(e * Math.PI); // 같은 길을 천천히 떠서 사뿐 내려앉게 (위로 툭 튀어 오르지 않게)
       if (dist > 0.15) heading += wrap(Math.atan2(p.x - f.x, p.z - f.z) - heading) * Math.min(1, dt * 6);
       mv = Math.sin(k * Math.PI);
       br = st.land ? sm(k, 0.6, 0.95) : 0;
       done = k >= 1;
+    } else if (st.walk) {
+      // 땅에서 뒤뚱뒤뚱 걸어감 (막히면 dur 초에 그만)
+      const p = st.walk();
+      const dist = Math.hypot(p.x - px, p.z - pz);
+      if (dist > 0.03) {
+        const a = Math.atan2(p.x - px, p.z - pz), step = Math.min(dist, GUGU_WALK * dt);
+        [px, pz] = move(px, pz, px + Math.sin(a) * step, pz + Math.cos(a) * step);
+        heading += wrap(a - heading) * Math.min(1, dt * 8);
+        if (mon.state !== 'walk') mon.play('walk');
+      }
+      air = 0;
+      done = dist <= 0.03 || T >= (st.dur ?? Infinity);
     } else {
       const p = (st.sit ?? st.hover)?.();
       if (p) { px = p.x; pz = p.z; air = p.y - groundAt(p.x, p.z); }
       if (st.sit && mon.state !== 'perch') mon.play('perch');
-      if (st.hover && mon.state !== 'air') mon.play('air');
+      if (st.hover && mon.state !== 'air' && mon.state !== 'jab') mon.play('air');
       if (st.wait && (mon.state === 'air' || mon.state === 'perch' || mon.state === 'walk' || (st.act && mon.state === 'idle'))) mon.play(st.act ?? 'idle');
       if (st.face) heading += wrap(st.face() - heading) * Math.min(1, dt * 6);
       sh = st.shake?.() ?? 0;
@@ -426,16 +537,23 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     if (done) {
       trip.i++;
       trip.from = null;
-      if (trip.i >= trip.steps.length) { stopTrip(); mon.play('idle'); tripCool = GUGU_TRIP_COOL; }
+      if (trip.i >= trip.steps.length) { stopTrip(); mon.play('idle'); tripCool = FLY.cool; }
     }
   }
   const faceTo = (o) => () => Math.atan2(o.x - px, o.z - pz);
+  // 머리 위 물음표 (k: 0~1 크기, y: 몬스터 크기 기준 높이, c: 흔들 시계) — 몬스터가 커도 물음표 크기는 같게
+  const showQ = (k, y, c) => {
+    if (!qMark) { qMark = questionMark(); mon.root.add(qMark); }
+    qMark.visible = k > 0.01;
+    qMark.scale.setScalar(0.06 * k * (1 + 0.1 * Math.sin(c * 8)) * SCALE / S);
+    qMark.position.set(0.055 * SCALE / S, y + Math.sin(c * 4) * 0.004, 0);
+  };
   // 멀리 나들이: 높이 날아 멀리 내려앉아 쪼고 두리번거리고 콩콩 옮겨 다니다가 다시 날아 돌아옴
   function farTrip(r) {
     let at = null;
     for (let i = 0; i < 8 && !at; i++) {
       const a = (r + i * 0.381) * Math.PI * 2;
-      const d = GUGU_FAR_DIST[0] + ((r * 7.7 + i * 0.53) % 1) * (GUGU_FAR_DIST[1] - GUGU_FAR_DIST[0]);
+      const d = FLY.farDist[0] + ((r * 7.7 + i * 0.53) % 1) * (FLY.farDist[1] - FLY.farDist[0]);
       const x = px + Math.sin(a) * d, z = pz + Math.cos(a) * d;
       if (!wall(x, z) && !wall((px + x) / 2, (pz + z) / 2)) at = { x, z }; // 맵 밖·벽 속에는 안 내림
     }
@@ -444,24 +562,28 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     const hop = { x: at.x + Math.sin(a) * 1.4, z: at.z + Math.cos(a) * 1.4 };
     const there = wall(hop.x, hop.z) ? at : hop;
     startTrip([
-      { fly: () => at, land: true, arc: 3 },
+      { fly: () => at, land: true, arc: FLY.farArc },
       { wait: true, dur: 2.5 },
       { wait: true, act: 'peck', dur: 2 },
       { fly: () => there, land: true, arc: 0.3 },
       { wait: true, act: 'peck', dur: 2 },
       { wait: true, dur: 3 + ((r * 5.3) % 1) * 4 },
-      { fly: home, land: true, arc: 3 },
+      { fly: home, land: true, arc: FLY.farArc },
     ]);
   }
   // 나들이 떠나기: 둘레의 한가한 하악냥(장난) · 날개콩(머리에 앉기) · 나무·캐릭터 머리(perches) 중 하나를 주사위로
   function guguTrip(r) {
-    if (r < GUGU_FAR) { farTrip(r / GUGU_FAR); return; }
-    r = (r - GUGU_FAR) / (1 - GUGU_FAR);
-    const free = (k, near) => [...ALL].find((o) => o.kind === k && o.free && Date.now() - o.seen < 500 && Math.hypot(o.x - px, o.z - pz) < near);
+    if (r < FLY.far) { farTrip(r / FLY.far); return; }
+    r = (r - FLY.far) / (1 - FLY.far);
+    const free = (k, near) => (kind === 'gugu' || kind === 'kkakkak') && [...ALL].find((o) => o.kind === k && o.free && Date.now() - o.seen < 500 && Math.hypot(o.x - px, o.z - pz) < near); // 날개콩·하악냥과의 장난은 구구만
     const cat = free('haak', CAT_NEAR);
     const nal = free('nalgae', GUGU_REACH);
+    const ban = free('banjjok', DUO_NEAR);
+    const pen = free('mongdang', GUGU_REACH);
     const spots = (perches?.() ?? []).filter((o) => Math.hypot(o.x - px, o.z - pz) < GUGU_REACH && o.get());
-    const opts = [cat && 'catJump', cat && 'catPounce', nal && 'perch', spots.length && 'spot'].filter(Boolean);
+    const pig = kind === 'kkakkak' && free('gugu', GUGU_REACH);
+    const opts = (kind === 'kkakkak' ? [nal && 'bully', nal && 'headPeck', cat && 'fight', pig && 'shoo', spots.length && 'spot']
+      : [cat && 'catJump', cat && 'catPounce', nal && 'perch', spots.length && 'spot', ban && 'prints', pen && 'seed']).filter(Boolean);
     if (!opts.length) return;
     const pick = opts[Math.floor(r * opts.length)];
     const homeStep = { fly: home, land: true };
@@ -476,8 +598,11 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       ]);
       return;
     }
-    const mate = pick === 'perch' ? nal : cat;
+    if (kind === 'kkakkak') { kkakkakDuo(pick, { bully: nal, headPeck: nal, fight: cat, shoo: pig }[pick], r); return; }
+    const mate = { perch: nal, prints: ban, seed: pen }[pick] ?? cat;
     const d = { type: pick, p: self, e: mate, over: false, landed: false, nT: 0, hop: 0, hovering: false, catT: -1 };
+    if (pick === 'prints') Object.assign(d, { marks: createMarks(scene, { color: 0x8a6a4a, r: 0.011 }), round: 0, walking: false });
+    if (pick === 'seed') Object.assign(d, { marks: createMarks(scene, { r: 0.016 }), cx: mate.x, cz: mate.z, dir: r * 6.3, turn: 0, dist: 0, len: 0, rng: seeded(Math.round(r * 1e6)), drawn: false });
     self.duo = mate.duo = d;
     self.free = mate.free = false;
     if (pick === 'perch') {
@@ -488,6 +613,60 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         { fly: head, land: true, bail: () => d.over },
         { sit: head, tick: () => (d.landed = true), shake: () => (d.nT > 1.5 ? 1 : 0), until: () => d.nT >= 3.2, bail: () => d.over },
         { start() { const a = heading + 2; esc = { x: px + Math.sin(a) * 1.8, z: pz + Math.cos(a) * 1.8 }; esc.y = groundAt(esc.x, esc.z) + 1.4; }, fly: () => esc, dur: 0.9 },
+        homeStep,
+      ]);
+    } else if (pick === 'prints') {
+      // 뒤뚱뒤뚱 걸으며 발자국 → 반쪽이가 쫓아와 박박 지움 → 다 지우면 또 걸어가 발자국 (세 번) → 화난 반쪽이가 몸통박치기 하면 짝! 날아올라 피함
+      let dest, lx, lz, gap, foot = 1, esc;
+      const stamp = () => {
+        foot = -foot;
+        const h = heading, bx = px + Math.cos(h) * 0.035 * foot, bz = pz - Math.sin(h) * 0.035 * foot;
+        for (const t of [-0.55, 0, 0.55]) d.marks.add(bx + Math.sin(h + t) * 0.035, bz + Math.cos(h + t) * 0.035); // 발가락 셋
+        d.marks.add(bx - Math.sin(h) * 0.012, bz - Math.cos(h) * 0.012); // 뒤꿈치
+      };
+      const walkRound = (i) => ({
+        start() {
+          d.walking = true;
+          d.round = i + 1;
+          lx = px; lz = pz; gap = 0;
+          const away = Math.atan2(px - mate.x, pz - mate.z);
+          dest = { x: px, z: pz };
+          for (let j = 0; j < 6; j++) {
+            const a = away + (((r * 5.1 + i * 0.37 + j * 0.29) % 1) - 0.5) * 2.4;
+            const g = { x: px + Math.sin(a) * 1.2, z: pz + Math.cos(a) * 1.2 };
+            if (!wall(g.x, g.z)) { dest = g; break; }
+          }
+        },
+        walk: () => dest,
+        dur: 5,
+        tick() {
+          gap += Math.hypot(px - lx, pz - lz);
+          lx = px; lz = pz;
+          while (gap >= PRINT_GAP) { gap -= PRINT_GAP; stamp(); }
+        },
+        bail: () => d.over,
+      });
+      const steps = [];
+      for (let i = 0; i < PRINT_ROUNDS; i++) {
+        steps.push(walkRound(i), { start() { d.walking = false; }, wait: true, act: 'peck', face: faceTo(mate), until: (T) => (d.cleanAt && Date.now() - d.cleanAt > 1300) || T > 9, bail: () => d.over }); // 반쪽이가 다 지우고 뿌듯해할 틈을 줌
+      }
+      startTrip([
+        ...steps,
+        { wait: true, face: faceTo(mate), until: () => d.slam, bail: () => d.over },
+        { start() { const a = Math.atan2(px - mate.x, pz - mate.z) + 0.8; esc = { x: px + Math.sin(a) * 0.7, z: pz + Math.cos(a) * 0.7 }; esc.y = groundAt(esc.x, esc.z) + 0.9; }, fly: () => esc, dur: 0.5, arc: 0.05, down: true },
+        { hover: () => esc, dur: 1.2, down: true, face: faceTo(mate) },
+        homeStep,
+      ]);
+    } else if (pick === 'seed') {
+      // 몽당연필이 땅에 점점점 콕콕 → 모이인 줄 알고 날아와 콕콕 → 갸웃 "?" → 퉤, 목 빵빵 화남 → 연필을 뒤뚱뒤뚱 쫓아감 (연필은 콩콩 도망)
+      let spot;
+      startTrip([
+        { wait: true, face: faceTo(mate), until: () => d.drawn, bail: () => d.over },
+        { start() { const c = d.marks.center() ?? mate; spot = { x: c.x, z: c.z }; }, fly: () => spot, land: true, bail: () => d.over },
+        { wait: true, act: 'peck', dur: 2.2, bail: () => d.over },
+        { start: () => mon.play('idle'), wait: true, dur: 1.5, tick: (T) => showQ(sm(T, 0, 0.2) * (1 - sm(T, 1.2, 1.45)), 0.145, T), bail: () => d.over },
+        { wait: true, act: 'angry', face: faceTo(mate), dur: 1.6, tick: () => { d.mad = true; duoMood = true; }, bail: () => d.over },
+        { walk: () => ({ x: mate.x, z: mate.z }), dur: 2.5, tick: () => (duoMood = true), bail: () => d.over },
         homeStep,
       ]);
     } else if (pick === 'catJump') {
@@ -515,6 +694,111 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         homeStep,
       ]);
     }
+  }
+
+  // ── 깍깍이 합동: 날개콩 괴롭히기(땅에서 콕콕 / 머리 위에서 콕콕) · 구구 쫓아내기 · 하악냥에게 시비 ──
+  // 깍깍이가 나들이처럼 단계를 밟고, 짝은 duo 로 받아줌 (d.hits: 쫀 횟수 → 짝이 맞는 시늉)
+  function kkakkakDuo(pick, mate, r) {
+    const d = { type: pick, p: self, e: mate, over: false, hits: 0 };
+    self.duo = mate.duo = d;
+    self.free = mate.free = false;
+    const bail = () => d.over;
+    const face = faceTo(mate);
+    const homeStep = { fly: home, land: true };
+    // times 초마다 콕! → 부리가 닿는 순간 d.hits++
+    const jabs = (times) => {
+      let last = -1;
+      return (T) => {
+        for (const x of times) {
+          if (last < x && T >= x) mon.play('jab');
+          if (last < x + KKAK_JAB && T >= x + KKAK_JAB) d.hits++;
+        }
+        last = T;
+      };
+    };
+    const side = Math.atan2(px - mate.x, pz - mate.z); // 내가 있던 쪽에서 다가감
+    const beside = (gap) => () => ({ x: mate.x + Math.sin(side) * gap * S, z: mate.z + Math.cos(side) * gap * S });
+    // 정수리(h) 뒤 위에 떠서: 몸을 숙여 콕 하면 부리가 정수리에
+    // 짝 머리가 맞고 움찔해도 깍깍이는 툭 튀지 않게 살짝 늦게 따라감
+    const above = (get) => {
+      let cur = null;
+      return () => {
+        const h = get(), p = { x: h.x + Math.sin(side) * KK_BACK * S, z: h.z + Math.cos(side) * KK_BACK * S, y: h.y - KK_DROP * S };
+        if (!cur) return (cur = p);
+        const k = 1 - Math.exp(-frameDt * 10);
+        cur = { x: cur.x + (p.x - cur.x) * k, z: cur.z + (p.z - cur.z) * k, y: cur.y + (p.y - cur.y) * k };
+        return cur;
+      };
+    };
+    const mad = () => (duoMood = true);
+    let esc;
+    const flyOff = (up, out) => ({ start() { const a = side + (r > 0.5 ? 0.9 : -0.9); esc = { x: px + Math.sin(a) * out, z: pz + Math.cos(a) * out }; esc.y = groundAt(esc.x, esc.z) + up; }, fly: () => esc, dur: 0.8 });
+    if (pick === 'bully') {
+      // 날개콩 옆에 내려앉아 째려봄 → 콕콕콕콕 (날개콩은 아야아야) → 날개콩이 도망가면 깍깍 비웃음
+      startTrip([
+        { fly: beside(KK_GAP), land: true, arc: 0.3, bail },
+        { wait: true, act: 'angry', face, dur: 1.6, tick: mad, bail },
+        { wait: true, face, dur: 3.2, tick: jabs([0.1, 1.05, 2.0, 2.6]), bail }, // 날개콩이 아야 하는 틈(0.9초)을 두고, 마지막은 연달아
+        { start: () => (d.flee = true), wait: true, act: 'caw', face, dur: 3 },
+        homeStep,
+      ]);
+    } else if (pick === 'headPeck') {
+      // 날개콩 머리 위에 떠서 정수리 콕콕 → 버둥버둥 도망가도 위에 붙어 따라가며 콕콕 → 휙 솟아 날아감
+      const over = above(() => ({ x: mate.x, z: mate.z, y: mate.topY ?? groundAt(mate.x, mate.z) + 0.6 }));
+      const toward = () => side + Math.PI;
+      const hit1 = jabs([0.6, 1.15, 1.7, 2.25]);
+      startTrip([
+        { fly: over, arc: 0.3, bail },
+        { hover: over, face: toward, tick: (T) => { mad(); d.above = true; hit1(T); }, dur: 2.6, bail },
+        { start: () => (d.flee = true), hover: over, face: toward, tick: jabs([0.5, 1.1]), dur: 1.9 },
+        flyOff(0.9, 1.2),
+        homeStep,
+      ]);
+    } else if (pick === 'fight') {
+      // 하악냥 앞에 내려앉아 깍깍 시비 → 콕콕콕 → 하악냥이 하악! 덮치면 짝! 머리 위로 피해 → 위에서 정수리 콕콕 → 하악냥 시무룩, 깍깍이는 날아감
+      const top = above(() => mate.head ?? { x: mate.x, z: mate.z, y: groundAt(mate.x, mate.z) + 0.5 });
+      const toward = () => side + Math.PI;
+      startTrip([
+        { fly: beside(KK_CAT_GAP), land: true, arc: 0.3, bail },
+        { wait: true, act: 'caw', face, dur: 1.8, tick: mad, bail },
+        { wait: true, face, dur: 2.5, tick: jabs([0.1, 1.05, 2.0]), bail }, // 하악냥이 아야 하는 틈(0.9초)을 두고
+        { start: () => (d.punch = true), wait: true, face, until: () => (d.pounce ?? -1) >= 0.25, bail },
+        { fly: top, dur: 0.45, arc: 0.05, down: true, bail },
+        { hover: top, face: toward, down: true, dur: 3.2, tick: jabs([0.9, 1.85, 2.8]), bail },
+        { start() { d.sulk = true; flyOff(1, 1.3).start(); }, fly: () => esc, dur: 0.8 },
+        homeStep,
+      ]);
+    } else {
+      // 구구를 보고 부르르 화냄 → 구구한테 날아가면 구구는 화들짝 날아 도망 → 그 자리에 앉아 깍깍
+      let spot;
+      startTrip([
+        { wait: true, act: 'angry', face, dur: 1.6, tick: mad, bail },
+        { start() { d.go = true; spot = { x: mate.x, z: mate.z }; }, fly: () => spot, land: true, arc: 0.25 },
+        { wait: true, act: 'caw', face, dur: 3 },
+        homeStep,
+      ]);
+    }
+  }
+  // 구구: 깍깍이가 덤비면 화들짝 날아올라 멀리 도망 → 한참 뒤 돌아옴
+  function shooed(d) {
+    d.fled = true;
+    const a = Math.atan2(px - d.p.x, pz - d.p.z);
+    let far = null;
+    for (let i = 0; i < 6 && !far; i++) {
+      const b = a + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.5;
+      const g = { x: px + Math.sin(b) * 5, z: pz + Math.cos(b) * 5 };
+      if (!wall(g.x, g.z) && !wall((px + g.x) / 2, (pz + g.z) / 2)) far = g;
+    }
+    if (!far) { endDuo(d); return; }
+    const up = { x: px + (far.x - px) * 0.3, z: pz + (far.z - pz) * 0.3 };
+    up.y = groundAt(up.x, up.z) + 1.2;
+    startTrip([
+      { fly: () => up, dur: 0.7, arc: 0.05 },
+      { fly: () => far, land: true, arc: 0.4 },
+      { wait: true, act: 'peck', dur: 2, start: () => endDuo(d) },
+      { wait: true, dur: 4 },
+      { fly: home, land: true },
+    ]);
   }
 
   const target = () => {
@@ -552,10 +836,11 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     },
     // me: 내 캐릭터 (없으면 아직 입장 전)
     update(dt, me) {
+      frameDt = dt;
       const { s, th, x: tx, z: tz } = target();
       extraY = 0;
       if (qMark) qMark.visible = false;
-      if (!self.duo) duoMood = false;
+      if (!self.duo) { duoMood = false; if (!FLY) air = 0; } // 반쪽이 위에 올라탔던 날개콩도 합동이 끊기면 땅으로
       if (px === null) { px = tx; pz = tz; }
       sinceHit += dt;
       let legs = 1; // 동작 빠르기 배수 (도망·쫓을 때 다리를 빨리 놀림)
@@ -571,7 +856,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       if (mon.state === 'die' || mon.state === 'gone') angry = targeting = false;
       attackCool -= dt;
       const near = me ? Math.hypot(me.x - px, me.z - pz) : Infinity;
-      const busy = BUSY.has(mon.state);
+      const busy = BUSY.has(mon.state) && !(mon.state === 'hit' && self.duo?.fakeHit === self); // 합동 모션 속 '맞음'은 연기라 그만두지 않음
 
       // 공격 중: 부리·심이 닿는 순간에 아직 가까이 있으면 맞음
       if (mon.state === 'attack' && attackT >= 0) {
@@ -587,7 +872,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       // 나를 볼 수 있는지: 가까이 있고, 바라보는 쪽 앞에 있음 (뒤에서 다가가면 모른다)
       // 자는 중엔 눈을 감고 있어서 아주 가까이 와야(발소리) 깸
       const sees = me && (mon.state === 'sleep' ? near < WAKE_NEAR : near < SIGHT && Math.abs(wrap(Math.atan2(me.x - px, me.z - pz) - heading)) < VIEW);
-      if (busy || !me) mode = 'route';
+      if (busy || !me || trip) mode = 'route'; // 나들이 중엔 사람을 봐도 다녀와서 (깍깍이도 날아가는 동안은 안 덤빔)
       else if (hostile && (mode === 'chase' || mode === 'rage' || angry ? near < CHASE_LOSE : near < AGGRO_SIGHT)) {
         if (!targeting) {
           // 처음 공격 대상으로 알아챔: 멈춰서 '화남!' 하고 나서 쫓아옴 (쫓다가 맞은 뒤에는 바로 다시 쫓음)
@@ -643,9 +928,10 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       } else mode = 'route';
       if (mode !== 'hunt' && mode !== 'sulk') preyId = null;
       // 합동 모션 중: 아무 일 없으면(제 길로 돌아갈 차례면) 계속하고, 맞거나 나를 보고 놀라는 등 다른 일이 생기면 그만둠
-      if (kind === 'gugu') {
-        if (trip && busy) { stopTrip(); if (self.duo) endDuo(self.duo); } // 맞으면 나들이 그만
-        mode = trip ? 'trip' : 'route';
+      if (FLY) {
+        if (busy) { if (trip) stopTrip(); if (self.duo) endDuo(self.duo); } // 맞으면 나들이·합동 그만
+        if (kind === 'gugu' && self.duo?.type === 'shoo' && self.duo.go && !self.duo.fled) shooed(self.duo); // 깍깍이가 덤빔
+        mode = trip ? 'trip' : kind === 'gugu' ? 'route' : mode; // 깍깍이는 나들이가 아니면 쫓기·화남 그대로
       } else if (self.duo) {
         if (!busy && (mode === 'route' || mode === 'duo')) mode = 'duo';
         else { endDuo(self.duo); if (mode === 'duo') mode = 'route'; }
@@ -654,34 +940,39 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       // 한가한지: 제 길 가까이에서 걷거나 쉬는 중 (짝이 될 수 있음. 같은 길을 줄지어 따라가며 조금 처질 때도 있어 넉넉히)
       const onRoute = mode === 'route' && !busy && Math.hypot(tx - px, tz - pz) < 0.6 && (mon.state === 'idle' || mon.state === 'walk');
       self.free = onRoute && !self.duo && self.duoCool <= 0;
+      self.napping = mode === 'route' && !busy && mon.state === 'sleep' && Math.hypot(tx - px, tz - pz) < 0.6 && !self.duo && self.duoCool <= 0; // 낮잠 자는 하악냥 (반쪽이가 다가옴)
       self.seen = Date.now();
       self.duoCool -= dt;
       // 구구: 1초마다 주사위를 굴려 나들이를 떠남 (같은 서버 사람들 화면에서 거의 같이)
       tripCool -= dt;
-      if (kind === 'gugu' && self.free && tripCool <= 0) {
+      if (FLY && self.free && tripCool <= 0) {
         const sec = Math.floor(Date.now() / 1000);
         if (sec !== tripTick) {
           tripTick = sec;
-          if (dice(sec, Math.round(phase * 10) + 7) < GUGU_TRIP_CHANCE) {
+          if (dice(sec, Math.round(phase * 10) + 7) < FLY.chance) {
             guguTrip(dice(sec, Math.round(phase * 10) + 99));
             if (trip) mode = 'trip';
           }
         }
       }
-      // 몽당연필이 짝을 찾음: 1초마다 주사위를 굴려, 가까이 한가한 반쪽이가 있으면 합동 모션 시작
-      if (kind === 'mongdang' && self.free) {
+      // 합동 모션 짝 찾기: 1초마다 주사위를 굴려, 가까이 한가한(또는 낮잠 자는) 짝이 있으면 시작
+      if (DUO_PAIRS[kind] && self.free) {
         const sec = Math.floor(Date.now() / 1000);
         if (sec !== duoTick) {
           duoTick = sec;
-          let mate = null;
-          for (const o of ALL) {
-            if (o.kind === 'banjjok' && o.free && Date.now() - o.seen < 500 && Math.hypot(o.x - px, o.z - pz) < DUO_NEAR) { mate = o; break; }
+          const mates = [];
+          for (const [k, type, nap] of DUO_PAIRS[kind]) {
+            for (const o of ALL) {
+              if (o.kind === k && (nap ? o.napping : o.free) && Date.now() - o.seen < 500 && Math.hypot(o.x - px, o.z - pz) < DUO_NEAR) { mates.push([o, type]); break; }
+            }
           }
-          if (mate && dice(sec, Math.round(phase * 10)) < DUO_CHANCE) {
-            const duo = { p: self, e: mate, over: false, t: 0, cx: px, cz: pz, dir: heading, turn: 0, dist: 0, len: 0,
-              rng: seeded(sec * 31 + Math.round(phase * 10)), marks: createMarks(scene), drawn: false, cleaned: false };
+          const ph = Math.round(phase * 10);
+          if (mates.length && dice(sec, ph) < DUO_CHANCE) {
+            const [mate, type] = mates[Math.floor(dice(sec, ph + 3) * mates.length)];
+            const duo = { type, p: self, e: mate, over: false, t: 0, cx: px, cz: pz, dir: heading, turn: 0, dist: 0, len: 0,
+              rng: seeded(sec * 31 + ph), marks: type === 'lift' || type === 'nap' ? null : createMarks(scene), drawn: false, cleaned: false };
             self.duo = mate.duo = duo;
-            self.free = mate.free = false;
+            self.free = mate.free = mate.napping = false;
             mode = 'duo';
           }
         }
@@ -707,7 +998,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           kx = kz = 0;
           mon.play('spawn');
         }
-      } else if (mon.state === 'attack' && mode !== 'duo') {
+      } else if (mon.state === 'attack' && mode !== 'duo' && mode !== 'trip') {
         // 공격하는 동안은 제자리에서 나를 바라봄
         if (me) heading += wrap(Math.atan2(me.x - px, me.z - pz) - heading) * Math.min(1, dt * 8);
       } else if (mode === 'rage') {
@@ -779,7 +1070,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
             const stuck = nx === px && nz === pz;
             px = nx;
             pz = nz;
-            if (stuck) { if (mon.state === 'walk') mon.play('idle'); } else if (mon.state !== 'walk') mon.play('walk');
+            stepLegs(stuck, dt);
             heading += wrap(dir - heading) * Math.min(1, dt * 8);
             legs = 1.6 * RUN;
           } else {
@@ -807,9 +1098,33 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           myDuo = d;
           duoT = 0;
           noErase = 0;
-          duoStep = kind === 'mongdang' ? 'draw' : 'watch';
-          mon.play(d.type ? 'idle' : kind === 'mongdang' ? 'doodle' : 'notice');
+          duoStep = kind === 'mongdang' && DRAW[d.type] ? 'draw' : 'watch';
+          if (d.type === 'scrub' && kind === 'banjjok') mon.play('notice');
+          else if (duoStep === 'draw') mon.play('doodle');
+          else if (kind === 'nalgae' && (d.type === 'lift' || d.type === 'wings')) mon.play('flutter'); // 날기 시도부터 (또 1cm)
+          else if (d.type !== 'nap' || kind !== 'haak') mon.play('idle'); // 낮잠 자던 하악냥은 그대로 잠
         }
+        // 반쪽이: 가장 가까운 자국으로 뒤뚱뒤뚱 가서 엎드려 박박 지우며 따라감 → 지울 게 없거나 한동안 하나도 못 지우면 false
+        const scrubMarks = () => {
+          const n = d.marks.nearest(px, pz);
+          noErase += dt;
+          if (!n || noErase > ERASE_GIVEUP) return false;
+          const dist = Math.hypot(n.x - px, n.z - pz);
+          const scrubbing = mon.state === 'scrub';
+          if (dist > SCRUB_REACH + (scrubbing ? 0.2 : 0)) walkTo(n.x, n.z, 0.7, SCRUB_REACH * 0.8); // 멀리 있는 자국으로는 뒤뚱뒤뚱 걸어감
+          else {
+            // 엎드려 박박 문지르며 자국을 따라 조금씩 나아감 (몸 앞쪽에 닿은 자국이 슥슥 지워짐)
+            if (!scrubbing) { mon.play('scrub'); duoT = 0; }
+            const want = Math.atan2(n.x - px, n.z - pz);
+            if (dist > 0.12) {
+              const step = Math.min(dist - 0.1, SCRUB_SPEED * dt);
+              [px, pz] = move(px, pz, px + Math.sin(want) * step, pz + Math.cos(want) * step);
+            }
+            turnTo(want, 3);
+            if (duoT > 0.3 && d.marks.erase(px + Math.sin(heading) * 0.1, pz + Math.cos(heading) * 0.1, ERASE_R, dt)) noErase = 0;
+          }
+          return true;
+        };
         duoT += dt;
         const turnTo = (a, k = 8) => { heading += wrap(a - heading) * Math.min(1, dt * k); };
         const face = (o) => turnTo(Math.atan2(o.x - px, o.z - pz), 6);
@@ -824,7 +1139,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           const stuck = nx === px && nz === pz;
           px = nx;
           pz = nz;
-          if (stuck) { if (mon.state === 'walk') mon.play('idle'); } else if (mon.state !== 'walk') mon.play('walk');
+          stepLegs(stuck, dt);
           turnTo(dir);
           legs = speed / SPEED * 0.7;
           return false;
@@ -883,7 +1198,217 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           }
           if (duoT > 15) endDuo(d);
         }
-        else if (d.type) { /* 구구 짝은 위에서 함 */ } else if (kind === 'mongdang') {
+        else if (d.type === 'bully' || d.type === 'headPeck') {
+          // 날개콩: 깍깍이를 보며 쭈뼛 → 콕 쪼일 때마다 아야 → 버둥버둥 도망
+          const kk = d.p;
+          d.seen ??= 0;
+          if (d.hits > d.seen) { d.seen = d.hits; if (mon.state !== 'hit') { d.fakeHit = self; mon.play('hit'); } }
+          if (!d.flee) {
+            if (mon.state === 'walk') mon.play('idle');
+            if (d.type === 'bully' || !d.above) face(kk);
+            else post = () => { core.rotation.x = THREE.MathUtils.lerp(core.rotation.x, -0.35, Math.min(1, duoT * 3)); }; // 머리 위를 올려다봄
+            if (duoT > 20) endDuo(d);
+          } else {
+            d.runT = (d.runT ?? 0) + dt;
+            const a = Math.atan2(px - kk.x, pz - kk.z), dir = steer(a) ?? a;
+            [px, pz] = move(px, pz, px + Math.sin(dir) * 0.9 * dt, pz + Math.cos(dir) * 0.9 * dt);
+            turnTo(dir, 10);
+            if (mon.state === 'idle') mon.play('walk');
+            legs = 2.4;
+            if (d.runT > 3.5) endDuo(d);
+          }
+        } else if (d.type === 'fight') {
+          // 하악냥: 시비 거는 깍깍이를 노려봄 → 콕콕 맞음 → 하악! 덮침 (깍깍이는 위로 피함) → 위에서 또 콕콕 → 시무룩
+          const kk = d.p;
+          if (d.hits > (d.seen ?? 0)) { d.seen = d.hits; if (mon.state !== 'attack') { d.fakeHit = self; mon.play('hit'); } }
+          if (d.pounce != null) d.pounce += dt;
+          if (d.sulk) {
+            if (!d.sulking && mon.state !== 'hit') { d.sulking = true; mon.play('sulk'); }
+            else if (d.sulking && mon.state !== 'sulk') endDuo(d);
+          } else if (d.punch && !d.mad) { d.mad = true; duoMood = true; mon.play('angry'); }
+          else if (d.mad && d.pounce == null && mon.state !== 'angry') { d.pounce = 0; mon.play('attack'); }
+          if (mon.state === 'walk') mon.play('idle');
+          if (mon.state !== 'attack') face(kk);
+          if (duoT > 25) endDuo(d);
+        } else if (d.type === 'prints') {
+          // 반쪽이: 구구 발자국을 보고 깜짝 → 쫓아다니며 박박 → 다 지우면 뿌듯, 그런데 또 생김 → 세 번째까지 지우면 화나서 몸통박치기 (구구는 짝! 피함)
+          const pig = d.p;
+          if (d.slam) { if (mon.state !== 'attack') endDuo(d); } // 박치기를 마치면 끝
+          else if (duoStep === 'watch') {
+            if (mon.state === 'walk') mon.play('idle');
+            face(pig);
+            if (d.marks.alive > 6) { duoStep = 'spot'; mon.play('notice'); }
+            else if (duoT > 8) endDuo(d);
+          } else if (duoStep === 'spot') {
+            face(pig);
+            if (mon.state !== 'notice') { duoStep = 'erase'; noErase = 0; }
+          } else if (duoStep === 'erase') {
+            if (scrubMarks()) { /* 박박 */ }
+            else if (d.marks.alive) endDuo(d); // 손이 안 닿아 포기
+            else if (d.round >= PRINT_ROUNDS && !d.walking) { duoStep = 'mad'; d.cleanAt = Date.now(); mon.play('angry'); }
+            else { duoStep = 'wait'; duoT = 0; d.cleanAt = Date.now(); mon.play('scrubEnd'); }
+          } else if (duoStep === 'wait') {
+            // 다 지웠다고 뿌듯해하는데 구구가 또 뒤뚱뒤뚱: 새 발자국이 생기면 다시
+            if (mon.state === 'walk') mon.play('idle');
+            face(pig);
+            if (d.marks.alive > 3) { duoStep = 'erase'; noErase = 0; d.cleanAt = 0; }
+            else if (duoT > 12) endDuo(d);
+          } else {
+            duoMood = true;
+            if (mon.state === 'angry') face(pig);
+            else if (walkTo(pig.x, pig.z, 0.9, BODY_R + pig.r + 0.12)) { face(pig); mon.play('attack'); d.slam = true; }
+          }
+        } else if (d.type === 'lift') {
+          // 날개콩이 또 1cm → 반쪽이가 옆에 와서 발판이 돼 줌 → 날개콩이 폴짝 올라가 파닥파닥 (반쪽이는 받친 채 뒤뚱뒤뚱) → 그래도 1cm, 미끄러져 툭 → 둘 다 깜짝
+          const b = d.p, n = d.e;
+          const top = () => (b.topY ?? groundAt(b.x, b.z) + 0.28) - groundAt(px, pz);
+          if (kind === 'nalgae') {
+            if (duoStep === 'watch') { if (mon.state !== 'flutter') { duoStep = 'huh'; duoT = 0; } }
+            else if (duoStep === 'huh') {
+              const c = duoT, huh = sm(c, 0, 0.2) * (1 - sm(c, 1.2, 1.4));
+              showQ(huh, 0.17, c);
+              post = () => { core.rotation.z += Math.sin((c - 0.2) * 3.2) * 0.22 * huh; }; // 갸웃갸웃
+              if (c > 1.4) {
+                d.huh = true;
+                if (d.ready) { duoStep = 'hop'; duoT = 0; d.from = { x: px, z: pz }; } else if (c > 9) endDuo(d);
+              }
+            } else if (duoStep === 'hop') {
+              // 반쪽이 등으로 폴짝
+              const k = Math.min(1, duoT / 0.5), e = sm(k, 0, 1);
+              px = d.from.x + (b.x - d.from.x) * e;
+              pz = d.from.z + (b.z - d.from.z) * e;
+              air = top() * e + 0.15 * Math.sin(k * Math.PI);
+              turnTo(b.h, 6);
+              if (k >= 1) { duoStep = 'ride'; mon.play('flutter'); d.riding = true; }
+            } else if (duoStep === 'ride') {
+              px = b.x;
+              pz = b.z;
+              air = top();
+              turnTo(b.h, 4);
+              if (mon.state !== 'flutter') {
+                duoStep = 'fall';
+                duoT = 0;
+                const a = b.h + Math.PI / 2;
+                d.from = { x: px, z: pz, y: air };
+                d.to = { x: px + Math.sin(a) * (b.r + BODY_R + 0.02), z: pz + Math.cos(a) * (b.r + BODY_R + 0.02) };
+              }
+            } else if (duoStep === 'fall') {
+              // 미끄러져 옆으로 툭
+              const k = Math.min(1, duoT / 0.4);
+              px = d.from.x + (d.to.x - d.from.x) * k;
+              pz = d.from.z + (d.to.z - d.from.z) * k;
+              air = d.from.y * (1 - k * k);
+              if (k >= 1) { air = 0; duoStep = 'shock'; mon.play('notice'); d.fell = true; }
+            } else if (mon.state !== 'notice') endDuo(d);
+          } else if (duoStep === 'watch') {
+            if (mon.state === 'walk') mon.play('idle');
+            face(n);
+            if (d.huh) { duoStep = 'go'; duoT = 0; } else if (duoT > 8) endDuo(d);
+          } else if (duoStep === 'go') {
+            const a = Math.atan2(px - n.x, pz - n.z), gap = n.r + BODY_R + 0.04;
+            if (walkTo(n.x + Math.sin(a) * gap, n.z + Math.cos(a) * gap, 0.7, 0.06) || duoT > 6) { duoStep = 'ready'; mon.play('idle'); d.ready = true; }
+          } else if (duoStep === 'ready') {
+            if (d.riding) duoStep = 'carry';
+          } else if (duoStep === 'carry') {
+            // 날개콩을 받친 채 앞으로 뒤뚱뒤뚱
+            if (d.fell) { duoStep = 'shock'; mon.play('notice'); }
+            else {
+              const step = 0.12 * dt;
+              [px, pz] = move(px, pz, px + Math.sin(heading) * step, pz + Math.cos(heading) * step);
+              if (mon.state !== 'walk') mon.play('walk');
+              legs = 0.5;
+            }
+          } else if (mon.state === 'walk') mon.play('idle');
+        } else if (d.type === 'nap') {
+          // 반쪽이가 낮잠 자는 하악냥에게 살금살금 → 부러진 면을 옆구리에 대 봄 (꾹, 꾹) "내 반쪽?" → 하악냥이 깨서 하악! → 깜짝 도망 / 하악냥은 도로 잠
+          const cat = d.e;
+          if (kind === 'haak') {
+            if (!d.check) { if (mon.state !== 'sleep') mon.play('sleep'); }
+            else if (!d.hiss) { d.hiss = true; mon.play('angry'); }
+            else if (mon.state === 'angry') { face(d.p); duoMood = true; }
+            else if (mon.state !== 'sleep') mon.play('sleep');
+          } else if (duoStep === 'watch') {
+            // 하악냥 옆구리 (가까운 쪽) 로 살금살금
+            const right = (px - cat.x) * Math.cos(cat.h) - (pz - cat.z) * Math.sin(cat.h) > 0 ? 1 : -1;
+            const a = cat.h + (Math.PI / 2) * right, gap = cat.r + BODY_R + 0.03;
+            if (walkTo(cat.x + Math.sin(a) * gap, cat.z + Math.cos(a) * gap, 0.4, 0.06) || duoT > 8) { duoStep = 'turn'; duoT = 0; if (mon.state === 'walk') mon.play('idle'); }
+          } else if (duoStep === 'turn') {
+            turnTo(Math.atan2(cat.x - px, cat.z - pz) - Math.PI / 2, 5); // 부러진 면(+x)을 하악냥 쪽으로
+            if (duoT > 0.8) { duoStep = 'press'; duoT = 0; }
+          } else if (duoStep === 'press') {
+            const c = duoT, a = Math.atan2(cat.x - px, cat.z - pz);
+            const push = c < 1.8 ? 0.05 * Math.max(0, Math.sin((c * Math.PI) / 0.6)) ** 2 : 0; // 꾹 (0~0.6초), 꾹 (1.2~1.8초)
+            showQ(sm(c, 0.7, 0.9) * (1 - sm(c, 2.4, 2.6)), 0.07, c);
+            post = () => { mon.root.position.x += Math.sin(a) * push; mon.root.position.z += Math.cos(a) * push; };
+            if (c > 2.6) { d.check = true; duoStep = 'wait'; duoT = 0; }
+          } else if (duoStep === 'wait') {
+            if (duoT > 0.35) { duoStep = 'flee'; duoT = 0; mon.play('notice'); }
+          } else {
+            const a = Math.atan2(px - cat.x, pz - cat.z);
+            if (duoT > 0.5) walkTo(px + Math.sin(a) * 0.5, pz + Math.cos(a) * 0.5, 1.1, 0);
+            if (duoT > 2.6) endDuo(d);
+          }
+        } else if (d.type === 'wings') {
+          // 날개콩이 또 1cm → 몽당연필이 날개콩 양옆 땅에 커다란 날개를 그려 줌 → 날개 위에서 신나게 파닥파닥 → 그래도 1cm, 갸웃 "?"
+          const n = d.e;
+          if (kind === 'nalgae') {
+            if (duoStep === 'watch') { if (mon.state !== 'flutter') { d.ask = true; duoStep = 'stay'; } }
+            else if (duoStep === 'stay') { if (d.drawn) { duoStep = 'try'; mon.play('flutter'); } }
+            else if (duoStep === 'try') { if (mon.state !== 'flutter') { duoStep = 'huh'; duoT = 0; } }
+            else {
+              const c = duoT, huh = sm(c, 0, 0.2) * (1 - sm(c, 1.8, 2));
+              showQ(huh, 0.17, c);
+              post = () => { core.rotation.z += Math.sin((c - 0.2) * 3.2) * 0.22 * huh; };
+              if (c > 2.1) endDuo(d);
+            }
+          } else if (duoStep === 'watch') {
+            if (mon.state === 'walk') mon.play('idle');
+            face(n);
+            if (d.ask) {
+              // 날개콩이 바라보는 쪽 기준으로 날개 자리를 정함 (날개콩은 그리는 동안 가만히 있음)
+              const h = n.h, rx = Math.cos(h), rz = -Math.sin(h), fx = Math.sin(h), fz = Math.cos(h);
+              d.path = WINGS.map((w) => ({ x: n.x + rx * w.x + fx * w.z, z: n.z + rz * w.x + fz * w.z, pen: w.pen }));
+              d.i = 0;
+              duoStep = 'go';
+              duoT = 0;
+            } else if (duoT > 6) endDuo(d);
+          } else if (duoStep === 'go') {
+            if (walkTo(d.path[0].x, d.path[0].z, 0.7, 0.06) || duoT > 6) { duoStep = 'flip'; duoT = 0; mon.play('doodle'); }
+          } else if (duoStep === 'flip') {
+            if (duoT > 0.55) duoStep = 'trace'; // 물구나무 다 설 때까지
+          } else if (duoStep === 'trace') {
+            // 날개 모양 길을 따라 물구나무 서서 쓱쓱 (펜 든 구간은 자국 없이 지나감). 길을 따라가느라 몸은 다른 몬스터를 뚫고 지나갈 수도 있음
+            let left = 0.85 * dt;
+            while (left > 0 && d.i < d.path.length) {
+              const t = d.path[d.i], dx = t.x - px, dz = t.z - pz, dist = Math.hypot(dx, dz);
+              const step = Math.min(dist, left);
+              if (dist > 1e-6) { d.dir = Math.atan2(dx, dz); px += (dx / dist) * step; pz += (dz / dist) * step; }
+              left -= step;
+              if (t.pen) {
+                d.dist += step;
+                while (d.dist >= DOT_GAP) { d.dist -= DOT_GAP; d.marks.add(px - Math.sin(d.dir) * d.dist, pz - Math.cos(d.dir) * d.dist); }
+              }
+              if (step >= dist) d.i++;
+            }
+            turnTo(d.dir, 10);
+            if (d.i >= d.path.length) { duoStep = 'land'; mon.play('doodleEnd'); }
+          } else if (duoStep === 'land') {
+            if (mon.state !== 'doodleEnd') {
+              d.drawn = true;
+              duoStep = 'aside';
+              duoT = 0;
+              asideX = n.x + Math.sin(n.h) * 1.3; // 날개콩 앞에서 구경
+              asideZ = n.z + Math.cos(n.h) * 1.3;
+              if (wall(asideX, asideZ)) { asideX = px; asideZ = pz; }
+            }
+          } else if (duoStep === 'aside') {
+            if (walkTo(asideX, asideZ, 0.7) || duoT > 4) { duoStep = 'look'; if (mon.state === 'walk') mon.play('idle'); }
+          } else { if (mon.state === 'walk') mon.play('idle'); face(n); }
+        } else if (kind === 'mongdang') {
+          // 몽당연필 (scrub 반쪽이와 · seed 구구와 · tip 하악냥과): 물구나무 서서 낙서 → 착지 → 옆으로 비켜 구경
+          const other = d.p === self ? d.e : d.p;
+          const [gap, zigW, drawTime, spread] = DRAW[d.type];
+          if (d.type === 'tip' && d.knock && duoStep === 'draw') { d.fakeHit = self; mon.play('hit'); duoStep = 'down'; duoT = 0; }
           if (duoStep === 'draw') {
             if (mon.state !== 'doodle') mon.play('doodle');
             if (duoT > 0.55) {
@@ -892,7 +1417,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
               if (d.rng() < dt * 1.5) d.turn = (d.rng() < 0.5 ? -1 : 1) * (5 + d.rng() * 6);
               d.turn += ((d.rng() - 0.5) * 50 - d.turn * 1.2) * dt;
               d.dir += (d.turn + Math.sin(duoT * 9) * 3) * dt;
-              if (Math.hypot(px - d.cx, pz - d.cz) > DOODLE_SPREAD) d.dir += wrap(Math.atan2(d.cx - px, d.cz - pz) - d.dir) * Math.min(1, dt * 5);
+              if (Math.hypot(px - d.cx, pz - d.cz) > spread) d.dir += wrap(Math.atan2(d.cx - px, d.cz - pz) - d.dir) * Math.min(1, dt * 5);
               const step = DOODLE_SPEED * dt;
               const nx = px + Math.sin(d.dir) * step, nz = pz + Math.cos(d.dir) * step;
               if (blocked(nx, nz)) d.dir += 2; // 벽·다른 몬스터에 닿으면 홱 돌아섬
@@ -900,71 +1425,104 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
                 px = nx;
                 pz = nz;
                 d.dist += step;
-                // 심 끝(물구나무 선 몸 바로 밑)이 지나간 자리에 촘촘히 점을 찍어 선이 되게. 좌우로 박박 그어 지그재그
-                while (d.dist >= DOT_GAP) {
-                  d.dist -= DOT_GAP;
-                  d.len += DOT_GAP;
-                  const zig = Math.sin(d.len * ZIG_K) * ZIG;
+                // 심 끝(물구나무 선 몸 바로 밑)이 지나간 자리에 점을 찍음: 촘촘하면 선, 띄엄띄엄이면 모이 같은 점점점. 좌우로 박박 그으면 지그재그
+                while (d.dist >= gap) {
+                  d.dist -= gap;
+                  d.len += gap;
+                  const zig = Math.sin(d.len * ZIG_K) * zigW;
                   d.marks.add(px - Math.sin(d.dir) * d.dist + Math.cos(d.dir) * zig, pz - Math.cos(d.dir) * d.dist - Math.sin(d.dir) * zig);
                 }
               }
               turnTo(d.dir, 10);
             }
-            if (duoT > DOODLE_TIME) { duoStep = 'land'; duoT = 0; mon.play('doodleEnd'); }
+            if (duoT > drawTime) { duoStep = 'land'; duoT = 0; mon.play('doodleEnd'); }
+          } else if (duoStep === 'down') {
+            // 하악냥 앞발에 툭 맞아 넘어짐 → 벌떡 일어나 화남! → 다가가 콕! (심 부러짐)
+            if (mon.state === 'hit') { /* 넘어짐 */ }
+            else if (!d.mad) { d.mad = true; d.fakeHit = null; mon.play('angry'); }
+            else if (mon.state === 'angry') face(other);
+            else if (!d.stab) { if (walkTo(other.x, other.z, 0.8, BODY_R + other.r + 0.1)) { face(other); mon.play('attack'); d.stab = true; } }
+            else if (mon.state !== 'attack') { if (mon.state === 'walk') mon.play('idle'); face(other); }
+            duoMood = !!d.mad;
           } else if (duoStep === 'land') {
             if (mon.state !== 'doodleEnd') {
-              // 착지 끝: 반쪽이가 지나갈 길을 비켜 낙서 옆으로 물러남
-              d.drawn = true;
-              duoStep = 'aside';
-              duoT = 0;
-              const c = d.marks.center() ?? { x: px, z: pz };
-              const side = Math.atan2(c.x - d.e.x, c.z - d.e.z);
-              const out = DOODLE_SPREAD + 0.7;
-              asideX = px;
-              asideZ = pz;
-              for (const a of [side + Math.PI / 2, side - Math.PI / 2, side]) {
-                const gx = c.x + Math.sin(a) * out, gz = c.z + Math.cos(a) * out;
-                if (!wall(gx, gz)) { asideX = gx; asideZ = gz; break; }
+              if (d.type === 'tip') endDuo(d); // 하악냥이 끝내 심 끝을 못 잡음
+              else {
+                // 착지 끝: 짝이 지나갈 길을 비켜 낙서 옆으로 물러남
+                d.drawn = true;
+                duoStep = 'aside';
+                duoT = 0;
+                const c = d.marks.center() ?? { x: px, z: pz };
+                const side = Math.atan2(c.x - other.x, c.z - other.z);
+                const out = spread + 0.7;
+                asideX = px;
+                asideZ = pz;
+                for (const a of [side + Math.PI / 2, side - Math.PI / 2, side]) {
+                  const gx = c.x + Math.sin(a) * out, gz = c.z + Math.cos(a) * out;
+                  if (!wall(gx, gz)) { asideX = gx; asideZ = gz; break; }
+                }
               }
             }
           } else if (duoStep === 'aside') {
             if (walkTo(asideX, asideZ, 0.7) || duoT > 4) { duoStep = 'watch'; duoT = 0; if (mon.state === 'walk') mon.play('idle'); }
+          } else if (duoStep === 'flee') {
+            // 화난 구구를 피해 콩콩 도망
+            const a = Math.atan2(px - other.x, pz - other.z);
+            if (duoT > 0.6) walkTo(px + Math.sin(a) * 0.5, pz + Math.cos(a) * 0.5, 1.2, 0);
+            if (duoT > 3.2) endDuo(d);
           } else {
-            // 지우는 반쪽이를 구경. 다 지우면 "앗, 내 낙서!" 하고 깜짝
+            // 짝을 구경. 반쪽이가 다 지우면 "앗, 내 낙서!" 하고 깜짝 · 구구가 화내면 깜짝 놀라 도망
             if (mon.state === 'walk') mon.play('idle');
-            face(d.e);
-            if (d.cleaned && duoStep === 'watch') { duoStep = 'shock'; mon.play('notice'); }
+            face(other);
+            if (d.type === 'scrub' && d.cleaned && duoStep === 'watch') { duoStep = 'shock'; mon.play('notice'); }
+            if (d.type === 'seed' && d.mad) { duoStep = 'flee'; duoT = 0; mon.play('notice'); }
+          }
+        } else if (kind === 'haak') {
+          // 하악냥 (tip): 끄적이는 심 끝을 빤히 → 살금살금 쫓아가 앞발로 툭 → 연필이 콕! 찌르면 깜짝 폴짝 → 시무룩
+          const pen = d.p;
+          if (duoStep === 'watch') {
+            if (mon.state === 'walk') mon.play('idle');
+            face(pen);
+            if (duoT > 1.5) duoStep = 'stalk';
+          } else if (duoStep === 'stalk') {
+            if (walkTo(pen.x, pen.z, 0.9 * RUN, BODY_R + pen.r + HUNT_REACH * 0.5)) {
+              if (mon.state === 'walk') mon.play('idle');
+              face(pen);
+              if (Math.abs(wrap(Math.atan2(pen.x - px, pen.z - pz) - heading)) < 0.4) {
+                mon.setReach?.(0);
+                tapsAt = swatTaps(0);
+                taps = 0;
+                mon.play('swat');
+                duoStep = 'swat';
+              }
+            }
+          } else if (duoStep === 'swat') {
+            face(pen);
+            if (taps < tapsAt.length && mon.time >= tapsAt[taps]) { taps++; d.knock = true; } // 앞발이 닿으면 연필이 넘어짐
+            if (mon.state !== 'swat') duoStep = d.knock ? 'wait' : 'stalk';
+          } else if (duoStep === 'wait') {
+            if (mon.state === 'walk') mon.play('idle');
+            face(pen);
+            if (d.stab) { duoStep = 'stab'; duoT = 0; }
+          } else if (!d.jumped) {
+            if (duoT > STRIKE_AT) { d.jumped = true; mon.play('notice'); } // 콕! 찔리는 순간 깜짝 폴짝
+          } else if (mon.state !== 'notice' && mon.state !== 'sulk') {
+            if (d.sulked) endDuo(d);
+            else { d.sulked = true; mon.play('sulk'); }
           }
         } else {
+          // 반쪽이 (scrub): 낙서하는 연필을 보고 깜짝 → 계속 쳐다봄 → 낙서를 따라다니며 박박 지움 → 뿌듯
           if (duoStep === 'watch') {
-            // 낙서하는 연필을 보고 깜짝 → 계속 쳐다봄
             if (mon.state === 'walk') mon.play('idle');
             face(d.p);
             if (d.drawn) { duoStep = 'erase'; duoT = 0; }
           } else if (duoStep === 'erase') {
-            const n = d.marks.nearest(px, pz);
-            noErase += dt;
-            if (!n || noErase > ERASE_GIVEUP) {
+            if (!scrubMarks()) {
               // 다 지움 (또는 손이 닿지 않아 포기)
               d.cleaned = true;
               duoStep = 'proud';
               duoT = 0;
-              mon.play(n ? 'idle' : 'scrubEnd');
-            } else {
-              const dist = Math.hypot(n.x - px, n.z - pz);
-              const scrubbing = mon.state === 'scrub';
-              if (dist > SCRUB_REACH + (scrubbing ? 0.2 : 0)) walkTo(n.x, n.z, 0.7, SCRUB_REACH * 0.8); // 멀리 있는 낙서로는 뒤뚱뒤뚱 걸어감
-              else {
-                // 엎드려 박박 문지르며 낙서를 따라 조금씩 나아감 (몸 앞쪽에 닿은 자국이 슥슥 지워짐)
-                if (!scrubbing) { mon.play('scrub'); duoT = 0; }
-                const want = Math.atan2(n.x - px, n.z - pz);
-                if (dist > 0.12) {
-                  const step = Math.min(dist - 0.1, SCRUB_SPEED * dt);
-                  [px, pz] = move(px, pz, px + Math.sin(want) * step, pz + Math.cos(want) * step);
-                }
-                turnTo(want, 3);
-                if (duoT > 0.3 && d.marks.erase(px + Math.sin(heading) * 0.1, pz + Math.cos(heading) * 0.1, ERASE_R, dt)) noErase = 0;
-              }
+              mon.play(d.marks.alive ? 'idle' : 'scrubEnd');
             }
           } else if (mon.state !== 'scrubEnd') endDuo(d); // 뿌듯 동작까지 마치면 끝
         }
@@ -983,13 +1541,14 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           const stuck = nx === px && nz === pz; // 앞을 다른 몬스터가 막고 있으면 제자리에서 기다림
           px = nx;
           pz = nz;
-          if (stuck) { if (mon.state === 'walk') mon.play('idle'); } else if (mon.state !== 'walk') mon.play('walk');
+          stepLegs(stuck, dt);
           heading += wrap(dir - heading) * Math.min(1, dt * 8);
           lastKey = s.key; // 돌아가는 동안 지나간 일정은 건너뜀
         } else if (hitsMon(tx, tz)) {
           // 일정 자리에 다른 몬스터가 있으면 겹치지 않게 비켜날 때까지 기다림 (여럿이 같은 자리를 노리면 줄지어 따라감)
-          if (mon.state === 'walk') mon.play('idle');
+          stepLegs(true, dt);
         } else {
+          stuckT = 0;
           px = tx;
           pz = tz;
           if (s.key !== lastKey) {
@@ -1036,12 +1595,25 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       }
       self.x = px;
       self.z = pz;
+      self.h = heading;
 
-      mon.root.position.set(px, groundY(px, pz) - curveDrop(px, pz), pz);
-      mon.root.rotation.y = heading;
+      mon.root.position.set(px, groundY(px, pz) - curveDrop(px, pz) + (FLY ? 0 : air), pz); // 나는 종류(구구·깍깍이)는 높이를 스스로 (setAir)
+      if (mon.state === 'spawn') shownH = heading; // 새로 나타날 땐 바로 그 방향
+      shownH += THREE.MathUtils.clamp(wrap(heading - shownH), -TURN_MAX * dt, TURN_MAX * dt);
+      mon.root.rotation.y = shownH;
       mon.update(mon.state === 'walk' ? dt * legs : dt, legs); // legs: 달리기 모션이 있는 몬스터(하악냥)는 빨리 갈 때 달림
+      blendPose(dt);
       post?.();
       post = null;
+      if (bBody) { // 반쪽이 윗면 높이 (날개콩이 올라설 때)
+        bBody.getWorldPosition(TMP);
+        const y = TMP.y;
+        self.topY = y + BANJJOK_TOP * TMP.setFromMatrixScale(bBody.matrixWorld).y;
+      }
+      if (hHead) { // 하악냥 정수리 (깍깍이가 위에서 쫄 때)
+        hHead.getWorldPosition(TMP);
+        self.head = { x: TMP.x, z: TMP.z, y: TMP.y + HAAK_HEAD_R * TMP.setFromMatrixScale(hHead.matrixWorld).y };
+      }
       if (nBody) { // 날개콩 정수리 높이 (구구가 머리에 앉을 때)
         nBody.getWorldPosition(TMP);
         const y = TMP.y;

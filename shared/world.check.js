@@ -28,11 +28,14 @@ assert.deepEqual(levelOf(10), { lv: 2, xp: 0, need: 20 });
 assert.deepEqual(levelOf(35), { lv: 3, xp: 5, need: 30 });
 console.log('world.check (레벨): ok');
 
-// 스텟: Lv10 모험가는 모두 10, 전직하면 Lv11 부터 주 +3 · 부 +1. Lv1 능력치는 예전 기본값 그대로
+// 스텟: 모험가는 힘만 레벨마다 +4, 전직하면 처음부터 주 +3 · 부 +1 로 다시 짠다. Lv1 능력치는 예전 기본값 그대로
+import { canWield } from './world.js';
 assert.deepEqual(statsOf(1), { str: 1, dex: 1, int: 1, luk: 1 });
-assert.deepEqual(statsOf(10, 'archer'), { str: 10, dex: 10, int: 10, luk: 10 });
-assert.deepEqual(statsOf(12, 'archer'), { str: 10, dex: 16, int: 10, luk: 12 });
-assert.deepEqual(statsOf(12), { str: 12, dex: 12, int: 12, luk: 12 });
+assert.deepEqual(statsOf(10), { str: 37, dex: 1, int: 1, luk: 1 });
+assert.deepEqual(statsOf(10, 'mage'), { str: 1, dex: 1, int: 28, luk: 10 });
+assert.deepEqual(statsOf(12, 'archer'), { str: 1, dex: 34, int: 1, luk: 12 });
+assert.ok(canWield('club', '') && canWield('axe', '') && !canWield('bow', '') && canWield('bow', 'archer') && canWield('bow', '', true));
+assert.ok(canWield('club', 'archer') && !canWield('staff', 'archer') && !canWield('woodSword', 'thief') && canWield('woodSword', 'warrior'));
 const a1 = abilitiesOf(statsOf(1));
 assert.equal(a1.hpMax, 100); assert.equal(a1.attack.str, 10); assert.equal(a1.crit, 0.1); assert.equal(a1.miss, 0.05); assert.equal(a1.dodgeCool, 0.3);
 console.log('world.check (스텟): ok');

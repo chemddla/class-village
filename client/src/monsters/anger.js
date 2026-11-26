@@ -12,7 +12,7 @@ const angerTex = () => canvasTexture('monsterAnger', 128, 128, (g, w, h) => {
   const path = () => {
     g.beginPath();
     for (let i = 0; i < 4; i++) {
-      const a = (i * PI) / 2 + PI / 4;
+      const a = (i * PI) / 2; // 꺾쇠를 위·아래·좌·우에 두어 틈이 X 자가 되게
       const c = Math.cos(a), s = Math.sin(a);
       const p = (x, y) => [x * c - y * s, x * s + y * c]; // 돌린 자리
       g.moveTo(...p(-27, -38));
