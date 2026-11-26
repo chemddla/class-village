@@ -615,7 +615,8 @@ function arenaRing(cx, cz, R) {
 
 // x, z: 제자리 (자는 곳) · r: 싸움터 반지름 · summon(kind, x, z, lv) → 불러낸 몬스터 · unsummon(m): 치움
 // id: 모두의 화면에서 같은 보스를 가리키는 이름 (피해를 서버로 나눠 맞추고 기여도를 셀 때 씀)
-export function createChulBoss(scene, { id = null, x: HX, z: HZ, r: ARENA = 10, lv, onAttack, blocked = () => false, summon, unsummon, heading: HOME_HEAD = 0 } = {}) {
+// onSpill(종류 번호 셋) → 서버에 알렸으면 true (그때는 서버가 전해 줄 때 spill 로 쏟는다)
+export function createChulBoss(scene, { id = null, onSpill, x: HX, z: HZ, r: ARENA = 10, lv, onAttack, blocked = () => false, summon, unsummon, heading: HOME_HEAD = 0 } = {}) {
   const STATS = monsterStats('chul', lv);
   const P = makeChulBody({ line: CHUL_LINE / BOSS_SIZE, minions: [0, 1, 2].map(() => CHUL_MINIONS[Math.floor(Math.random() * 3)]) });
   P.game = true;
@@ -683,10 +684,15 @@ export function createChulBoss(scene, { id = null, x: HX, z: HZ, r: ARENA = 10, 
   }
   // 와르르 쏟기: 필기도구 몬스터 중 무작위로 셋을 뽑아 필통 속 졸개를 그 종류로 바꾸고,
   // 튀어나온 모형이 땅에 떨어져 벌떡 일어나는 순간 그 자리에 진짜 몬스터를 불러냄
+  // 함께 싸우기: onSpill(종류 번호 셋) 이 있으면 바로 쏟지 않고 서버에 알리고, 서버가 모두에게 같은 종류·이름으로 전해 주면(spill) 쏟는다
+  // (졸개 이름 ids 가 같아야 모든 화면에서 같은 졸개로 맞고 기여도를 센다)
   let spillKinds = [];
+  let spillIds = [null, null, null];
   const v3 = new THREE.Vector3();
-  function startSpill() {
-    spillKinds = [0, 1, 2].map(() => CHUL_MINIONS[Math.floor(Math.random() * CHUL_MINIONS.length)]);
+  const pickKinds = () => [0, 1, 2].map(() => Math.floor(Math.random() * CHUL_MINIONS.length));
+  function startSpill(kinds = pickKinds(), ids = [null, null, null]) {
+    spillKinds = kinds.map((k) => CHUL_MINIONS[k] ?? CHUL_MINIONS[0]);
+    spillIds = ids;
     P.setKinds(spillKinds);
     P.spillGone = [false, false, false];
     play('spill');
@@ -697,7 +703,7 @@ export function createChulBoss(scene, { id = null, x: HX, z: HZ, r: ARENA = 10, 
       P.spillGone[i] = true;
       P.minsOut = true;
       P.spill[i].getWorldPosition(v3);
-      const m = summon?.(spillKinds[i], v3.x, v3.z, Math.max(1, STATS.lv - 4));
+      const m = summon?.(spillKinds[i], v3.x, v3.z, Math.max(1, STATS.lv - 4), spillIds[i]);
       if (m) minions.push(m);
     }
   }
@@ -721,6 +727,18 @@ export function createChulBoss(scene, { id = null, x: HX, z: HZ, r: ARENA = 10, 
       return this.takeHit(at, power * defCut(STATS.def), byMe);
     },
     id,
+    // 서버가 전해 준 졸개 소환 (누구 화면의 보스가 쏟으려 했든 모두 같이): kinds 종류 번호 셋 · ids 졸개 이름 셋
+    // 싸우는 중이면 와르르 쏟는 동작으로, 아니면(이 화면은 싸움터 밖에서 구경 중) 보스 곁에 바로 불러낸다
+    spill(kinds, ids) {
+      if (state === 'gone' || state === 'dead') return;
+      spillCool = phase2 ? 14 : 20; // 모두의 화면에서 다음 소환까지 같이 기다림
+      if (state === 'fight') { startSpill(kinds, ids); return; }
+      kinds.forEach((k, i) => {
+        const a = heading + (i - 1) * 0.9;
+        const m = summon?.(CHUL_MINIONS[k] ?? CHUL_MINIONS[0], px + Math.sin(a) * BODY_R * 1.4, pz + Math.cos(a) * BODY_R * 1.4, Math.max(1, STATS.lv - 4), ids[i]);
+        if (m) minions.push(m);
+      });
+    },
     // 다른 학생이 때린 피해를 그대로 받는다 (그 학생 화면에서 굴린 값이 서버를 거쳐 옴): 모두의 화면에서 체력이 같게
     // dmg: 방어력까지 뺀 실제 피해 · 사라졌거나 쓰러지는 중이면 null
     applyHit(ax, az, dmg) {
@@ -794,8 +812,9 @@ export function createChulBoss(scene, { id = null, x: HX, z: HZ, r: ARENA = 10, 
             const dir = chase ? steer(want, dt) : want; // 쫓는 길이 나무·바위에 막히면 옆으로 틀어 돌아감 (null: 사방이 막힘)
             heading += wrap((dir ?? want) - heading) * Math.min(1, dt * 5);
             const rush = phase2 ? 1.35 : 1;
-            if (spillCool <= 0 && !minions.length && near < 6) { // 졸개 소환
-              startSpill(); spillCool = phase2 ? 14 : 20;
+            if (spillCool <= 0 && !minions.length && near < 6) { // 졸개 소환 (함께 싸우면 서버를 거쳐 모두 같이: spill)
+              if (!onSpill?.(pickKinds())) startSpill();
+              spillCool = phase2 ? 14 : 20;
             } else if (slamCool <= 0 && near < SLAM_R - 0.3) {
               play('slam'); slamCool = phase2 ? 6 : 9; biteCool = 1;
             } else if (near < BODY_R + BITE_REACH && Math.abs(wrap(want - heading)) < 0.5) {

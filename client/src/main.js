@@ -757,8 +757,13 @@ const fieldJobs = FIELD_MOBS.map((m, i) => () => createPlazaMonsters(scene, { ..
 let boss = null;
 fieldJobs.push(() => (boss = createChulBoss(scene, { id: 'b0', // 모두의 화면에서 같은 보스 (피해 나누기·기여도)
   ...monsterOpts, x: FIELD_BOSS.x, z: FIELD_BOSS.z, r: FIELD_BOSS.arena, lv: FIELD_BOSS.lv, heading: FIELD_BOSS.rot, // 들판 가운데를 바라보고 잠
-  summon(kind, x, z, lv) { // 공격형으로 불려 나와 싸우는 캐릭터에게 덤빔
-    const m = createPlazaMonsters(scene, { ...monsterOpts, x, z, r: 0.6, kind, lv, temper: 'aggro', phase: Math.random() * 30 });
+  onSpill(kinds) { // 졸개 소환은 서버에 알려 모두 같이 (서버가 bossSpill 로 전해 주면 쏟는다). 접속 전이면 이 화면에서만
+    if (!room) return false;
+    room.send('bossSpill', ['b0', ...kinds]);
+    return true;
+  },
+  summon(kind, x, z, lv, id) { // 공격형으로 불려 나와 싸우는 캐릭터에게 덤빔 (id: 서버가 정한 졸개 이름, 모두의 화면에서 같음)
+    const m = createPlazaMonsters(scene, { ...monsterOpts, id, x, z, r: 0.6, kind, lv, temper: 'aggro', phase: Math.random() * 30 });
     m.root.visible = onField;
     fieldMonsters.push(m);
     return m;
@@ -2030,6 +2035,8 @@ function attach(r) {
   $(r.state).rocksGone.onRemove((_, key) => { ROCKS_GONE.delete(Number(key)); village.setRockGone(Number(key), false); });
   // 함께 잡는 몬스터: 다른 학생이 때린 피해 (그 학생 화면에서 굴린 값)
   r.onMessage('monHit', ([sid, id, x, z, d10, k]) => monHitFrom(sid, id, fromCm(x), fromCm(z), d10 / 10, k === 2 ? 2 : k));
+  // 보스가 졸개를 쏟음 (누구 화면의 보스가 쏟으려 했든 서버가 정한 같은 종류·이름으로 모두 같이)
+  r.onMessage('bossSpill', ([id, kinds, ids]) => { if (id === 'b0') boss?.spill(kinds, ids); });
   r.onMessage('rockHit', ([sid, i, hp]) => {
     if (sid !== r.sessionId) village.shakeRock(i, 0, 0, 1);
     else if (hp > 0) toast(`🪨 바위에 금이 갔어요! ${hp}번 더 치면 깨져요`);

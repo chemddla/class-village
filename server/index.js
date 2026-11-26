@@ -18,6 +18,7 @@ const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
 const MON_HIT_MAX = 2000;
 const MON_FORGET = 12000;
 const BOSS_FORGET = 90000; // 보스(id 가 b 로 시작)는 싸움이 길고 체력이 서서히 차므로 오래 기억
+const BOSS_SPILL_GAP = 10000; // 보스 졸개 소환 사이 최소 간격 (ms)
 const forgetOf = (id) => (id[0] === 'b' ? BOSS_FORGET : MON_FORGET);
 const MON_KILL_DUP = 3000;
 // 몬스터 id: 짧은 글자만 (화면이 정함: 광장 p0~, 들판 f0~)
@@ -457,6 +458,21 @@ class VillageRoom extends Room {
       if (!id || !(dmg > 0)) return;
       const f = fightOf(id, Date.now());
       f.taken.set(client.sessionId, (f.taken.get(client.sessionId) ?? 0) + dmg);
+    });
+    // 보스 졸개 소환: 보스는 각자 화면이 움직이므로 쏟으려 한 화면이 알려 오면, 서버가 졸개 이름을 정해 모두에게 같이 전한다
+    // (BOSS_SPILL_GAP 안에 또 오면 무시: 여러 화면의 보스가 거의 같이 쏟으려 해도 한 번만) · bossSpill: [보스 id, 종류 번호 셋]
+    this.bossSpillAt = new Map(); // 보스 id → 마지막으로 쏟은 시각
+    this.minionSeq = 0;
+    this.onMessage('bossSpill', (client, m) => {
+      if (!Array.isArray(m) || !this.state.players.has(client.sessionId)) return;
+      const id = monId(m[0]);
+      const kinds = m.slice(1, 4).map(Number);
+      if (!id || id[0] !== 'b' || kinds.length !== 3 || !kinds.every((k) => Number.isInteger(k) && k >= 0 && k < 10)) return;
+      const now = Date.now();
+      if (now - (this.bossSpillAt.get(id) ?? 0) < BOSS_SPILL_GAP) return;
+      this.bossSpillAt.set(id, now);
+      const ids = kinds.map(() => `m${(this.minionSeq = (this.minionSeq % 9999) + 1)}`);
+      this.broadcast('bossSpill', [id, kinds, ids]);
     });
     this.clock.setInterval(() => { // 오래된 기록 치우기
       const now = Date.now();
