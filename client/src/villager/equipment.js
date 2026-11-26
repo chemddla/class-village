@@ -204,6 +204,16 @@ function shovel() {
   part(blade, BLADE, g, '삽날');
   // 반짝이는 점 하나
   part(new THREE.SphereGeometry(0.008, 8, 6).scale(1, 1.4, 0.4), mat('#ffffff', { roughness: 0.1 }), g, '반짝', [-0.025, 0.42, 0.013]).castShadow = false;
+  // 퍼 올린 흙: 삽날 오목한 쪽에 소복이 (삽질하는 동안만 보인다: fx.dirt)
+  const dirt = new THREE.Group();
+  const SOIL = mat('#8a5a36', { roughness: 0.95 });
+  for (const [x, y, z, r] of [[0, 0, 0, 0.036], [-0.022, -0.015, 0.002, 0.024], [0.022, -0.01, 0.001, 0.026], [0.006, 0.03, -0.002, 0.022]]) {
+    part(new THREE.IcosahedronGeometry(r, 1).scale(1, 1, 0.55), SOIL, dirt, '흙', [x, y, z]);
+  }
+  dirt.position.set(0, 0.4, 0.012);
+  dirt.visible = false;
+  g.add(dirt);
+  g.userData.dirt = dirt;
   return grip(g);
 }
 
@@ -736,7 +746,10 @@ function twoHandGrip(rig, y, w, dt, aim) {
   if (aim) {
     // 1') 액션이 정한 자리·방향 그대로 (몸통을 틀면 함께 돈다). 오른손도 팔이 오는 쪽에 맞춰 자루를 감싼다
     P.copy(torso.localToWorld(V(...aim.pos)));
-    Q.copy(gripQuat(V(...aim.dir).normalize().applyQuaternion(torsoQ), SR, P, up, inward.R)).multiply(sock.quaternion);
+    const axisW = V(...aim.dir).normalize().applyQuaternion(torsoQ);
+    Q.copy(gripQuat(axisW, SR, P, up, inward.R)).multiply(sock.quaternion);
+    // twist: 도구를 자루 둘레로 더 돌린다 (삽날을 눕혀 흙을 뜰 때)
+    if (aim.twist) Q.premultiply(new THREE.Quaternion().setFromAxisAngle(axisW, aim.twist));
   } else {
     // 1) 두 손 사이가 몸 한가운데 오도록 옆으로 옮긴다
     const mid = torso.worldToLocal(P.clone().add(grip2()).multiplyScalar(0.5));
@@ -1149,7 +1162,12 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
   if ((fx.bowL ?? 0) > 0.001 || (fx.bowR ?? 0) > 0.001) bowDraw(rig, root, fx.bowL ?? 0, fx.bowR ?? 0, fx.draw ?? 0, fx.bowPitch ?? 0, fx.drop ?? 0);
   for (const sock of [rig.rightSocket, rig.leftSocket]) {
     sock.traverse((o) => {
-      const { rod, bow: b, staff: st } = o.userData;
+      const { rod, bow: b, staff: st, dirt } = o.userData;
+      if (dirt) {
+        const d = fx.dirt ?? 0;
+        dirt.visible = d > 0.01;
+        dirt.scale.setScalar(Math.max(0.01, d));
+      }
       if (rod) {
         // 찌: 평소엔 낚싯대 끝에 매달리고, 던지면 캐릭터 앞 바닥(물)에 떠서 까딱임
         const tipW = rod.tip.getWorldPosition(v1);

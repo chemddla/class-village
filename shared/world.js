@@ -873,6 +873,67 @@ export const STONES = [
   { id: 'shinystone', name: '반짝이는 돌', rarity: 'uncommon', color: 0x9fd3e6, price: 30 },
 ];
 export const STONE_BY_ID = Object.fromEntries(STONES.map((s) => [s.id, s]));
+// 화석: 땅에 금(✱)이 간 자리(화석 자리)를 파면 나온다. 희귀할수록 덜 나오고(RARITY weight) 상점에서 비싸게 판다
+// shape: 땅에 놓인 모양 (bone 뼈 · shell 조개·소용돌이 · slab 납작한 돌판 · amber 호박 · egg 알)
+// 화석 자리: 마을·들판에 늘 이만큼 있고, 파낸 자리는 respawn 초 뒤 다른 곳에 새로 생긴다. reach: 이만큼 가까이 파야 나온다 (m)
+export const FOSSIL_SPOTS = { village: 5, field: 2, respawn: 90, reach: 0.6 };
+export const FOSSILS = [
+  { id: 'shellfossil', name: '조개 화석', rarity: 'common', price: 400, shape: 'shell', color: 0xd9c7a3 },
+  { id: 'fernfossil', name: '고사리 화석', rarity: 'common', price: 450, shape: 'slab', color: 0xb9b09a },
+  { id: 'trilobite', name: '삼엽충 화석', rarity: 'common', price: 500, shape: 'shell', color: 0x9c8f7a },
+  { id: 'ammonite', name: '암모나이트', rarity: 'uncommon', price: 1200, shape: 'shell', color: 0xe0b98a },
+  { id: 'fishfossil', name: '물고기 화석', rarity: 'uncommon', price: 1000, shape: 'slab', color: 0xc8bba0 },
+  { id: 'sharktooth', name: '상어 이빨 화석', rarity: 'uncommon', price: 1100, shape: 'bone', color: 0xece3cf },
+  { id: 'amber', name: '곤충이 든 호박', rarity: 'rare', price: 3000, shape: 'amber', color: 0xf0a030 },
+  { id: 'raptorclaw', name: '랩터 발톱 화석', rarity: 'rare', price: 3500, shape: 'bone', color: 0xe8dcc0 },
+  { id: 'mammothtusk', name: '매머드 상아 화석', rarity: 'rare', price: 4000, shape: 'bone', color: 0xf3ead6 },
+  { id: 'trikehorn', name: '트리케라톱스 뿔 화석', rarity: 'rare', price: 4500, shape: 'bone', color: 0xdfd2b5 },
+  { id: 'dinoegg', name: '공룡 알 화석', rarity: 'legend', price: 9000, shape: 'egg', color: 0xd8cbb0 },
+  { id: 'trexskull', name: '티라노 머리뼈 화석', rarity: 'legend', price: 12000, shape: 'bone', color: 0xefe4ca },
+];
+export const FOSSIL_BY_ID = Object.fromEntries(FOSSILS.map((f) => [f.id, f]));
+// 화석 하나 고르기 (희귀도 weight 비율로)
+export function pickFossil(rand = Math.random) {
+  const total = FOSSILS.reduce((a, f) => a + RARITY[f.rarity].weight, 0);
+  let r = rand() * total;
+  for (const f of FOSSILS) if ((r -= RARITY[f.rarity].weight) < 0) return f;
+  return FOSSILS[0];
+}
+
+// 꺾은 꽃 (가방에 넣어 두었다가 구덩이에 심는다). 마을·들판 꽃의 색 번호(WORLD.flowers 의 c) 순서
+export const FLOWER_ITEMS = [
+  { id: 'flower_pink', name: '분홍 꽃', color: 0xffa8c5 },
+  { id: 'flower_yellow', name: '노랑 꽃', color: 0xfff08a },
+  { id: 'flower_white', name: '하얀 꽃', color: 0xffffff },
+  { id: 'flower_purple', name: '보라 꽃', color: 0xcdb4ff },
+];
+export const FLOWER_BY_ID = Object.fromEntries(FLOWER_ITEMS.map((f) => [f.id, f]));
+export const PICK_FLOWER_REACH = 1.8; // 꽃을 꺾을 수 있는 거리 (m)
+// 꽃씨: 상점에서 사서(나중에) 구덩이에 심으면 그 색 꽃으로 자란다
+export const SEEDS = FLOWER_ITEMS.map((f) => ({ id: f.id.replace('flower_', 'seed_'), name: `${f.name} 씨앗`, flower: f.id, color: f.color, price: 60 }));
+export const SEED_BY_ID = Object.fromEntries(SEEDS.map((s) => [s.id, s]));
+
+// 심기: 구덩이에 과일(FRUITS)·꽃씨(SEEDS)를 넣고 덮으면 새싹이 나서 자란다
+// grow: 단계가 바뀌는 때(심은 뒤 초) [새싹 → 자라는 중, 자라는 중 → 다 자람]. 실제 수업 서버는 real, 테스트 서버는 빨리 자라는 test
+// max: 마을에 있을 수 있는 수 (넘으면 오래된 것부터 사라짐)
+const HOUR = 3600;
+export const PLANT = {
+  max: 60,
+  grow: {
+    real: { flower: [12 * HOUR, 24 * HOUR], fruit: [24 * HOUR, 72 * HOUR] },
+    test: { flower: [20, 45], fruit: [60, 180] },
+  },
+  stageName: { flower: ['새싹', '꽃봉오리', '활짝 핀 꽃'], fruit: ['새싹', '어린 나무', '열매 맺은 나무'] },
+};
+// 심은 것을 삽으로 파내면 자란 단계를 붙여 가방에 넣는다: '심은것@단계' (새싹은 그냥 '심은것')
+export function plantItem(key) {
+  const [item, g] = String(key).split('@');
+  return { item, g: Math.max(0, Math.min(2, Number(g) | 0)) };
+}
+export const plantKind = (key) => {
+  const { item } = plantItem(key);
+  return SEED_BY_ID[item] ? 'flower' : FRUITS.includes(item) ? 'fruit' : null;
+};
 // 그 자리를 팔 수 있는지: 'grass' 풀밭(흙) · 'sand' 모래 · null 못 팜 (물·광장 돌바닥·예정지·나무·바위 둘레)
 export function groundKind(x, z) {
   if (inField(x, z)) return isBlocked(x, z, 0.35) ? null : 'grass';

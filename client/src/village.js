@@ -5,6 +5,7 @@ import {
   WORLD, HALF, PLOTS, BRIDGE, SPAWN, PLAZA, RIVER_HALF_WIDTH, RIVER_BANK_CLEAR, riverCenterZ,
   islandN, shoreN, islandRadius, BEACH, FISH, FISH_APPROACH, LURE_HESITATE, NIBBLE_MS, shadowLen, rollFish, NOTICE,
   fruitOf, FIELD_POND, inField, FRUIT_MAX, PORTALS, WOOD_BY_ID, LIFE_SPOTS, STONE_BY_ID, DIG_HOLE, ROCKS_GONE,
+  FOSSIL_BY_ID, FLOWER_BY_ID, SEED_BY_ID,
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
@@ -1045,7 +1046,47 @@ function woodParts(w) {
 }
 // 땅에 떨어진 물건 모양: 과일 또는 목재 (땅 위에 놓이게)
 const groundItemCache = new Map();
+// 화석 모양: 흙빛 돌덩이에 박힌 뼈·조개, 또는 돌판·호박·알 (땅 위에 놓이게)
+function fossilParts(fo) {
+  const C = fo.color;
+  const rock = () => tint(new THREE.IcosahedronGeometry(0.13, 1).scale(1.25, 0.55, 1), 0x9c8466, (c, x, y) => c.multiplyScalar(0.82 + y * 1.6));
+  switch (fo.shape) {
+    case 'bone': { // 돌 위에 놓인 뼈: 가운데 막대 + 양 끝 혹 두 개씩
+      const parts = [rock()];
+      parts.push(tint(new THREE.CylinderGeometry(0.03, 0.03, 0.26, 8).rotateZ(Math.PI / 2).translate(0, 0.07, 0), C));
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) parts.push(tint(new THREE.SphereGeometry(0.042, 8, 6).translate(sx * 0.135, 0.07, sz * 0.03), C));
+      return parts;
+    }
+    case 'shell': // 소용돌이 껍데기: 납작한 고리 두 겹 + 가운데
+      return [rock().scale(1, 0.6, 1),
+        tint(new THREE.TorusGeometry(0.08, 0.034, 8, 18).rotateX(-Math.PI / 2).translate(0, 0.075, 0), C, (c, x, y, z) => c.multiplyScalar(0.8 + 0.2 * Math.cos(Math.atan2(z, x) * 7))),
+        tint(new THREE.TorusGeometry(0.038, 0.026, 6, 12).rotateX(-Math.PI / 2).translate(0, 0.1, 0), C, (c) => c.multiplyScalar(0.9)),
+        tint(new THREE.SphereGeometry(0.022, 6, 4).translate(0, 0.115, 0), C, (c) => c.multiplyScalar(0.75))];
+    case 'slab': { // 납작한 돌판에 새겨진 무늬 (잎맥·물고기 뼈)
+      const parts = [tint(new THREE.BoxGeometry(0.3, 0.06, 0.22), 0xb5a58a, (c, x, y) => c.multiplyScalar(0.85 + y * 2))];
+      parts.push(tint(new THREE.BoxGeometry(0.2, 0.012, 0.016).translate(0, 0.034, 0), C, (c) => c.multiplyScalar(0.7)));
+      for (let i = -2; i <= 2; i++) parts.push(tint(new THREE.BoxGeometry(0.012, 0.012, 0.11).rotateY(0.5).translate(i * 0.035, 0.034, 0), C, (c) => c.multiplyScalar(0.7)));
+      return parts;
+    }
+    case 'amber': // 주황 덩어리 + 안의 작은 벌레
+      return [tint(new THREE.IcosahedronGeometry(0.1, 1).scale(1.2, 0.8, 1), C, (c, x, y) => c.multiplyScalar(0.8 + y * 2.5)),
+        tint(new THREE.SphereGeometry(0.025, 6, 4).scale(1.6, 0.6, 1).translate(0, 0.045, 0.02), 0x5a3a1c)];
+    default: // 알: 돌 위에 반쯤 박힌 알 (금이 간 무늬)
+      return [rock(), tint(new THREE.SphereGeometry(0.1, 14, 10).scale(0.82, 1, 0.82).translate(0, 0.1, 0), C,
+        (c, x, y, z) => c.multiplyScalar(Math.abs(Math.sin(Math.atan2(z, x) * 5 + y * 30)) < 0.12 ? 0.75 : 1))];
+  }
+}
 function groundItem(f) {
+  const fo = FOSSIL_BY_ID[f];
+  if (fo) {
+    if (!groundItemCache.has(f)) {
+      const g = mergeGeometries(fossilParts(fo));
+      g.computeBoundingBox();
+      g.translate(0, -g.boundingBox.min.y, 0);
+      groundItemCache.set(f, g);
+    }
+    return groundItemCache.get(f);
+  }
   const st = STONE_BY_ID[f];
   if (st) {
     // 돌멩이: 납작하게 눌린 둥근 돌 두 개 (반짝이는 돌은 푸른빛)
@@ -1152,6 +1193,123 @@ function holeParts(kind, seed) {
     .translate(R * 1.5, 0.03, (rand() - 0.5) * R), C.pile, (c, x, y) => c.multiplyScalar(0.85 + y * 3));
   const crumb = tint(new THREE.SphereGeometry(R * 0.2, 6, 4).scale(1, 0.6, 1).translate(R * 1.25, 0.01, R * 0.75), C.pile);
   return { mask, bottom, wall, top: mergeGeometries([rim, pile, crumb]) };
+}
+// 심은 과일·꽃: 덮은 흙 자리 + 단계마다 모양 (0 새싹 · 1 자라는 중 · 2 다 자람)
+// 꽃: 떡잎 → 꽃봉오리 → 활짝 핀 꽃. 과일: 떡잎 → 어린 나무 → 그 과일이 열린 작은 과일나무
+const plantGeoCache = new Map();
+function plantGeometry(item, stage) {
+  const key = `${item}:${stage}`;
+  if (plantGeoCache.has(key)) return plantGeoCache.get(key);
+  const LEAF = 0x6cc04a;
+  const soil = tint(new THREE.CircleGeometry(0.3, 18).rotateX(-Math.PI / 2).translate(0, 0.012, 0), 0x7a5536,
+    (c, x, y, z) => c.multiplyScalar(0.85 + (0.15 * Math.hypot(x, z)) / 0.3));
+  const mound = tint(new THREE.SphereGeometry(0.16, 10, 6).scale(1, 0.3, 1), 0x8a6040);
+  const sprout = (h, s = 1) => [
+    tint(new THREE.CylinderGeometry(0.008 * s, 0.01 * s, h, 5).translate(0, h / 2, 0), 0x5fa83c),
+    tint(new THREE.SphereGeometry(0.035 * s, 6, 4).scale(1.6, 0.3, 0.9).rotateZ(0.35).translate(0.04 * s, h, 0), LEAF),
+    tint(new THREE.SphereGeometry(0.035 * s, 6, 4).scale(1.6, 0.3, 0.9).rotateZ(-0.35).translate(-0.04 * s, h, 0), LEAF),
+  ];
+  const parts = [soil, mound];
+  const fl = FLOWER_BY_ID[item] ?? FLOWER_BY_ID[SEED_BY_ID[item]?.flower];
+  if (stage === 0) parts.push(...sprout(0.07));
+  else if (fl) {
+    const h = stage === 1 ? 0.16 : 0.24;
+    parts.push(...sprout(h * 0.45, 1.2), tint(new THREE.CylinderGeometry(0.009, 0.011, h, 5).translate(0, h / 2, 0), 0x5fa83c));
+    if (stage === 1) {
+      parts.push(tint(new THREE.SphereGeometry(0.035, 8, 6).scale(1, 1.4, 1).translate(0, h + 0.02, 0), fl.color, (c) => c.lerp(new THREE.Color(LEAF), 0.35)));
+    } else {
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        parts.push(tint(new THREE.SphereGeometry(0.045, 8, 6).scale(1, 0.4, 0.7).translate(0.045, 0, 0).rotateY(a).translate(0, h, 0), fl.color));
+      }
+      parts.push(tint(new THREE.SphereGeometry(0.028, 8, 6).scale(1, 0.6, 1).translate(0, h + 0.01, 0), 0xffd23f));
+    }
+  } else {
+    const h = stage === 1 ? 0.35 : 0.65; // 줄기 높이
+    const r = stage === 1 ? 0.13 : 0.26; // 잎 덩어리 크기
+    parts.push(tint(new THREE.CylinderGeometry(0.018 * (stage + 0.5), 0.028 * (stage + 0.5), h, 6).translate(0, h / 2, 0), 0x8a5a34));
+    parts.push(tint(new THREE.IcosahedronGeometry(r, 1).scale(1, 0.85, 1).translate(0, h + r * 0.6, 0), 0x58b048,
+      (c, x, y) => c.multiplyScalar(0.8 + (y - h) * 1.2)));
+    if (stage === 2) {
+      const fruit = mergeGeometries((FRUIT_MODELS[item] ?? FRUIT_MODELS.peach)().map((q) => q.scale(0.55, 0.55, 0.55)));
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + 0.4;
+        parts.push(fruit.clone().translate(Math.cos(a) * r * 0.9, h + r * 0.45, Math.sin(a) * r * 0.9));
+      }
+    }
+  }
+  const g = mergeGeometries(parts);
+  plantGeoCache.set(key, g);
+  return g;
+}
+function buildPlants(group) {
+  const mat = toon(0xffffff, { vertexColors: true });
+  const list = new Map(); // 번호 → { mesh, item, pop, gone }
+  const POP = 0.35;
+  return {
+    // fresh: 지금 막 심었으면 퐁 하고 솟는다
+    add(id, x, z, item, stage, fresh) {
+      const mesh = new THREE.Mesh(plantGeometry(item, stage), mat);
+      mesh.position.set(x, 0, z);
+      mesh.rotation.y = (Number(id) * 2.399) % (Math.PI * 2);
+      mesh.castShadow = true;
+      addOutline(mesh, 0.012);
+      group.add(mesh);
+      list.set(id, { mesh, item, pop: fresh ? 0 : POP, gone: -1 });
+    },
+    // 자라면 모양을 바꾸고 다시 퐁
+    grow(id, stage) {
+      const p = list.get(id);
+      if (!p) return;
+      p.mesh.geometry = plantGeometry(p.item, stage);
+      p.mesh.clear(); // 외곽선도 새 모양으로
+      addOutline(p.mesh, 0.012);
+      p.pop = 0;
+    },
+    remove(id) { const p = list.get(id); if (p) p.gone = 0; },
+    clear() { for (const p of list.values()) group.remove(p.mesh); list.clear(); },
+    update(dt) {
+      for (const [id, p] of list) {
+        if (p.gone >= 0) {
+          p.gone += dt;
+          const k = Math.max(0, 1 - p.gone / 0.3);
+          p.mesh.scale.setScalar(k);
+          if (k <= 0) { group.remove(p.mesh); list.delete(id); }
+          continue;
+        }
+        if (p.pop < POP) {
+          p.pop = Math.min(POP, p.pop + dt);
+          const k = p.pop / POP;
+          const b = Math.sin(k * Math.PI);
+          p.mesh.scale.set(1 + b * 0.15, 0.4 + 0.6 * k + b * 0.2, 1 + b * 0.15);
+        }
+      }
+    },
+  };
+}
+// 화석 자리: 땅에 그은 짙은 금 (✱ 모양 세 줄) + 살짝 솟은 흙. 여기를 삽으로 파면 화석이 나온다
+function buildFossilMarks(group) {
+  const geo = (() => {
+    const parts = [];
+    for (let i = 0; i < 3; i++) {
+      parts.push(tint(new THREE.BoxGeometry(0.46, 0.012, 0.055).rotateY((i * Math.PI) / 3).translate(0, 0.012, 0), 0x5a3d24));
+    }
+    parts.push(tint(new THREE.CircleGeometry(0.3, 16).rotateX(-Math.PI / 2).translate(0, 0.008, 0), 0x8f6a45, (c, x, y, z) => c.multiplyScalar(0.9 + (0.2 * Math.hypot(x, z)) / 0.3)));
+    return mergeGeometries(parts);
+  })();
+  const mat = toon(0xffffff, { vertexColors: true });
+  const list = new Map();
+  return {
+    add(id, x, z) {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, 0, z);
+      m.rotation.y = (Number(id) * 1.7) % Math.PI;
+      group.add(m);
+      list.set(id, m);
+    },
+    remove(id) { const m = list.get(id); if (m) { group.remove(m); list.delete(id); } },
+    clear() { for (const m of list.values()) group.remove(m); list.clear(); },
+  };
 }
 function buildHoles(group) {
   const list = new Map(); // 번호 → { g, t, gone }
@@ -1804,6 +1962,8 @@ export function buildVillage(scene, { low = false } = {}) {
   const trees = buildTrees(into);
   const rocks = buildRocks(into);
   const holes = buildHoles(live);
+  const plants = buildPlants(live);
+  const fossilMarks = buildFossilMarks(live);
   buildMeadow(into, { low });
   buildPlots(group, labels);
   const fountain = buildPlaza(group);
@@ -1844,9 +2004,10 @@ export function buildVillage(scene, { low = false } = {}) {
     fishShadows, // 돌아다니는 물고기 (찌를 알아채는지 보기)
     // 땅에 떨어진 과일·목재 (k: 떨어진 과일나무 번호, fall: 지금 막 떨어지는 중이면 true,
     // tree: 목재를 찍은 나무 번호 + 1 · 광장 체험용 나무는 -(번호+1)). 과일은 잎 높이에서, 목재는 찍은 줄기에서 툭 튀어나온다
-    addDrop(id, item, x, z, k, fall, tree = 0) {
+    addDrop(id, item, x, z, k, fall, tree = 0, out = null) {
       let from = null;
-      if (fall && tree) {
+      if (fall && out) from = new THREE.Vector3(...out); // 구덩이에서 툭 튀어나옴 (화석)
+      else if (fall && tree) {
         const t = tree > 0 ? WORLD.trees[tree - 1] : { ...LIFE_SPOTS[-tree - 1], r: 0.25, s: 0.85 };
         if (t) {
           const d = Math.hypot(x - t.x, z - t.z) || 1;
@@ -1862,6 +2023,8 @@ export function buildVillage(scene, { low = false } = {}) {
     shakeRock: rocks.shake,
     setRockGone: rocks.setGone,
     holes, // 삽으로 판 구덩이 (서버 상태를 따라 그림)
+    plants, // 구덩이에 심은 과일·꽃 (서버 상태를 따라 그림)
+    fossilMarks, // 화석 자리 (땅의 금)
     // 매 장면: 시간(풀잎·구름·물결), 강물 흐름, 맞은 나무·바위 흔들림
     update(dt, t, frustum) {
       TIME.value = t;
@@ -1877,6 +2040,7 @@ export function buildVillage(scene, { low = false } = {}) {
       trees.update(dt);
       rocks.update(dt);
       holes.update(dt, frustum);
+      plants.update(dt);
       portal.update(t);
     },
   };
