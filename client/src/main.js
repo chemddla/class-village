@@ -2754,6 +2754,7 @@ const loading = document.getElementById('loading');
 const viewMatrix = new THREE.Matrix4();
 const viewSphere = new THREE.Sphere(new THREE.Vector3(), 3); // 캐릭터 + 머리 위 이름·든 물건·휘두른 궤적
 const FAR_ANIM = 9;
+const LINE_FAR = 18; // 내게서 이보다 먼 학생은 외곽선을 끈다: 손톱만 해 티가 덜 나는데, 외곽선은 캐릭터를 한 번 더 그리는 것이라 여럿이면 크다
 let frameNo = 0;
 let slowFrames = 0;
 let slowTime = 0;
@@ -2854,7 +2855,10 @@ function frame() {
     char.root.visible = viewFrustum.intersectsSphere(viewSphere);
     char.lag = (char.lag ?? 0) + dt;
     if (!char.root.visible && char.actLeft <= 0) continue;
-    if ((frameNo + nth++) % 2 && Math.hypot(char.x - camTarget.x, char.z - camTarget.z) > FAR_ANIM) continue;
+    const far = Math.hypot(char.x - camTarget.x, char.z - camTarget.z);
+    const lines = !noLines && far < LINE_FAR + (char.noLine ? 0 : 2); // +2m: 경계에서 켜졌다 꺼졌다 깜빡이지 않게
+    if (lines === !!char.noLine) char.setOutline(lines);
+    if ((frameNo + nth++) % 2 && far > FAR_ANIM) continue;
     char.update(Math.min(char.lag, 0.1)); // 화면 밖에 오래 있다 돌아왔으면 한꺼번에 넘기지 않는다
     char.lag = 0;
   }
@@ -2909,17 +2913,17 @@ function frame() {
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
     ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS${qStep ? ` · 화질 -${qStep}` : ''}`;
-    // 자동 화질: 2초 넘게 27fps 에 못 미치면 한 단계씩 낮춘다. 해상도 0.75배까지(20%씩) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지
-    // 해상도는 화면 칠하기가 벅찬 기기(태블릿)에, 외곽선은 그리기 횟수가 벅찬 기기에 듣는다
+    // 자동 화질: 2초 넘게 27fps 에 못 미치면 한 단계씩 낮춘다. 다른 학생 외곽선 끄기 → 해상도 0.5배까지(20%씩)
+    // 해상도는 화면 전체가 흐려져 가장 티가 나므로 맨 나중에 (외곽선은 그리기 횟수가, 해상도는 화면 칠하기가 벅찬 기기에 듣는다)
     // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
     // 기준은 27fps: 화면이 30Hz 인 기기는 멀쩡해도 딱 30fps 라, 30을 기준으로 하면 끝 단계까지 내려가 (기억까지 돼) 머문다
     slowFor = slowFrames > 5 && slowTime / slowFrames > 1 / 27 ? slowFor + 1 : 0;
     slowFrames = slowTime = 0;
     if (slowFor >= 4 && (renderer.getPixelRatio() > 0.5 || !noLines)) {
-      if (renderer.getPixelRatio() <= 0.75 && !noLines) {
+      if (!noLines) {
         noLines = true;
         for (const o of others.values()) o.char.setOutline(false);
-      } else renderer.setPixelRatio(Math.max(noLines ? 0.5 : 0.75, renderer.getPixelRatio() * 0.8));
+      } else renderer.setPixelRatio(Math.max(0.5, renderer.getPixelRatio() * 0.8));
       store.set(localStorage, 'quality', JSON.stringify([++qStep, renderer.getPixelRatio(), noLines]));
       slowFor = -4; // 낮춘 효과가 보일 때까지 잠깐 기다린다
     }

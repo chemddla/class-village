@@ -5,8 +5,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FIELD, FIELD_MAP, FIELD_POND, FIELD_MONSTERS, PORTALS, fieldEdge, outcropStones } from '../../shared/world.js';
-import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop, CURVE, VIEW, TREE_TALL, instancedCells, tiled } from './materials.js';
-import { roundCanopy, pineCanopy, ovalCanopy, trunkGeometry } from './village.js';
+import { toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, curveDrop, CURVE, VIEW, TREE_TALL, instancedCells, tiled, swapLod, LOD_NEAR } from './materials.js';
+import { roundCanopy, pineCanopy, ovalCanopy, trunkGeometry, FAR_SEG } from './village.js';
 import { makeLabel } from './label.js';
 import { buildPortal } from './portal.js';
 
@@ -127,22 +127,24 @@ function buildTrees(group, low) {
     cells.get(key).push(t);
   }
   const trunkGeo = trunkGeometry();
+  const farTrunk = trunkGeometry(true);
   const trunkMat = toon(0xb98a58);
   const leafMat = swayToon(0xffffff, { vertexColors: true });
   const canopies = [roundCanopy(), pineCanopy(), ovalCanopy()];
+  const farCanopies = [roundCanopy(7, undefined, 3.1, FAR_SEG), null, ovalCanopy(FAR_SEG)]; // 멀리 있는 칸의 거친 잎 (swapLod)
   // 칸마다 '화면에 드는지' 볼 둘레 공: 나무는 그릴 때 둥근 지평선만큼 내려가므로(멀수록 많이, 십수 m까지) 공도 그만큼 아래로 늘려야
   // 멀리서 내려와 화면에 드는 나무가 빠지지 않는다. 내려가는 양은 내 자리에 따라 달라서 매 장면 다시 잡는다 (돌려주는 함수)
   const spheres = [];
-  const cull = (mesh) => {
+  const cull = (mesh, lo) => {
     mesh.computeBoundingSphere();
-    spheres.push({ mesh, s: mesh.boundingSphere, y: mesh.boundingSphere.center.y, r: mesh.boundingSphere.radius });
+    spheres.push({ mesh, s: mesh.boundingSphere, y: mesh.boundingSphere.center.y, r: mesh.boundingSphere.radius, lods: lo && [mesh.geometry, lo] });
     mesh.children[0].boundingSphere = mesh.boundingSphere; // 외곽선도 같은 공으로
   };
   for (const here of cells.values()) {
     const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, here.length);
     here.forEach((t, i) => trunks.setMatrixAt(i, pose(t)));
     group.add(addOutline(trunks, 0.03));
-    cull(trunks);
+    cull(trunks, farTrunk);
     canopies.forEach((geo, k) => {
       const mine = here.filter((t) => t.look === k);
       if (!mine.length) return;
@@ -155,17 +157,19 @@ function buildTrees(group, low) {
         mesh.setColorAt(j, col);
       });
       group.add(addOutline(mesh, 0.025, { sway: true }));
-      cull(mesh);
+      cull(mesh, farCanopies[k]);
     });
   }
   return () => {
     const { x: cx, y: cz } = CURVE.center;
-    for (const { mesh, s, y, r } of spheres) {
+    for (const { mesh, s, y, r, lods } of spheres) {
       const { x, z } = s.center;
       const drop = Math.max(curveDrop(x, z), curveDrop(x + r, z), curveDrop(x - r, z), curveDrop(x, z + r), curveDrop(x, z - r)) * 1.5; // 칸 안 가장 많이 내려가는 곳 (어림 + 여유)
       s.center.y = y - drop / 2;
       s.radius = r + drop / 2;
-      mesh.visible = Math.hypot(x - cx, z - cz) - r < VIEW.reach + TREE_TALL; // 둥근 지평선 아래로 넘어가 안 보이는 먼 칸은 뺀다
+      const d = Math.hypot(x - cx, z - cz) - r;
+      mesh.visible = d < VIEW.reach + TREE_TALL; // 둥근 지평선 아래로 넘어가 안 보이는 먼 칸은 뺀다
+      if (lods) swapLod(mesh, lods, d > LOD_NEAR);
     }
   };
 }

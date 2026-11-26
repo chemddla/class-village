@@ -205,16 +205,26 @@ export function addOutline(mesh, thickness = 0.035, { sway = false } = {}) {
   mesh.add(o);
   return mesh;
 }
+// 멀리 있는 칸은 거친 모양으로 그린다: lods = [가까이 모양, 멀리 모양] (꼭짓점 속성이 같아야 함), 외곽선도 그 모양의 껍질로 바꾼다
+// 나무 잎이 장면 삼각형의 절반 넘게 차지하는데, 멀리서는 공의 칸 수가 줄어도 거의 티가 안 난다
+export const LOD_NEAR = 20; // m: 칸 가장자리가 보는 자리에서 이보다 멀면 거친 모양
+export function swapLod(mesh, lods, far) {
+  const geo = lods[far ? 1 : 0];
+  if (mesh.geometry === geo) return;
+  mesh.geometry = geo;
+  for (const o of mesh.children) if (o.isInstancedMesh) o.geometry = hullGeometry(geo);
+}
 
 // 인스턴스 수백 개를 한 덩어리로 두면 화면 밖 것까지 늘 다 그린다: CELL(m) 칸으로 나눠 칸마다 InstancedMesh 하나씩 두어 화면 밖 칸은 빠지게 한다.
 // items: [{ x, z }] · make(n): n개짜리 InstancedMesh (addOutline 을 둘러도 됨) · init(mesh, j, i): items[i] 를 mesh 의 j 번 자리에 놓기
 // 돌려주는 값: 번호 i → { mesh, j } (나중에 그 인스턴스의 자리를 바꿀 때)
+// lo: 멀리 있는 칸에 쓸 거친 모양 (tall 과 함께 줄 때만 쓰임, swapLod)
 // shortcut: 둘레 공은 처음 놓은 자리로 한 번만 잡는다, 인스턴스를 멀리(수 m) 옮기게 되면 다시 잡아야 한다
 const CELL = 30; // 작을수록 삼각형은 줄고 그리기 횟수는 는다 (24m: 134만·453회, 40m: 162만·397회 — 광장에서 잰 값)
 const cellSpheres = [];
 const farCells = [];
 // tall(m): 주어지면 그 칸 가장자리가 보는 자리(CURVE.center)에서 VIEW.reach + tall 보다 멀 때 칸째 안 그린다 (둥근 지평선 너머라 땅에 가려 안 보임)
-export function instancedCells(group, items, make, init, { tall } = {}) {
+export function instancedCells(group, items, make, init, { tall, lo } = {}) {
   const cells = new Map();
   items.forEach((t, i) => {
     const key = `${Math.floor(t.x / CELL)},${Math.floor(t.z / CELL)}`;
@@ -229,7 +239,7 @@ export function instancedCells(group, items, make, init, { tall } = {}) {
     cullCurved(mesh.boundingSphere);
     for (const o of mesh.children) if (o.isInstancedMesh) o.boundingSphere = mesh.boundingSphere; // 외곽선도 같은 공으로
     group.add(mesh);
-    if (tall !== undefined) farCells.push({ mesh, tall });
+    if (tall !== undefined) farCells.push({ mesh, tall, r: mesh.boundingSphere.radius, lods: lo && [mesh.geometry, lo] }); // r: 지평선만큼 늘리기 전 반지름
   }
   return slot;
 }
@@ -244,9 +254,11 @@ export function cullCells() {
     s.radius = r + drop / 2 + 1; // +1m: 바람에 흔들리는 잎·외곽선 두께
   }
   const { x: cx, y: cz } = CURVE.center;
-  for (const { mesh, tall } of farCells) {
+  for (const { mesh, tall, r, lods } of farCells) {
     const { center, radius } = mesh.boundingSphere;
-    mesh.visible = Math.hypot(center.x - cx, center.z - cz) - radius < VIEW.reach + tall;
+    const d = Math.hypot(center.x - cx, center.z - cz);
+    mesh.visible = d - radius < VIEW.reach + tall;
+    if (lods) swapLod(mesh, lods, d - r > LOD_NEAR);
   }
 }
 

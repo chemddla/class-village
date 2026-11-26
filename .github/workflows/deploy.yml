@@ -5,6 +5,12 @@ name: 수업 서버 배포
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: '올릴 곳 (main: 수업 서버, test: 테스트판 test.class-village.duckdns.org)'
+        type: choice
+        options: [main, test]
+        default: main
 
 concurrency: deploy-class-server
 
@@ -20,4 +26,4 @@ jobs:
           chmod 600 ~/.ssh/class-village.key
           ssh-keyscan 161.33.17.35 >> ~/.ssh/known_hosts
       - name: 배포
-        run: DEPLOY_KEY=~/.ssh/class-village.key bash tools/deploy.sh
+        run: DEPLOY_KEY=~/.ssh/class-village.key DEPLOY_TARGET=${{ inputs.target == 'test' && 'test' || '' }} bash tools/deploy.sh

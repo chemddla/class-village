@@ -344,9 +344,11 @@ const ROUND_BLOBS = [
 ];
 // 잎을 한 장씩 붙이면 작은 구멍·무늬가 빽빽해 보여서, 매끈한 공을 겹쳐 폭신한 덩어리로 만든다
 // 위는 햇빛을 받아 밝고 아래는 그늘지게 꼭짓점 색을 칠함
-export function roundCanopy(seed = 7, BLOBS = ROUND_BLOBS, top = 3.1) {
+// seg: 공 하나의 [가로, 세로] 칸 수 (멀리 있는 나무는 FAR_SEG 로 거칠게)
+export const FAR_SEG = [8, 6];
+export function roundCanopy(seed = 7, BLOBS = ROUND_BLOBS, top = 3.1, seg = [14, 10]) {
   const parts = BLOBS.map(([x, y, z, r]) => {
-    const g = new THREE.SphereGeometry(r, 14, 10).toNonIndexed().translate(x, y, z); // 잎 덩어리 7개 × 나무 수십 그루 × 외곽선: 칸 수가 곧 장면 무게
+    const g = new THREE.SphereGeometry(r, ...seg).translate(x, y, z); // 잎 덩어리 7개 × 나무 수십 그루 × 외곽선: 칸 수가 곧 장면 무게 (번호(index)를 남겨 맞닿은 꼭짓점을 한 번만 계산)
     g.deleteAttribute('uv');
     g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count * 3).fill(1), 3));
     return g;
@@ -359,7 +361,7 @@ const OVAL_BLOBS = [
   [0, 1.75, 0, 0.62], [0.28, 2.05, 0.2, 0.5], [-0.3, 2.15, -0.16, 0.5], [0, 2.5, 0, 0.6],
   [0.12, 2.9, -0.06, 0.52], [-0.06, 3.18, 0.06, 0.4], [0.05, 1.55, -0.4, 0.42],
 ];
-export const ovalCanopy = () => roundCanopy(19, OVAL_BLOBS, 3.6);
+export const ovalCanopy = (seg) => roundCanopy(19, OVAL_BLOBS, 3.6, seg);
 
 // 과일나무 잎: 조금 작고 낮게 퍼진 둥근 덩어리
 const FRUIT_BLOBS = [
@@ -413,7 +415,7 @@ const fruitCanopyCache = new Map();
 export function fruitCanopy(fruit, count = FRUIT_MAX) {
   const key = `${fruit}:${count}`;
   if (fruitCanopyCache.has(key)) return fruitCanopyCache.get(key);
-  const leaves = roundCanopy(29, FRUIT_BLOBS, 2.8);
+  const leaves = roundCanopy(29, FRUIT_BLOBS, 2.8).toNonIndexed(); // 과일(번호 없는 모양)과 합치려면 같은 꼴이어야 함
   const col = leaves.attributes.color;
   const green = new THREE.Color().setHSL(0.27, 0.56, 0.47); // 다른 나무와 같은 방식(색 공간 변환)으로 만든 초록
   for (let i = 0; i < col.count; i++) col.setXYZ(i, col.getX(i) * green.r, col.getY(i) * green.g, col.getZ(i) * green.b);
@@ -482,18 +484,19 @@ export function pineCanopy(seed = 11) {
   return tintByHeight(g, 0.8, 3.9, 0.74, 1.08);
 }
 
-export function trunkGeometry() {
+// far: 멀리 있는 칸에 쓸 거친 모양 (swapLod)
+export function trunkGeometry(far = false) {
   // 아래로 갈수록 굵어지는 줄기 + 땅을 움켜쥔 듯 퍼진 뿌리 다섯 갈래
   // 뿌리는 뾰족하지 않게, 길쭉한 공을 바깥으로 갈수록 낮게 눕혀 끝이 뭉툭하게 땅에 묻히도록
-  const parts = [new THREE.CylinderGeometry(0.16, 0.25, 1.45, 10).translate(0, 0.72, 0)];
+  const parts = [new THREE.CylinderGeometry(0.16, 0.25, 1.45, far ? 6 : 10).translate(0, 0.72, 0)];
   for (let i = 0; i < 5; i++) {
-    parts.push(new THREE.SphereGeometry(0.1, 6, 4) // 들판에는 나무가 수백 그루라 뿌리 칸 수를 낮게 둔다
+    parts.push(new THREE.SphereGeometry(0.1, far ? 4 : 6, far ? 3 : 4) // 들판에는 나무가 수백 그루라 뿌리 칸 수를 낮게 둔다
       .scale(2.1, 1.0, 1.15)
       .rotateZ(-0.38)
       .translate(0.25, 0.07, 0)
       .rotateY((i / 5) * Math.PI * 2 + 0.3));
   }
-  return mergeGeometries(parts.map((p) => p.toNonIndexed()));
+  return mergeGeometries(parts); // 번호(index)를 남겨 맞닿은 꼭짓점을 한 번만 계산 (나무 수백 그루)
 }
 
 // 보이는 나무 종류: 0 둥근 나무 · 1 침엽수 · 2 키 큰 달걀꼴 나무 · 3 과일나무
@@ -552,7 +555,7 @@ function buildTrees(group) {
   const trunkGeo = trunkGeometry();
   const trunkMat = toon(0xc0905c);
   const trunkAt = instancedCells(group, WORLD.trees, (n) => addOutline(new THREE.InstancedMesh(trunkGeo, trunkMat, n), 0.03),
-    (mesh, j, i) => mesh.setMatrixAt(j, m.compose(base[i].pos, base[i].q, s.setScalar(base[i].s))), { tall: TREE_TALL });
+    (mesh, j, i) => mesh.setMatrixAt(j, m.compose(base[i].pos, base[i].q, s.setScalar(base[i].s))), { tall: TREE_TALL, lo: trunkGeometry(true) });
 
   // 잎 색: 나무마다 조금씩 다른 초록 (연두 ~ 짙은 초록), 과일나무는 잎 색을 미리 칠해 두어 흰색
   const tintOf = (k, h, h2) => {
@@ -562,6 +565,7 @@ function buildTrees(group) {
     return col.setRGB(1, 1, 1);
   };
   const leafMat = swayToon(0xffffff, { vertexColors: true });
+  const far = [roundCanopy(7, ROUND_BLOBS, 3.1, FAR_SEG), null, ovalCanopy(FAR_SEG)]; // 뾰족한 나무는 원래 칸 수가 적어 그대로
   [roundCanopy(), pineCanopy(), ovalCanopy()].forEach((geo, k) => {
     const list = kinds[k];
     instancedCells(group, list.map((o) => o.t), (n) => addOutline(new THREE.InstancedMesh(geo, leafMat, n), 0.025, { sway: true }), (mesh, j, n) => {
@@ -572,7 +576,7 @@ function buildTrees(group) {
       const h = ((t.x * 7.1) % 1 + 1) % 1;
       const h2 = ((t.z * 3.7) % 1 + 1) % 1;
       mesh.setColorAt(j, tintOf(k, h, h2));
-    }, { tall: TREE_TALL });
+    }, { tall: TREE_TALL, lo: far[k] });
   });
   // 과일나무: 한 그루씩 따로 그려, 남은 과일 수에 맞는 모양으로 바꿔 끼운다 (잎 색은 미리 칠해 둠)
   const fruitMeshes = new Map(); // 나무 번호 → 잎+과일 덩어리
@@ -695,30 +699,34 @@ function buildMeadow(group, { low = false } = {}) {
     const z = (rand() * 2 - 1) * (HALF - 1.5);
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.6 + rand() * 0.5 });
   }
-  // 줄기 + 동그란 잎 두 장
-  const stemGeo = mergeGeometries([
-    new THREE.CylinderGeometry(0.02, 0.026, 0.3, 6).translate(0, 0.15, 0),
-    new THREE.SphereGeometry(0.05, 6, 4).scale(1.5, 0.35, 0.9).rotateZ(0.5).translate(0.06, 0.1, 0),
-    new THREE.SphereGeometry(0.045, 6, 4).scale(1.5, 0.35, 0.9).rotateZ(-0.5).translate(-0.055, 0.16, 0),
+  // 줄기 + 동그란 잎 두 장 (far: 멀리 있는 칸에 쓸 거친 모양 — 손톱만 한 꽃이 수백 송이라 멀리서는 칸 수를 더 줄인다, swapLod)
+  const stemGeometry = (far) => mergeGeometries([
+    new THREE.CylinderGeometry(0.02, 0.026, 0.3, far ? 4 : 6).translate(0, 0.15, 0),
+    new THREE.SphereGeometry(0.05, far ? 4 : 6, far ? 2 : 4).scale(1.5, 0.35, 0.9).rotateZ(0.5).translate(0.06, 0.1, 0),
+    new THREE.SphereGeometry(0.045, far ? 4 : 6, far ? 2 : 4).scale(1.5, 0.35, 0.9).rotateZ(-0.5).translate(-0.055, 0.16, 0),
   ]);
   // (꽃은 수백 송이라 꽃잎·잎의 칸 수를 낮게 둔다: 손톱만 해서 티가 나지 않는다)
   // 꽃송이: 통통하고 동그란 꽃잎 5장(하양 → 인스턴스 색으로 물듦) + 볼록한 노란 가운데, 하늘을 보도록 살짝 기울임
-  const parts = [];
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2;
-    parts.push(paint(new THREE.SphereGeometry(0.06, 6, 4).scale(1, 0.42, 1).translate(Math.cos(a) * 0.075, 0, Math.sin(a) * 0.075), 0xffffff));
-  }
-  parts.push(paint(new THREE.SphereGeometry(0.05, 8, 5).scale(1, 0.75, 1).translate(0, 0.02, 0), 0xffd84a));
-  const headGeo = mergeGeometries(parts).rotateX(0.3).translate(0, 0.31, 0);
+  const headGeometry = (far) => {
+    const parts = [];
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      parts.push(paint(new THREE.SphereGeometry(0.06, far ? 5 : 6, far ? 3 : 4).scale(1, 0.42, 1).translate(Math.cos(a) * 0.075, 0, Math.sin(a) * 0.075), 0xffffff));
+    }
+    parts.push(paint(new THREE.SphereGeometry(0.05, far ? 6 : 8, far ? 3 : 5).scale(1, 0.75, 1).translate(0, 0.02, 0), 0xffd84a));
+    return mergeGeometries(parts).rotateX(0.3).translate(0, 0.31, 0);
+  };
+  const stemGeo = stemGeometry(false);
+  const headGeo = headGeometry(false);
   const stemMat = windToon(0x6aa84f);
   const headMat = windToon(0xffffff, { vertexColors: true });
   const turn = flowers.map(() => rand() * Math.PI * 2);
   const pose = (i) => m.compose(p.set(flowers[i].x, 0, flowers[i].z), q.setFromEuler(e.set(0, turn[i], 0)), s.setScalar(flowers[i].s));
-  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(stemGeo, stemMat, n), (mesh, j, i) => mesh.setMatrixAt(j, pose(i)), { tall: 0 });
+  instancedCells(group, flowers, (n) => new THREE.InstancedMesh(stemGeo, stemMat, n), (mesh, j, i) => mesh.setMatrixAt(j, pose(i)), { tall: 0, lo: stemGeometry(true) });
   instancedCells(group, flowers, (n) => new THREE.InstancedMesh(headGeo, headMat, n), (mesh, j, i) => {
     mesh.setMatrixAt(j, pose(i));
     mesh.setColorAt(j, palette[flowers[i].c % palette.length]);
-  }, { tall: 0 });
+  }, { tall: 0, lo: headGeometry(true) });
 }
 
 
