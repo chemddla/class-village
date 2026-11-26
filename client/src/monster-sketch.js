@@ -942,36 +942,317 @@ school.push(() => {
   };
 });
 
-// 2. 줄줄크레파스: 종이옷이 자꾸 발목까지 줄줄 흘러내려서 부끄러움
-school.push(() => {
+// 2. 끄레용(줄줄크레파스): 종이옷이 자꾸 발목까지 줄줄 흘러내려서 부끄러움. 몸은 makeJooljool, 동작은 JOOL 에서 골라 씀
+function makeJooljool() {
   const g = new THREE.Group();
+  const root = new THREE.Group(); // 동작이 통째로 옮기는 자리 (g 는 배치가 씀)
+  g.add(root);
+  const tilt = new THREE.Group(); // 몸과 종이옷을 함께 기울이는 곳: 따로 기울이면 종이옷이 몸통을 뚫고 지나감
+  root.add(tilt);
   const body = new THREE.Group();
-  g.add(body);
+  tilt.add(body);
   const crayon = mat('#5b8ff0', 0.55);
-  mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.074, 28).translate(0, 0.037, 0), crayon, body, '몸');
-  mesh(new THREE.CylinderGeometry(0.008, 0.022, 0.02, 28).translate(0, 0.084, 0), crayon, body, '몸');
-  dotEyes(body, { x: 0.009, y: 0.062, z: 0.021, r: 0.0065 });
-  blush(body, { x: 0.016, y: 0.054, z: 0.017, r: 0.006 });
-  smallMouth(body, { y: 0.054, z: 0.0222, r: 0.0035 });
+  mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.074, 32).translate(0, 0.037, 0), crayon, body, '몸');
+  mesh(new THREE.CylinderGeometry(0.009, 0.022, 0.02, 32).translate(0, 0.084, 0), crayon, body, '몸');
+  mesh(ball(0.009, 16).scale(1, 0.45, 1).translate(0, 0.094, 0), crayon, body, '몸'); // 살짝 뭉툭하게 닳은 끝
+  // 얼굴은 몸통 겉면에 딱 붙인 스티커처럼: 평면 도형을 원기둥 둘레로 휘어 붙여 튀어나오지 않게
+  const R = 0.022;
+  const decal = (geo, lift, m) => {
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const a = p.getX(i) / (R + lift);
+      p.setXYZ(i, Math.sin(a) * (R + lift), p.getY(i), Math.cos(a) * (R + lift));
+    }
+    geo.computeVertexNormals();
+    const o = mesh(geo, m, body, '눈');
+    o.userData.noOutline = true;
+    o.castShadow = false;
+    return o;
+  };
+  const disc = (r) => new THREE.RingGeometry(0, r, 24, 6); // 가운데까지 잘게 나눠야 휘었을 때 몸통 안으로 파고들지 않음
+  const eyes = [], calmEyes = [];
+  for (const s of [-1, 1]) {
+    eyes.push(decal(disc(0.005).scale(1, 1.25, 1).translate(s * 0.009, 0.062, 0), 0.0003, BLACK));
+    eyes.push(decal(disc(0.0018).translate(s * 0.009 + 0.0018, 0.0645, 0), 0.0005, WHITE));
+    calmEyes.push(decal(new THREE.RingGeometry(0.0034, 0.0046, 16, 1, PI, PI).translate(s * 0.009, 0.0635, 0), 0.0003, BLACK)); // 휴~ 감은 눈 ‿
+  }
+  const gasp = decal(new THREE.RingGeometry(0.0017, 0.0029, 16, 1).scale(1, 1.2, 1).translate(0, 0.053, 0), 0.0003, BLACK); // 당황한 o 입
+  const cheekMat = mat('#ff9fae', 0.8);
+  const cheeks = [-1, 1].map((s) => decal(disc(0.006).scale(1.4, 0.7, 1).translate(s * 0.016, 0.054, 0), 0.0002, cheekMat));
+  const smile = decal(new THREE.RingGeometry(0.0025, 0.0036, 16, 1, PI, PI).translate(0, 0.0555, 0), 0.0003, BLACK);
+  const frown = decal(new THREE.RingGeometry(0.0025, 0.0036, 16, 1, 0, PI).translate(0, 0.0515, 0), 0.0003, BLACK);
+  const CHEEK = new THREE.Color('#ff9fae'), CHEEK_HOT = new THREE.Color('#ff5f7e');
+  const sweat = mesh(ball(0.004, 12).scale(0.8, 1.3, 0.8), mat('#bfe8ff', 0.2), body, '땀');
+  sweat.position.set(0.02, 0.075, 0.012);
   const wrapper = new THREE.Group();
-  g.add(wrapper);
-  const paper = new THREE.MeshStandardMaterial({ color: '#fff4dc', roughness: 0.95, side: THREE.DoubleSide });
-  mesh(new THREE.CylinderGeometry(0.0238, 0.0238, 0.038, 28, 1, true).translate(0, 0.019, 0), paper, wrapper, '종이옷');
+  tilt.add(wrapper);
+  // 종이옷: 안팎 두 면 + 위아래 단면이 있는 얇은 관 (두께 0.7mm 쯤, 끝을 살짝 둥글려 종이 같은 두께감)
+  const PIN = 0.0229, POUT = 0.0236, PH = 0.038, e = 0.0002;
+  const prof = [[PIN, 0], [POUT - e, 0], [POUT, e], [POUT, PH - e], [POUT - e, PH], [PIN, PH], [PIN, 0]].map(([x, y]) => new THREE.Vector2(x, y));
+  mesh(new THREE.LatheGeometry(prof, 40), mat('#fff4dc', 0.95), wrapper, '종이옷');
   for (const y of [0.006, 0.032]) {
-    const st = mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.0035, 28, 1, true).translate(0, y, 0), mat('#3d6ccc', 0.8), wrapper, '줄무늬');
+    const st = mesh(new THREE.CylinderGeometry(POUT + 0.0002, POUT + 0.0002, 0.0035, 40, 1, true).translate(0, y, 0), mat('#3d6ccc', 0.8), wrapper, '줄무늬');
     st.userData.noOutline = true;
   }
-  return {
-    g, name: '줄줄크레파스', desc: '종이옷이 자꾸 흘러내림',
-    update(t) {
-      const c = t % 3;
-      const slide = c < 2 ? Math.pow(c / 2, 2) : Math.max(0, 1 - (c - 2) / 0.2);
-      wrapper.position.y = 0.008 * (1 - slide);
-      wrapper.scale.set(1 + slide * 0.12, 1 - slide * 0.5, 1 + slide * 0.12); // 발목에 쭈글쭈글 모임
-      body.rotation.z = Math.sin(t * 10) * 0.05 * slide;
-      body.position.y = c > 2 && c < 2.3 ? Math.sin((c - 2) / 0.3 * PI) * 0.008 : 0;
+  g.traverse((o) => { if (o.isMesh) o.userData.outlineWidth = 0.0022; }); // 윤곽선을 기본(몸 0.0048)의 절반쯤으로 얇게
+  const UP = 0.008; // 종이옷을 제대로 입었을 때 높이
+  const P = {
+    g, root, tilt, body, wrapper, UP, TIP: 0.098,
+    fit() { // 동작 뒤에 부름: 몸이 납작하게 퍼지면 종이옷도 같이 넓어져야 뚫리지 않음
+      const k = Math.max(body.scale.x, body.scale.z);
+      if (wrapper.scale.x < k) wrapper.scale.x = wrapper.scale.z = k;
+    },
+    lean(a) { // 바닥 모서리를 축으로 기운 것처럼: 기운 만큼 들어 올려 땅에 묻히지 않게
+      tilt.rotation.x = a;
+      root.position.y = Math.max(root.position.y, Math.abs(Math.sin(a)) * 0.024);
+    },
+    reset() { // 매 프레임 처음 자세에서 시작
+      for (const o of [root, tilt, body, wrapper]) { o.position.set(0, 0, 0); o.rotation.set(0, 0, 0); o.scale.set(1, 1, 1); }
+      wrapper.position.y = UP;
+      P.shy(0);
+      P.face();
+      sweat.visible = false;
+    },
+    face(mode) { // 'gasp' 당황(o 입) · 'calm' 안심(감은 눈) · 없으면 보통. shy 다음에 부름
+      eyes.forEach((o) => (o.visible = mode !== 'calm'));
+      calmEyes.forEach((o) => (o.visible = mode === 'calm'));
+      gasp.visible = mode === 'gasp';
+      if (mode === 'gasp') smile.visible = frown.visible = false;
+    },
+    slip(s) { // 0 = 제대로 입음, 1 = 발목에 쭈글쭈글 모임
+      wrapper.position.y = UP * (1 - s);
+      wrapper.scale.set(1 + s * 0.12, 1 - s * 0.5, 1 + s * 0.12);
+    },
+    shy(k, sad = k > 0.4) { // 볼이 진해지고, sad 면 입이 시무룩
+      cheeks.forEach((o) => o.material.color.lerpColors(CHEEK, CHEEK_HOT, k)); // 지금 쓰는 툰 재질에 바로
+      smile.visible = !sad;
+      frown.visible = sad;
+    },
+    drip(t) {
+      sweat.visible = true;
+      sweat.position.y = 0.075 - ((t * 0.6) % 1) * 0.02;
+    },
+    hop(h) { // 폴짝 (종이옷 끌어올릴 때)
+      body.position.y = h * 0.012;
+      body.scale.set(1 + h * 0.04, 1 - h * 0.06, 1 + h * 0.04);
     },
   };
+  P.reset();
+  return P;
+}
+// 바닥에 크레파스로 그은 선: path(0~1) 를 따라 깐 납작한 띠 하나. setDrawRange 로 그은 만큼만 보이게 (마디 하나 = 6)
+function crayonLine(parent, path, { N = 240, W = 0.0035, color = '#5b8ff0', opacity = 1 } = {}) {
+  // 크레파스로 그은 결: 길이 방향 왁스 줄 + 들쭉날쭉한 가장자리 + 종이 결 빈틈 (투명 바탕에 흰색, 색은 재질이 곱함)
+  const stroke = canvasTexture('crayonStroke', 256, 64, (c, w, h) => {
+    let s = 3;
+    const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    c.lineCap = 'round';
+    for (let i = 0; i < 700; i++) {
+      const y = h / 2 + (r() + r() + r() - 1.5) * h * 0.42, x = r() * w;
+      c.strokeStyle = `rgba(255,255,255,${0.35 + r() * 0.65})`;
+      c.lineWidth = 0.8 + r() * 2.4;
+      c.beginPath(); c.moveTo(x, y); c.lineTo(x + 8 + r() * 40, y + (r() - 0.5) * 2); c.stroke();
+      c.beginPath(); c.moveTo(x - w, y); c.lineTo(x - w + 8 + r() * 40, y); c.stroke(); // 오른쪽 끝에서 넘친 줄을 왼쪽에 이어 붙여 반복 이음매를 없앰
+    }
+    c.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < 1600; i++) { // 종이 결에 크레파스가 안 묻은 빈틈
+      c.fillStyle = `rgba(0,0,0,${0.4 + r() * 0.6})`;
+      c.fillRect(r() * w, r() * h, 0.6 + r() * 1.6, 0.6 + r() * 1.2);
+    }
+  });
+  const pos = [], uv = [], idx = [];
+  let len = 0, prev = path(0);
+  for (let i = 0; i <= N; i++) {
+    const p = path(i / N), q = path(Math.min(1, (i + 1) / N)), d = i < N ? q.clone().sub(p) : p.clone().sub(path((i - 1) / N));
+    len += p.distanceTo(prev);
+    prev = p;
+    const nx = -d.z, nz = d.x, nl = Math.hypot(nx, nz) || 1;
+    pos.push(p.x + (nx / nl) * W, 0.0008, p.z + (nz / nl) * W, p.x - (nx / nl) * W, 0.0008, p.z - (nz / nl) * W);
+    uv.push(len / 0.03, 1, len / 0.03, 0); // 3cm 마다 무늬 반복
+    if (i < N) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  // 투명 재질이라 툰 변환·외곽선에서 빠짐 (syncToon 이 건너뜀)
+  const ink = new THREE.MeshStandardMaterial({ color, opacity, roughness: 0.9, map: stroke, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  const line = mesh(geo, ink, parent, '낙서');
+  line.castShadow = false;
+  line.receiveShadow = true;
+  return { line, N };
+}
+// 물구나무로 뒤집는 동안(th) 땅에 안 묻히게 들어 올릴 높이
+const flipLift = (P, th) => Math.max((P.TIP * (1 - Math.cos(th))) / 2, Math.abs(Math.sin(th)) * 0.024);
+// a 초부터 끌어올리기 시작: 흘러내림 정도(1 → 0)와 폴짝 높이
+const pullUp = (c, a) => ({ s: c < a ? 1 : 1 - ease(Math.min(1, (c - a) / 0.25)), h: c > a && c < a + 0.3 ? Math.sin((c - a) / 0.3 * PI) : 0 });
+const JOOL = [
+  { name: '줄줄', desc: '대기: 가만히 있다가 가끔 종이옷이 줄줄 → 폴짝 끌어올림', fn(P, t) {
+    const c0 = t % 6.8;
+    if (c0 < 3.4) { // 앞 절반은 숨만 쉬며 가만히 (흘러내림은 6.8초에 한 번)
+      P.body.scale.y = 1 + Math.sin(t * 2.4) * 0.012;
+      return;
+    }
+    const c = c0 - 3.4;
+    const s = c < 2.2 ? (c / 2.2) ** 2 : pullUp(c, 2.7).s;
+    P.slip(s);
+    P.wrapper.rotation.y = Math.sin(t * 3) * 0.06 * s; // 흘러내리며 살짝 비틀림
+    P.tilt.rotation.z = Math.sin(t * 22) * 0.035 * s; // 부끄러워 바들바들 (종이옷도 같이)
+    P.hop(pullUp(c, 2.7).h);
+    P.shy(s);
+    if (s > 0.3) P.drip(t);
+  } },
+  { name: '콩콩 걷기', desc: '뛸 때마다 종이옷이 조금씩 흘러내림', fn(P, t) {
+    const c = t % 3.6;
+    if (c < 2.4) {
+      const ph = (c / 0.4) % 1, n = Math.floor(c / 0.4), h = Math.sin(ph * PI);
+      const s = Math.min(1, (n + ph) * 0.17);
+      P.root.position.x = Math.sin((c / 2.4) * PI * 2) * 0.035;
+      P.root.rotation.y = Math.cos((c / 2.4) * PI * 2) * 0.6; // 가는 쪽으로 몸을 틂
+      P.body.position.y = h * 0.014;
+      P.slip(s);
+      P.wrapper.position.y += h * 0.007; // 종이옷이 몸을 반만 따라 뜀
+      P.shy(s);
+    } else {
+      const { s, h } = pullUp(c, 2.9);
+      P.slip(s);
+      P.tilt.rotation.z = Math.sin(t * 22) * 0.035 * s;
+      P.hop(h);
+      P.shy(s);
+      if (s > 0.3) P.drip(t);
+    }
+  } },
+  { name: '화들짝', desc: '놀라 뛰어오르면 종이옷만 바닥에 남음', fn(P, t) {
+    const c = t % 2.8;
+    if (c > 0.55 && c < 0.7) P.body.scale.set(1.05, 0.9, 1.05); // 움찔
+    if (c > 0.7 && c < 1.15) {
+      const j = Math.sin((c - 0.7) / 0.45 * PI);
+      P.body.position.y = j * 0.05;
+      P.body.scale.set(1 - j * 0.06, 1 + j * 0.12, 1 - j * 0.06);
+    }
+    const s = c < 0.7 ? 0 : c < 0.85 ? (c - 0.7) / 0.15 : pullUp(c, 2.2).s;
+    P.slip(s);
+    if (c > 0.7 && c < 2.2) {
+      P.shy(1);
+      P.drip(t);
+      if (c > 1.15) P.tilt.rotation.z = Math.sin(t * 22) * 0.03;
+    }
+    const { h } = pullUp(c, 2.2);
+    if (h) P.hop(h);
+  } },
+  { name: '쏙 숨기', desc: '부끄러우면 종이옷을 얼굴까지 올려 숨고 빼꼼', fn(P, t) {
+    const c = t % 4, HIDE = 0.034, PEEK = 0.02;
+    let y;
+    if (c < 0.4) y = P.UP + ease(c / 0.4) * (HIDE - P.UP);
+    else if (c < 1.4) y = HIDE;
+    else if (c < 2.2) y = HIDE - ease((c - 1.4) / 0.8) * (HIDE - PEEK); // 슬금슬금 내려 눈만 빼꼼
+    else if (c < 2.5) y = PEEK;
+    else if (c < 2.6) y = PEEK + ((c - 2.5) / 0.1) * (HIDE - PEEK); // 눈 마주치자 다시 쏙
+    else if (c < 3.4) y = HIDE;
+    else y = HIDE - ease((c - 3.4) / 0.6) * (HIDE - P.UP);
+    P.wrapper.position.y = y;
+    const hidden = (y - P.UP) / (HIDE - P.UP);
+    P.tilt.rotation.z = Math.sin(t * 20) * 0.025 * hidden;
+    P.body.scale.y = 1 - hidden * 0.03;
+    P.shy(Math.min(1, hidden * 1.5), false);
+  } },
+  { name: '빙글 조이기', desc: '빙글 돌아 종이옷을 조였다가 어질어질', fn(P, t) {
+    const c = t % 3.6;
+    P.body.rotation.y = ease(Math.min(1, c / 0.9)) * PI * 4;
+    P.wrapper.rotation.y = ease(Math.min(1, Math.max(0, (c - 0.15) / 0.9))) * PI * 4; // 종이옷이 한 박자 늦게 따라 돎
+    if (c < 2.4) {
+      const tight = Math.min(1, c / 0.9); // 좁히면 몸통을 뚫으니, 위로 바짝 당겨 올라가는 것으로 조임을 보임
+      P.wrapper.scale.set(1, 1 + tight * 0.05, 1);
+      P.wrapper.position.y = P.UP + tight * 0.004;
+    } else P.slip(((c - 2.4) / 1.2) * 0.4); // 스르르 다시 풀림
+    const dizzy = c > 0.9 && c < 2.6 ? 1 - (c - 0.9) / 1.7 : 0;
+    P.tilt.rotation.z = Math.sin(t * 9) * 0.14 * dizzy;
+    P.lean(Math.cos(t * 9) * 0.14 * dizzy);
+    P.shy(dizzy * 0.4, false);
+  } },
+  { name: '콕 찌르기', desc: '공격: 뒤로 젖혔다가 뾰족한 끝으로 콕', fn(P, t) {
+    const c = t % 2.2;
+    let lean = 0, z = 0;
+    if (c < 0.5) lean = -0.35 * ease(c / 0.5);
+    else if (c < 0.62) { const k = (c - 0.5) / 0.12; lean = -0.35 + 1.25 * k; z = 0.03 * k; }
+    else if (c < 0.9) { lean = 0.9; z = 0.03; }
+    else if (c < 1.4) { const k = ease((c - 0.9) / 0.5); lean = 0.9 * (1 - k); z = 0.03 * (1 - k); }
+    // 콕 하는 바람에 종이옷이 쑥 내려갔다 돌아옴
+    P.slip(c > 0.62 && c < 1.4 ? 0.35 * Math.min(1, (c - 0.62) / 0.2) : c >= 1.4 && c < 1.7 ? 0.35 * (1 - (c - 1.4) / 0.3) : 0);
+    P.root.position.z = z;
+    P.lean(lean);
+    P.shy(0.2, c > 0.3 && c < 1.0); // 힘주느라 입꼬리 내림
+  } },
+  { name: '아야', desc: '맞으면 납작 → 종이옷이 퐁 벗겨졌다 다시 씌워짐', fn(P, t) {
+    const c = t % 2.2;
+    const hit = c < 0.12 ? c / 0.12 : Math.max(0, 1 - (c - 0.12) / 0.35);
+    P.body.scale.set(1 + hit * 0.15, 1 - hit * 0.25, 1 + hit * 0.15);
+    P.root.position.z = -0.015 * Math.min(1, c / 0.12) * (c < 0.6 ? 1 : Math.max(0, 1 - (c - 0.6) / 0.4));
+    P.lean(-0.3 * hit + (c > 0.12 && c < 1.2 ? Math.sin((c - 0.12) * 14) * 0.08 * (1 - (c - 0.12) / 1.08) : 0));
+    if (c > 0.05 && c < 0.85) { // 머리 위로 쏙 빠져 날았다가 다시 씌워짐. 몸 위로 완전히 나간 뒤에만 기울어 몸통을 안 뚫음
+      const k = (c - 0.05) / 0.8, y = P.UP + Math.sin(k * PI) * 0.13;
+      P.wrapper.position.y = y;
+      P.wrapper.rotation.z = Math.max(0, (y - P.TIP) / 0.04) * 0.7;
+    }
+    if (c < 1.2) { P.shy(1); P.drip(t); }
+  } },
+  { name: '데굴 쓰러짐', desc: '쓰러질 때: 비틀비틀 꽈당, 종이옷이 스르르 벗겨짐', fn(P, t) {
+    const c = t % 3.6;
+    const wob = c < 0.7 ? Math.sin(c * 20) * 0.12 * (c / 0.7) : 0;
+    const fall = c < 0.7 ? 0 : c < 1 ? ease((c - 0.7) / 0.3) : c < 3 ? 1 : 1 - ease(Math.min(1, (c - 3) / 0.4));
+    const rz = wob + (fall * PI) / 2;
+    P.tilt.rotation.z = rz;
+    P.root.position.y = Math.abs(Math.sin(rz)) * 0.024 + (c > 1 && c < 1.25 ? Math.sin(((c - 1) / 0.25) * PI) * 0.008 : 0); // 눕고 한 번 통
+    const off = c > 1.3 && c < 3 ? ease(Math.min(1, (c - 1.3) / 1)) : 0; // 누운 채 종이옷이 발끝 쪽으로 빠져나감
+    P.wrapper.position.y = P.UP - off * 0.05;
+    if (c > 0.7 && c < 3) P.shy(1, true);
+  } },
+  { name: '낙서', desc: '물구나무 서서 끝으로 바닥에 달팽이 낙서, 종이옷이 얼굴로 흘러내려 앞이 안 보임',
+    setup(P) { // 바닥에 남는 크레파스 자국: 길을 따라 깐 납작한 띠 하나 (배치 자리 g 에 둠: 몸이 움직여도 자국은 그대로)
+      const path = (u) => { const r = 0.05 * (1 - u) + 0.008, a = u * PI * 5; return new THREE.Vector3(Math.sin(a) * r, 0, Math.cos(a) * r); }; // 바깥에서 안으로 도는 달팽이
+      return { path, ...crayonLine(P.g, path) };
+    },
+    fn(P, t, S) {
+      const c = t % 6, start = S.path(0);
+      let u = 0, th = 0, wy = P.UP;
+      if (c < 0.4) { // 낙서 시작할 자리로 폴짝
+        const k = ease(c / 0.4);
+        P.root.position.lerpVectors(new THREE.Vector3(), start, k);
+        P.root.position.y = Math.sin(k * PI) * 0.02;
+      } else if (c < 4.4) {
+        if (c < 0.8) th = ease((c - 0.4) / 0.4) * PI; // 앞으로 데굴 물구나무
+        else if (c < 3.8) { th = PI; u = (c - 0.8) / 3; }
+        else { th = PI + ease((c - 3.8) / 0.4) * PI; u = 1; } // 다시 앞으로 데굴 바로 서기
+        P.root.position.copy(S.path(u));
+        P.root.position.y = flipLift(P, th);
+        if (c > 0.8 && c < 3.8) th += Math.sin(t * 9) * 0.06; // 박박 칠하느라 흔들흔들
+        P.tilt.rotation.x = th;
+        // 거꾸로 서면 종이옷이 얼굴 쪽(아래)으로 흘러내려 눈을 가림, 바로 서면 다시 발목으로
+        if (c > 0.7 && c < 3.8) wy = P.UP + ease(Math.min(1, (c - 0.7) / 0.6)) * 0.03;
+        else if (c >= 3.8) wy = P.UP + 0.03 * (1 - ease(Math.min(1, (c - 4.1) / 0.3)));
+        P.wrapper.position.y = wy;
+        P.shy(c > 0.8 ? 0.6 : 0, false);
+      } else { // 다 그리고 뿌듯하게 내려다보며 빙글
+        const k = (c - 4.4) / 1.6;
+        P.root.position.copy(S.path(1));
+        P.root.rotation.y = Math.sin(k * PI * 2) * 0.8;
+        P.lean(0.25 * Math.sin(Math.min(1, k * 2) * PI));
+        P.hop(c < 4.7 ? Math.sin(((c - 4.4) / 0.3) * PI) : 0);
+        P.shy(0.7, false);
+        u = 1;
+      }
+      S.line.geometry.setDrawRange(0, c >= 0.8 ? Math.floor(u * S.N) * 6 : 0); // 끝이 지나간 데까지만 그어짐
+    } },
+];
+school.push(() => {
+  const P = makeJooljool();
+  return { g: P.g, name: '끄레용', desc: '종이옷이 자꾸 발목까지 흘러내림', update(t) { P.reset(); JOOL[0].fn(P, t); P.fit(); } };
+});
+const jooljool = JOOL.map((m) => () => {
+  const P = makeJooljool();
+  const S = m.setup?.(P);
+  return { g: P.g, name: m.name, desc: m.desc, update(t) { P.reset(); m.fn(P, t, S); P.fit(); } };
 });
 
 // 3. 더듬클립: 한쪽 끝이 펴져서 더듬이처럼 됨. 뭘 집지도 못하고 통통 튐
@@ -3335,8 +3616,725 @@ const pigeonLine = (make) => () => {
   return m;
 };
 
+// ── 끄레용 어울림 시안: 다른 몬스터와 합동 모션 ──
+const jooljoolWith = [];
+// make(g): 같이 나오는 몬스터를 g 에 넣고 돌려줌 · fn(c, P, O, t, S): 한 바퀴 c 초 · setup(g, O): 바닥 그림 같은 소품
+const joolDuo = (name, desc, T, make, fn, setup) => jooljoolWith.push(() => {
+  const g = new THREE.Group();
+  const P = makeJooljool();
+  g.add(P.g);
+  const O = make(g);
+  const S = setup?.(g, O);
+  return {
+    g, name, desc,
+    update(t) {
+      P.reset();
+      if (O.prep) O.prep(t); else O.reset?.(t);
+      fn(t % T, P, O, t, S);
+      P.fit();
+      O.after?.(t);
+    },
+  };
+});
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+// 끄레용 몸통을 at 자리에 세우고 rotY 쪽을 보게 (몸·종이옷이 함께 움직임)
+const joolAt = (P, at, rotY = 0) => { P.root.position.x = at.x; P.root.position.z = at.z; P.root.rotation.y = rotY; };
+const hopTo = (P, from, to, k, h = 0.02) => { // from → to 로 폴짝 (k: 0~1)
+  P.root.position.lerpVectors(from, to, ease(clamp01(k)));
+  P.root.position.y = Math.sin(clamp01(k) * PI) * h;
+};
+// 물구나무 그리기 한 바퀴: t0 부터 0.4 초 폴짝 → 0.4 초 뒤집기 → dur 초 동안 path 를 따라 그음 → 0.4 초 바로 서기
+// R: { root, tilt, tip(끝까지 높이), rad(반지름) } · 돌려주는 값: 그은 정도 u (그 전 0, 다 그린 뒤 1), 거꾸로 선 정도 down
+function drawFlip(R, c, t, path, from, t0, dur) {
+  const a = t0 + 0.4, b = a + 0.4, d = b + dur, e = d + 0.4;
+  if (c < t0) return { u: 0, down: 0 };
+  if (c >= e) return { u: 1, down: 0 };
+  if (c < a) { R.root.position.lerpVectors(from, path(0), ease((c - t0) / 0.4)); R.root.position.y = Math.sin(((c - t0) / 0.4) * PI) * 0.02; return { u: 0, down: 0 }; }
+  let th, u;
+  if (c < b) { th = ease((c - a) / 0.4) * PI; u = 0; } // 앞으로 데굴 물구나무
+  else if (c < d) { th = PI + Math.sin(t * 9) * 0.06; u = (c - b) / dur; } // 박박 그리느라 흔들흔들
+  else { th = PI + ease((c - d) / 0.4) * PI; u = 1; } // 다시 앞으로 데굴 바로 서기
+  R.root.position.copy(path(u));
+  R.root.rotation.y = 0;
+  R.root.position.y = Math.max((R.tip * (1 - Math.cos(th))) / 2, Math.abs(Math.sin(th)) * R.rad); // 뒤집는 동안 땅에 안 묻히게
+  R.tilt.rotation.x = th;
+  return { u, down: c < d ? clamp01((c - a - 0.3) / 0.5) : 1 - clamp01((c - d - 0.2) / 0.2) };
+}
+// 끄레용 물구나무 그리기: 거꾸로 서면 종이옷이 얼굴 쪽으로 흘러내려 눈을 가림
+const joolDraw = (P, c, t, path, from, t0, dur) => {
+  const r = drawFlip({ root: P.root, tilt: P.tilt, tip: P.TIP, rad: 0.024 }, c, t, path, from, t0, dur);
+  P.wrapper.position.y = P.UP + 0.03 * ease(r.down);
+  if (r.down > 0) P.shy(0.5, false);
+  return r.u;
+};
+// 선 하나를 그은 만큼(u)만 보이게 (from: 지워진 데까지)
+const reveal = (L, u, from = 0) => { const s = Math.floor(from * L.N) * 6; L.line.geometry.setDrawRange(s, Math.max(0, Math.floor(u * L.N) * 6 - s)); };
+const loop = (cx, cz, rx, rz, a0 = 0, turns = 1) => (u) => new THREE.Vector3(cx + Math.cos(a0 + u * PI * 2 * turns) * rx, 0, cz + Math.sin(a0 + u * PI * 2 * turns) * rz);
+// 하트 (좋아할 때 퐁퐁)
+function heart(parent) {
+  // 하트 모양 판을 도톰하게 뽑아 둥글린 것 (위 가운데가 쏙 들어가고 아래가 뾰족)
+  const s = new THREE.Shape();
+  s.moveTo(0, -0.011);
+  s.bezierCurveTo(-0.004, -0.007, -0.012, -0.002, -0.012, 0.004);
+  s.bezierCurveTo(-0.012, 0.0095, -0.0045, 0.0115, 0, 0.0055);
+  s.bezierCurveTo(0.0045, 0.0115, 0.012, 0.0095, 0.012, 0.004);
+  s.bezierCurveTo(0.012, -0.002, 0.004, -0.007, 0, -0.011);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: 0.003, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.0015, bevelSegments: 4, curveSegments: 16 }).center();
+  const h = new THREE.Group();
+  mesh(geo, mat('#ff6f91', 0.5), h, '하트');
+  parent.add(h);
+  return h;
+}
+
+// ① 날개콩: 끄레용이 바닥에 날개콩을 그려 줌 (콩 몸 + 양 날개) → 날개콩이 와서 보고 깜짝 → 신나서 파닥파닥, 하트 퐁퐁
+{
+  const C = new THREE.Vector3(-0.06, 0, 0.03);
+  const RX = 0.055, RZ = 0.04, WR = 0.016; // 날개콩이 커서 그림도 크게
+  const bodyPath = (u) => u < 0.72 ? loop(C.x, C.z, RX, RZ, PI)(u / 0.72) // 콩 몸 한 바퀴 (왼쪽 끝에서 시작)
+    : loop(C.x - RX - WR, C.z - 0.006, WR, WR * 1.3, 0)((u - 0.72) / 0.28); // 이어서 왼쪽 날개 동그라미
+  const wingR = loop(C.x + RX + WR, C.z - 0.006, WR, WR * 1.3, PI); // 오른쪽 날개
+  const eyeL = loop(C.x - 0.018, C.z - 0.006, 0.006, 0.006), eyeR = loop(C.x + 0.018, C.z - 0.006, 0.006, 0.006);
+  const START = new THREE.Vector3(-0.22, 0, 0.06), SIDE = new THREE.Vector3(-0.2, 0, 0.13);
+  const NSTOP = new THREE.Vector3(0.17, 0, -0.04);
+  joolDuo('날개콩 그려 주기', '바닥에 날개콩을 그려 주면 날개콩이 와서 보고 신나서 파닥파닥', 12, (g) => {
+    const N = createNalgaekong();
+    g.add(N.root);
+    N.prep = () => {}; // 날개콩은 play·update 로 움직임 (reset 을 부르지 않음)
+    return N;
+  }, (c, P, N, t, S) => {
+    // 끄레용: 몸+왼날개 → 오른날개 → 눈 두 개 (사이는 거꾸로 선 채로 콩콩 옮겨 감)
+    const u1 = joolDraw(P, c, t, bodyPath, START, 0, 3.0);
+    const u2 = joolDraw(P, c, t, wingR, bodyPath(1), 4.2, 0.7);
+    const u3 = joolDraw(P, c, t, eyeL, wingR(1), 6.1, 0.3);
+    const u4 = joolDraw(P, c, t, eyeR, eyeL(1), 7.6, 0.3);
+    if (c >= 9.0) { // 비켜서서 날개콩 쪽을 봄, 좋아하니 뿌듯 배시시
+      if (c < 9.4) hopTo(P, eyeR(1), SIDE, (c - 9.0) / 0.4);
+      else joolAt(P, SIDE, 0.6 * ease(clamp01((c - 9.4) / 0.3)));
+      P.shy(clamp01((c - 9.6) / 0.4) * 0.8, false);
+      if (c > 10.2 && c < 10.8) P.hop(Math.abs(Math.sin((c - 10.2) * PI * 3.3)));
+    }
+    [u1, u2, u3, u4].forEach((u, i) => reveal(S.lines[i], c < 0.8 ? 0 : u));
+    // 날개콩: 6.4 초부터 걸어 들어옴 → 8.6 그림 앞에서 깜짝! → 9.6 신나서 파닥파닥 → 하트
+    const dt = Math.min(0.1, Math.max(0, t - S.last)), at = (x) => (S.pc < x && c >= x) || (c < S.pc && x <= c);
+    S.pc = c; S.last = t;
+    if (at(0.02)) N.play('idle');
+    if (at(7.0)) N.play('walk');
+    if (at(9.0)) N.play('idle');
+    if (at(9.2)) N.play('notice');
+    if (at(10.0)) N.play('flutter');
+    N.update(dt);
+    const k = clamp01((c - 7.0) / 2.0);
+    N.root.visible = c > 6.9;
+    N.root.position.lerpVectors(new THREE.Vector3(0.5, 0, -0.05), NSTOP, k);
+    N.root.rotation.y = c < 9.0 ? -PI / 2 : -PI / 2 - 0.5 * ease(clamp01((c - 9.0) / 0.3)); // 걸어오다 그림 쪽으로 고개
+    S.hearts.forEach((h, i) => {
+      const hk = clamp01((c - 10.1 - i * 0.3) / 1.0);
+      h.visible = hk > 0 && hk < 1;
+      h.position.set(NSTOP.x + (i - 1) * 0.03, 0.17 + hk * 0.07, NSTOP.z); // 날개콩 머리 위로 퐁퐁
+      h.scale.setScalar(Math.sin(hk * PI) * 1.2);
+    });
+  }, (g) => ({
+    lines: [bodyPath, wingR, eyeL, eyeR].map((p, i) => crayonLine(g, p, { N: i > 1 ? 40 : 240 })),
+    hearts: [0, 1, 2].map(() => heart(g)), last: 0, pc: 0,
+  }));
+}
+
+// ② 하악냥: 호기심에 앞발로 종이옷을 툭툭 → 툭 할 때마다 종이옷이 쑥쑥 흘러내림 → 끄레용 부끄러워 바들바들
+//    → 폴짝 끌어올리자 하악냥이 깜짝 폴짝
+{
+  const HERE = new THREE.Vector3(0, 0, 0.095); // 툭툭 앞발 끝(z 0.069, 높이 0.05)이 종이옷 겉면에 닿는 자리
+  const SWAT = haakFn('툭툭'), NOTICE = haakFn('발견');
+  const BONK = [1.0, 2.5, 4.0].flatMap((s) => [s + 0.52, s + 0.92]); // 왼발·오른발이 종이옷을 치는 순간
+  joolDuo('하악냥이 건드림', '호기심에 종이옷을 툭툭 → 툭 할 때마다 종이옷이 쑥쑥 흘러내림', 9.4, (g) => {
+    const H = makeHaak();
+    H.g.name = '하악냥'; // 하악냥은 원래 외곽선 그대로
+    H.g.userData.haak = H;
+    H.g.scale.setScalar(1.6);
+    g.add(H.g);
+    H.after = (t) => { H.ground(); H.whiskers(t); };
+    return H;
+  }, (c, P, H, t) => {
+    if (c < 1.0 || (c >= 5.5 && c < 6.3) || c >= 8.9) { H.head.rotation.x = 0.25; H.head.rotation.z = Math.sin(t * 2) * 0.2; hBlink(H, t); } // 갸웃갸웃
+    else if (c < 5.5) { SWAT((c - 1.0) % 1.5, H, t); H.head.rotation.x -= 0.3; } // 고개는 살짝 들어 끄레용 머리에 안 닿게
+    else NOTICE(c - 6.3, H, t); // 끄레용이 갑자기 폴짝 하자 깜짝
+    joolAt(P, HERE);
+    const s = c < 6.3 ? BONK.reduce((a, b) => a + 0.17 * ease(clamp01((c - b) / 0.15)), 0) : pullUp(c, 6.3).s;
+    P.slip(Math.min(1, s));
+    const bonk = BONK.reduce((a, b) => a + bump(c, b, b + 0.2), 0);
+    P.body.scale.set(1 + bonk * 0.04, 1 - bonk * 0.08, 1 + bonk * 0.04); // 툭 맞을 때마다 움찔
+    if (c > 1.8 && c < 6.3) { P.shy(Math.min(1, s + 0.3), s > 0.6); if (s > 0.6) { P.tilt.rotation.z = Math.sin(t * 22) * 0.03; P.drip(t); } }
+    P.hop(pullUp(c, 6.3).h);
+  });
+}
+
+// ③ 몽당이: 몽당이이 물구나무 서서 동그라미를 그리면 → 끄레용이 그 안을 빙글빙글 색칠 → 둘이 뿌듯
+function makeStub() { // 몽당이(몽당연필) (필기도구 시안과 같은 생김새, 물구나무 서게 root·tilt 로 나눔)
+  const g = new THREE.Group(), root = new THREE.Group(), tilt = new THREE.Group(), body = new THREE.Group();
+  g.add(root); root.add(tilt); tilt.add(body);
+  const part = (r1, r2, h, y, m, name, n = 6) =>
+    mesh(new THREE.CylinderGeometry(r1, r2, h, n).rotateY(n === 6 ? PI / 6 : 0).translate(0, y + h / 2, 0), m, body, name);
+  part(0.036, 0.036, 0.02, 0, mat('#ff9fb0', 0.95), '지우개', 24);
+  part(0.04, 0.04, 0.014, 0.02, mat('#c9ccd3', 0.35), '쇠테', 24);
+  part(0.04, 0.04, 0.06, 0.034, mat('#ffd23f', 0.6), '몸');
+  part(0.008, 0.04, 0.035, 0.094, mat('#f3d2a2', 0.9), '나무');
+  part(0.003, 0.008, 0.007, 0.129, mat('#4a4a52', 0.5), '심', 12);
+  dotEyes(body, { x: 0.013, y: 0.07, z: 0.035, r: 0.007 });
+  blush(body, { x: 0.021, y: 0.058, z: 0.033, r: 0.006 });
+  smallMouth(body, { y: 0.057, z: 0.036, r: 0.004 });
+  return {
+    g, root, tilt, body, tip: 0.136, rad: 0.04,
+    reset() { for (const o of [root, tilt, body]) { o.position.set(0, 0, 0); o.rotation.set(0, 0, 0); o.scale.set(1, 1, 1); } },
+  };
+}
+{
+  const C = new THREE.Vector3(0, 0, 0.03), R = 0.045;
+  // 한 바퀴마다 다른 그림: 테두리 o(u) → [x, y] (반지름 1 안팎, y 는 화면 위쪽)
+  const SHAPES = [
+    (u) => [Math.cos(u * PI * 2), Math.sin(u * PI * 2)], // 동그라미
+    (u) => { const a = u * PI * 2; return [Math.sin(a) ** 3, (13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a)) / 16 + 0.2]; }, // 하트
+    (u) => { // 별: 뾰족 다섯 개 (꼭짓점 사이를 곧게)
+      const k = u * 10, i = Math.floor(k) % 10, f = k - Math.floor(k);
+      const v = (j) => { const a = PI / 2 + (j * PI) / 5, r = j % 2 ? 0.45 : 1.05; return [Math.cos(a) * r, Math.sin(a) * r]; };
+      const [x0, y0] = v(i), [x1, y1] = v(i + 1);
+      return [x0 + (x1 - x0) * f, y0 + (y1 - y0) * f];
+    },
+    (u) => { const a = u * PI * 2, r = 0.62 + 0.38 * Math.abs(Math.cos(2.5 * a)); return [Math.cos(a) * r, Math.sin(a) * r]; }, // 꽃잎 다섯 장
+  ];
+  const toGround = ([x, y]) => new THREE.Vector3(C.x + x * R, 0, C.z - y * R);
+  // 색칠: 가운데에서 본 테두리까지 거리(각도별)를 표로 만들어, 바깥에서 안으로 빙글빙글 줄여 가며 칠함
+  const fillOf = (o) => {
+    const tab = new Float32Array(72);
+    for (let i = 0; i < 720; i++) {
+      const [x, y] = o(i / 720), b = Math.round(((Math.atan2(y, x) + PI * 2) % (PI * 2)) / (PI * 2) * 72) % 72;
+      tab[b] = Math.max(tab[b], Math.hypot(x, y));
+    }
+    return (u) => {
+      const a = u * PI * 2 * 5, b = ((a % (PI * 2)) / (PI * 2)) * 72, i = Math.floor(b) % 72, f = b - Math.floor(b);
+      const r = (tab[i] * (1 - f) + tab[(i + 1) % 72] * f) * (0.82 * (1 - u) + 0.08);
+      return toGround([Math.cos(a) * r, Math.sin(a) * r]);
+    };
+  };
+  const rings = SHAPES.map((o) => (u) => toGround(o(u)));
+  const fills = SHAPES.map(fillOf);
+  const PS = new THREE.Vector3(-0.15, 0, 0.0), CS = new THREE.Vector3(0.14, 0, 0.02);
+  joolDuo('몽당이와 그림', '몽당이가 그림(동그라미·하트·별·꽃)을 그리면 끄레용이 안을 빙글빙글 색칠', 11, (g) => {
+    const M = makeStub();
+    g.add(M.g);
+    return M;
+  }, (c, P, M, t, S) => {
+    const n = Math.floor(t / 11) % SHAPES.length, ring = rings[n], fill = fills[n]; // 바퀴마다 다음 그림
+    S.rings.forEach((L, i) => (L.line.visible = i === n));
+    S.fills.forEach((L, i) => (L.line.visible = i === n));
+    // 몽당이: 0~3.8 그림 그리고 제자리로
+    const um = drawFlip(M, c, t, ring, PS, 0, 2.2).u;
+    if (c < 0 || c >= 3.4) {
+      if (c < 3.8) { const k = (c - 3.4) / 0.4; M.root.position.lerpVectors(ring(1), PS, ease(k)); M.root.position.y = Math.sin(k * PI) * 0.02; }
+      else { M.root.position.copy(PS); M.root.rotation.y = 0.5; } // 끄레용이 칠하는 걸 지켜봄
+    }
+    // 끄레용: 지켜보다가 3.8~ 색칠, 다 칠하고 제자리로
+    if (c < 3.8) joolAt(P, CS, -0.5);
+    const uc = joolDraw(P, c, t, fill, CS, 3.8, 3.6);
+    if (c >= 8.6) {
+      if (c < 9.0) hopTo(P, fill(1), CS, (c - 8.6) / 0.4);
+      else joolAt(P, CS, -0.5);
+    }
+    // 다 그리고 둘이 뿌듯하게 폴짝폴짝
+    if (c > 9.1 && c < 10.4) {
+      const h = Math.abs(Math.sin((c - 9.1) * PI * 2.3));
+      P.hop(h);
+      M.root.position.y = h * 0.012;
+      P.shy(0.7, false);
+    }
+    reveal(S.rings[n], c < 0.8 ? 0 : um);
+    reveal(S.fills[n], c < 4.6 ? 0 : uc);
+  }, (g) => ({
+    rings: rings.map((p) => crayonLine(g, p, { N: 160, W: 0.0022, color: '#5c5c66' })), // 연필 선: 가늘고 회색
+    fills: fills.map((p) => crayonLine(g, p, { N: 500, W: 0.0048, opacity: 0.9 })),
+  }));
+}
+
+// ④ 쓱쓱이: 끄레용이 낙서하면 쓱쓱이가 지우려고 박박 → 크레파스라 안 지워지고 파랗게 번짐
+//    → 쓱쓱이 당황해서 더 박박 → 더 번지고 자기 몸까지 파래짐 → 시무룩 퇴장 / 끄레용은 키득키득
+{
+  const path = (u) => new THREE.Vector3(-0.1 + u * 0.18, 0, Math.sin(u * PI * 3) * 0.008); // 꼬불꼬불 가로줄
+  const SIDE = new THREE.Vector3(0.13, 0, -0.06);
+  const RUBBER_C = new THREE.Color('#f6f3ec'), SMUDGE_C = new THREE.Color('#b8cdf2');
+  joolDuo('쓱쓱이가 지움', '낙서를 지우려고 박박 → 크레파스라 번지기만 함 → 쓱쓱이 당황, 자기까지 파래짐', 11, (g) => {
+    const B = makeBanjjok();
+    g.add(B.g);
+    B.rubber = B.body.getObjectByName('몸');
+    B.sweat = [-1, 1].map((s) => { const d = mesh(ball(0.004, 10).scale(0.8, 1.3, 0.8), mat('#bfe8ff', 0.2), B.body, '땀'); d.userData.side = s; return d; });
+    return B;
+  }, (c, P, B, t, S) => {
+    B.sweat.forEach((d) => (d.visible = false));
+    // 끄레용: 0~3.8 낙서 → 비켜서서 구경 → 번지는 걸 보고 키득키득
+    const u = joolDraw(P, c, t, path, path(0), 0, 2.6);
+    if (c >= 3.8) {
+      if (c < 4.2) hopTo(P, path(1), SIDE, (c - 3.8) / 0.4);
+      else joolAt(P, SIDE, -1.0 * ease(clamp01((c - 4.2) / 0.4)));
+      if (c > 6.0 && c < 10.2) { // 키득키득: 몸을 들썩
+        P.body.position.y = Math.abs(Math.sin(t * 14)) * 0.004;
+        P.shy(0.6, false);
+      }
+    }
+    // 쓱쓱이: 2.6~5.8 지우며 따라감 → 깜짝 → 6.0~7.2 더 박박 → 시무룩, 7.6~ 퇴장
+    let eu = 0, smear2 = 0, tint = 0;
+    B.g.visible = c > 1.8 && c < 10.8;
+    B.body.rotation.y = PI / 2;
+    if (c < 2.6) {
+      const k = clamp01((c - 1.8) / 0.8);
+      B.move.position.set(THREE.MathUtils.lerp(-0.26, path(0).x, k), Math.abs(Math.sin(t * 16)) * 0.008, path(0).z);
+      blinkAt(B, t);
+    } else if (c < 5.8) {
+      eu = (c - 2.6) / 3.2;
+      const p = path(eu), rub = Math.sin(t * 30);
+      B.move.position.set(p.x + rub * 0.006, B.liftZ(rub * 0.1), p.z);
+      B.body.rotation.z = rub * 0.1;
+      B.eye(1.1, 0.35); // 끙차끙차
+      tint = eu * 0.4;
+    } else if (c < 6.1) { // 돌아보니 번져 있음: 깜짝
+      eu = 1;
+      B.move.position.set(path(1).x, Math.sin(((c - 5.8) / 0.3) * PI) * 0.016, path(1).z);
+      B.body.rotation.y = PI / 2 - ease((c - 5.8) / 0.3) * PI; // 뒤를 돌아봄
+      B.eye(1.5, 1.6);
+      B.mouth.rotation.z = PI;
+      tint = 0.4;
+    } else if (c < 7.3) { // 어떡해 어떡해: 앞을 보고 제자리 동동, 두리번두리번, 땀 뻘뻘
+      eu = 1;
+      tint = 0.4;
+      const k = c - 6.1;
+      B.move.position.set(path(1).x, Math.abs(Math.sin(t * 17)) * 0.014, path(1).z + 0.02 * ease(clamp01(k / 0.2)));
+      B.body.rotation.set(0, Math.sin(t * 11) * 0.55, Math.sin(t * 8.5) * 0.12);
+      B.eye(1.5, 1.6);
+      B.mouth.rotation.z = PI;
+      B.mouth.scale.setScalar(1.4 + Math.sin(t * 20) * 0.2);
+      B.sweat.forEach((d, i) => { // 양옆으로 땀방울이 톡톡 튐
+        const f = (k * 2.2 + i * 0.5) % 1, s = d.userData.side;
+        d.visible = true;
+        d.position.set(s * (0.03 + f * 0.02), 0.045 + Math.sin(f * PI) * 0.012, 0.01);
+        d.scale.setScalar(1 - f * 0.5);
+      });
+    } else if (c < 8.5) { // 정신없이 되돌아가며 더 박박 → 더 번짐
+      eu = 1;
+      const k = (c - 7.3) / 1.2, p = path(1 - k), rub = Math.sin(t * 40);
+      B.move.position.set(p.x + rub * 0.008, B.liftZ(rub * 0.14), p.z);
+      B.body.rotation.set(0, -PI / 2, rub * 0.14);
+      B.eye(1.3, 0.3);
+      smear2 = k;
+      tint = 0.4 + k * 0.6;
+    } else { // 시무룩 퇴장 (파래진 채)
+      eu = 1; smear2 = 1; tint = 1;
+      const k = clamp01((c - 8.9) / 1.8);
+      B.move.position.set(THREE.MathUtils.lerp(path(0).x, -0.32, k), Math.abs(Math.sin(t * 10)) * 0.005 * (k > 0), path(0).z + 0.04);
+      B.body.rotation.y = -PI / 2;
+      B.body.rotation.x = 0.15; // 고개 푹
+      B.eye(1, 0.5);
+    }
+    B.rubber.material.color.lerpColors(RUBBER_C, SMUDGE_C, tint); // 지금 쓰는 툰 재질에 바로
+    reveal(S.line, c < 0.8 ? 0 : u, eu); // 지운 데는 선이 사라지고
+    reveal(S.smear, eu); // 대신 넓게 번진 자국이 남음
+    reveal(S.smear2, smear2 > 0 ? 1 : 0, 1 - smear2); // 되돌아가며 더 넓게
+  }, (g) => ({
+    line: crayonLine(g, path),
+    smear: crayonLine(g, path, { W: 0.009, color: '#7fa6ee', opacity: 0.6 }),
+    smear2: crayonLine(g, path, { W: 0.015, color: '#9dbaf0', opacity: 0.4 }),
+  }));
+}
+
+// ⑤ 구구: 땅을 콕콕 쪼는 구구한테 끄레용이 살금살금 다가가 옆구리에 낙서 → 구구는 무신경해서 한 번 멍하니 보고 다시 콕콕
+//    → 낙서 묻은 채로 아장아장 가 버림 / 끄레용은 키득키득
+{
+  const G0 = new THREE.Vector3(0.06, 0, 0);
+  const A = 1.0, L = 0.098; // 끄레용이 기울 각도와 끝까지 길이
+  const LEAN_AT = new THREE.Vector3(G0.x - 0.034 - L * Math.sin(A), 0, 0); // 기울이면 끝이 구구 옆구리에 닿는 자리
+  const FROM = new THREE.Vector3(-0.22, 0, 0.04);
+  joolDuo('구구한테 낙서', '콕콕 쪼는 구구 배 한쪽을 몰래 파랗게 칠함 → 구구는 무신경해서 눈치 못 챔', 9.6, (g) => {
+    const G = makePigeon();
+    G.g.userData.pigeon = G;
+    g.add(G.g);
+    G.after = () => G.keepAbove(0);
+    return G;
+  }, (c, P, G, t, S) => {
+    // 구구: 줄곧 콕콕 (3.3 초쯤 한 번 멍하니 돌아봄) → 6.2~ 아장아장 오른쪽으로
+    G.g.visible = c < 9.4;
+    foldWings(G, 1);
+    G.fly.position.set(G0.x, STAND_Y, G0.z);
+    G.fly.rotation.y = 0;
+    G.body.rotation.x = -0.12;
+    if (c < 6.2) {
+      const glance = bump(c, 3.2, 4.0);
+      const peck = Math.max(0, Math.sin(t * 8)) * (1 - glance);
+      G.body.rotation.x = -0.12 + peck * 0.55;
+      G.head.rotation.y = -0.7 * glance; // 끄레용 쪽을 멍하니
+      G.head.rotation.x = -0.1 * glance;
+    } else {
+      const k = (c - 6.2) / 3.2;
+      G.fly.position.x = G0.x + k * 0.3;
+      G.fly.rotation.y = PI / 2;
+      waddle(G, t * PI * 2.6, 1);
+    }
+    gBlink(G, t);
+    // 배 한쪽 색칠: 칠한 만큼 위에서부터 한 줄씩 파래짐 (구구 몸에 붙어 같이 움직임)
+    const prog = clamp01((c - 1.6) / 3.0);
+    S.paint.geometry.setDrawRange(0, Math.floor(prog * S.rows) * S.perRow);
+    // 끄레용: 살금살금 → 기울여 끝으로 박박 → 다시 서서 키득키득
+    if (c < 1.2) {
+      const k = c / 1.2, n = Math.min(2, Math.floor(k * 3)), f = k * 3 - n; // 세 번 살금 폴짝
+      const a = FROM.clone().lerp(LEAN_AT, n / 3), b = FROM.clone().lerp(LEAN_AT, (n + 1) / 3);
+      hopTo(P, a, b, f, 0.01);
+      P.root.rotation.y = PI / 2 * 0.5;
+    } else {
+      joolAt(P, LEAN_AT);
+      let lean = 0;
+      if (c < 1.6) lean = ease((c - 1.2) / 0.4) * A;
+      else if (c < 4.6) { lean = A + Math.sin(t * 20) * 0.05; P.root.position.z = Math.sin(t * 6) * 0.012; P.shy(0.4, false); }
+      else if (c < 5.0) lean = (1 - ease((c - 4.6) / 0.4)) * A;
+      P.tilt.rotation.z = -lean; // 오른쪽(구구 쪽)으로 기울임
+      P.root.position.y = Math.abs(Math.sin(lean)) * 0.024;
+      if (c > 3.2 && c < 4.0) { P.tilt.rotation.z = -lean * (1 - bump(c, 3.2, 4.0) * 0.6); P.shy(1, true); } // 구구가 돌아보자 뜨끔
+      if (c > 5.0) { // 키득키득
+        P.root.rotation.y = -0.4;
+        P.body.position.y = Math.abs(Math.sin(t * 14)) * 0.004;
+        P.shy(0.7, false);
+      }
+    }
+  }, (g, G) => {
+    // 구구 배 왼쪽(-x, 끄레용 쪽)에 씌운 크레파스 칠: 몸통 단면(옆 0.034·위아래 0.031, 앞뒤 0.042)보다 살짝 큰 타원 껍질 한 조각
+    const tex = canvasTexture('pigeonPaint', 128, 128, (c, w, h) => {
+      let s = 7;
+      const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+      c.lineCap = 'round';
+      for (let i = 0; i < 90; i++) { // 비스듬히 박박 칠한 결
+        c.strokeStyle = `rgba(70,120,230,${0.65 + r() * 0.35})`;
+        c.lineWidth = 5 + r() * 6;
+        const x = r() * w * 1.4 - w * 0.2, y = r() * h;
+        c.beginPath(); c.moveTo(x, y); c.lineTo(x + 30 + r() * 20, y - 12 - r() * 10); c.stroke();
+      }
+      c.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < 900; i++) { c.fillStyle = `rgba(0,0,0,${0.2 + r() * 0.5})`; c.fillRect(r() * w, r() * h, 1 + r(), 1); }
+    });
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    const ink = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 });
+    const COLS = 20, ROWS = 12;
+    // phi -0.95~0.95: 몸 왼쪽 앞뒤, theta 1.35~2.55: 날개 바로 밑에서 배 아래까지
+    const geo = new THREE.SphereGeometry(1, COLS, ROWS, -0.95, 1.9, 1.35, 1.2).scale(0.0352, 0.0322, 0.043).translate(0, 0, -0.005);
+    const paint = mesh(geo, ink, G.body, '색칠');
+    paint.castShadow = false;
+    paint.userData.noOutline = true;
+    return { paint, rows: ROWS, perRow: COLS * 6 }; // 한 줄 = 칸 COLS 개 × 삼각형 둘
+  });
+}
+
+// ⑥ 깍깍이: 날아와 부리로 종이옷을 쏙 벗겨 물고 빙글빙글 날며 놀림 → 끄레용은 맨몸이라 부끄러워 동동
+//    → 깍깍이가 머리 위에서 툭 던져 주면 종이옷이 쏙 씌워짐 → 깍깍 웃고 날아감
+{
+  const FROM = new THREE.Vector3(-0.45, 0.3, 0.3), AWAY = new THREE.Vector3(0.5, 0.45, -0.35);
+  const GRAB = new THREE.Vector3(0, 0.05, 0.026), PULL = new THREE.Vector3(0, 0.17, 0.026), DROP = new THREE.Vector3(0, 0.22, 0.01);
+  const circle = (a) => new THREE.Vector3(Math.sin(a) * 0.14, 0.18 + Math.sin(a * 2) * 0.012, Math.cos(a) * 0.14);
+  const v = new THREE.Vector3(), w = new THREE.Vector3();
+  joolDuo('깍깍이가 벗겨 감', '종이옷을 쏙 벗겨 물고 날아다니며 놀림 → 머리 위에서 툭 던져 줌', 9.8, (g) => {
+    const K = makeKkakkak();
+    K.g.userData.pigeon = K; // 시안 화면의 땅 위로 올리기·자세 잇기를 같이 받음
+    g.add(K.g);
+    K.prep = (t) => kReset(K, t);
+    return K;
+  }, (c, P, K, t) => {
+    // 끄레용: 벗겨지자 화들짝 당황(o 입, 땀, 바들바들), 맨몸이라 동동 (깍깍이를 따라 돌아봄)
+    //    → 씌워지면 찌부 → 눈 감고 후유~ 안심 (부풀었다 푹 꺼짐)
+    if (c > 1.8 && c < 6.4) {
+      P.shy(1, true);
+      P.face('gasp');
+      if (c > 2.1) P.drip(t);
+      P.tilt.rotation.z = Math.sin(t * 24) * 0.035; // 바들바들
+      if (c > 2.5 && c < 5.4) {
+        const a = ((c - 2.5) / 2.9) * PI * 2;
+        P.root.rotation.y = a; // 깍깍이를 따라 빙글
+        P.root.position.y = Math.abs(Math.sin(t * 9)) * 0.008; // 돌려 달라고 동동
+      }
+      if (c > 1.8 && c < 2.1) P.body.position.y = Math.sin(((c - 1.8) / 0.3) * PI) * 0.02;
+    }
+    if (c >= 6.4 && c < 6.7) { const s = Math.sin(((c - 6.4) / 0.3) * PI); P.body.scale.set(1 + s * 0.1, 1 - s * 0.15, 1 + s * 0.1); }
+    if (c >= 6.7) {
+      P.shy(0.6 * clamp01(1 - (c - 8.6) / 1.0), false);
+      if (c < 8.8) P.face('calm');
+      const inh = bump(c, 6.8, 7.3), exh = bump(c, 7.3, 8.1); // 숨을 들이켰다가 후유~
+      P.body.scale.set(1 + inh * 0.05 - exh * 0.03, 1 + inh * 0.06 - exh * 0.08, 1 + inh * 0.05 - exh * 0.03);
+      P.tilt.rotation.x = -0.12 * inh + 0.1 * exh; // 내쉴 때 살짝 앞으로 푹
+    }
+    // 부리 끝이 target(끄레용 자리 기준)에 오도록 깍깍이 몸을 옮김
+    const beakTo = (target) => {
+      K.g.updateMatrixWorld(true);
+      K.beak.getWorldPosition(v);
+      P.g.updateMatrixWorld(true);
+      w.copy(target);
+      P.g.localToWorld(w);
+      K.g.worldToLocal(v);
+      K.g.worldToLocal(w);
+      K.fly.position.add(w.sub(v));
+    };
+    K.g.visible = c < 8.4;
+    let target, yaw, carry = c >= 1.7 && c < 6.0;
+    if (c < 1.5) { // 날아옴
+      const k = ease(c / 1.5);
+      target = FROM.clone().lerp(GRAB, k);
+      target.y += Math.sin(k * PI) * 0.05;
+      yaw = THREE.MathUtils.lerp(Math.atan2(-FROM.x, -FROM.z), PI, ease(clamp01((c - 0.9) / 0.6)));
+    } else if (c < 1.8) { target = GRAB.clone(); yaw = PI; } // 부리로 종이옷 위 가장자리를 콱
+    else if (c < 2.3) { target = GRAB.clone().lerp(PULL, ease((c - 1.8) / 0.5)); yaw = PI; } // 쭉 끌어올려 머리 위로 쏙
+    else if (c < 2.5) { target = PULL.clone().lerp(circle(0), ease((c - 2.3) / 0.2)); yaw = PI; }
+    else if (c < 5.4) { // 빙글빙글 놀림
+      const a = ((c - 2.5) / 2.9) * PI * 2;
+      target = circle(a);
+      yaw = Math.atan2(Math.cos(a), -Math.sin(a));
+    } else if (c < 5.9) { target = circle(PI * 2).lerp(DROP, ease((c - 5.4) / 0.5)); yaw = PI; }
+    else if (c < 6.4) { target = DROP.clone(); yaw = PI; } // 머리 위에서 툭 → 깍깍
+    else { // 날아감
+      const k = ease(clamp01((c - 6.4) / 1.8));
+      target = DROP.clone().lerp(AWAY, k);
+      yaw = THREE.MathUtils.lerp(PI, Math.atan2(AWAY.x, AWAY.z), ease(clamp01((c - 6.4) / 0.4)));
+    }
+    K.fly.position.set(0, 0, 0);
+    K.fly.rotation.y = yaw;
+    const hover = (c > 1.5 && c < 2.3) || (c > 5.4 && c < 6.4);
+    K.flap(t, hover ? 24 : 18, 1.0, hover ? 0.3 : 0.2);
+    K.body.rotation.x = hover ? -0.5 : 0.15; // 제자리에서 파닥일 땐 몸을 세움
+    K.feet.forEach((f) => (f.rotation.x = hover ? -0.2 : 1.3));
+    beakTo(target);
+    if (c > 5.9 && c < 6.4) caw(K, t, 0.25); // 깍깍깍
+    K.glare();
+    // 종이옷: 물려 있는 동안 부리 밑에 대롱대롱 (끄레용 몸을 다 빠져나가기 전엔 몸통 축을 따라 올라감)
+    if (carry) {
+      K.g.updateMatrixWorld(true);
+      K.beak.getWorldPosition(v);
+      P.tilt.updateMatrixWorld(true);
+      P.tilt.worldToLocal(v);
+      const y = Math.max(P.UP, v.y - 0.038);
+      const free = clamp01((y - P.TIP) / 0.03); // 머리 끝을 넘어서야 부리 쪽으로 따라감
+      P.wrapper.position.set(v.x * free, y, v.z * free);
+      P.wrapper.rotation.z = Math.sin(t * 6) * 0.25 * free; // 대롱대롱
+    } else if (c >= 6.0 && c < 6.4) { // 툭 떨어져 쏙 씌워짐
+      const k = (c - 6.0) / 0.4;
+      P.wrapper.position.y = THREE.MathUtils.lerp(DROP.y - 0.038, P.UP, k * k);
+    }
+  });
+}
+
+// ── 크레파스 한 자루 몬스터 시안 ──
+const crayon = [];
+const waxStreak = canvasTexture('waxStreak', 128, 128, (c, w, h) => { // 크레파스 겉면의 세로 결 (색에 곱해짐)
+  let s = 11;
+  const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  c.fillStyle = '#fff';
+  c.fillRect(0, 0, w, h);
+  for (let i = 0; i < 70; i++) {
+    c.fillStyle = r() < 0.7 ? `rgba(0,0,0,${0.04 + r() * 0.1})` : `rgba(255,255,255,${0.3 + r() * 0.4})`;
+    c.fillRect(r() * w, 0, 0.6 + r() * 2.4, h);
+  }
+});
+const wrapTex = (color, dark) => canvasTexture(`crayonWrap${color}`, 256, 64, (c, w, h) => { // 종이옷: 위아래 색 띠 + 물결 줄
+  c.fillStyle = '#fff4dc';
+  c.fillRect(0, 0, w, h);
+  c.fillStyle = color;
+  c.fillRect(0, 0, w, 9);
+  c.fillRect(0, h - 9, w, 9);
+  c.strokeStyle = dark;
+  c.lineWidth = 2.5;
+  for (const y of [20, 44]) {
+    c.beginPath();
+    for (let x = 0; x <= w; x += 4) c.lineTo(x, y + Math.sin(x / 8) * 3);
+    c.stroke();
+  }
+});
+const LEG = 0.016;
+// 크레파스 한 자루: tip 은 cone(새것) · worn(비스듬히 닳음) · broken(부러진 단면) · none
+function makeCrayon(color, dark, { len = 0.068, tip = 'cone', r = 0.022, wrap = [0.01, 0.052], legs = true } = {}) {
+  const who = new THREE.Group(), body = new THREE.Group();
+  who.add(body);
+  body.position.y = legs ? LEG : 0;
+  const wax = new THREE.MeshStandardMaterial({ color, roughness: 0.8, map: waxStreak, bumpMap: waxStreak, bumpScale: 0.4 });
+  const stick = new THREE.CylinderGeometry(r, r, len, 28).translate(0, len / 2, 0);
+  if (tip === 'broken') jagged(stick, len);
+  mesh(stick, wax, body, '몸');
+  if (tip === 'cone' || tip === 'worn') {
+    const geo = new THREE.CylinderGeometry(r * 0.3, r, 0.024, 28, 6).translate(0, len + 0.012, 0);
+    if (tip === 'worn') { // 한쪽으로만 칠해서 비스듬히 닳은 끝
+      const p = geo.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setY(i, Math.min(p.getY(i), len + 0.009 + p.getX(i) * 0.5));
+      geo.computeVertexNormals();
+    }
+    mesh(geo, wax, body, '몸');
+  }
+  const wr = r * 1.08;
+  const paper = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.95, side: THREE.DoubleSide, map: wrapTex(color, dark) });
+  mesh(new THREE.CylinderGeometry(wr, wr, wrap[1] - wrap[0], 28, 1, true).translate(0, (wrap[0] + wrap[1]) / 2, 0), paper, body, '종이옷');
+  const fy = (wrap[0] + wrap[1]) / 2 + 0.004;
+  dotEyes(body, { x: 0.009, y: fy, z: wr + 0.001, r: 0.0062 });
+  blush(body, { x: 0.016, y: fy - 0.009, z: wr - 0.003, r: 0.0055 });
+  const mouth = smallMouth(body, { y: fy - 0.009, z: wr + 0.001, r: 0.0034 });
+  const feet = [];
+  if (legs) for (const s of [-1, 1]) {
+    const hip = new THREE.Group();
+    hip.position.set(s * 0.009, LEG, 0);
+    who.add(hip);
+    const lm = mat(dark, 0.7);
+    mesh(new THREE.CylinderGeometry(0.0032, 0.0032, LEG, 8).translate(0, -LEG / 2, 0), lm, hip, '다리');
+    mesh(ball(0.0055, 12).scale(1, 0.6, 1.4).translate(0, -LEG + 0.003, 0.003), lm, hip, '발');
+    feet.push(hip);
+  }
+  return { who, body, feet, wax, paper, mouth, wr };
+}
+// 부러진 단면: 높이 y 에 있는 점들을 각도에 따라 들쭉날쭉 (위·아래 토막에 같은 값을 써서 서로 맞물림)
+function jagged(geo, y) {
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    if (Math.abs(p.getY(i) - y) > 1e-6) continue;
+    const a = Math.atan2(p.getZ(i), p.getX(i));
+    p.setY(i, y + (Math.sin(a * 5) * 0.5 + 0.5) * 0.006 + Math.sin(a * 13) * 0.0015);
+  }
+  geo.computeVertexNormals();
+}
+const walkLegs = (feet, t, sp = 10, amp = 0.5) => feet.forEach((f, i) => (f.rotation.x = Math.sin(t * sp + i * PI) * amp));
+
+// 1. 새크레파스: 아직 한 번도 안 써서 끝이 뾰족. 자랑하려고 쭉 늘어나며 콩콩
+crayon.push(() => {
+  const g = new THREE.Group();
+  const C = makeCrayon('#e8443a', '#9e2a22');
+  g.add(C.who);
+  return {
+    g, name: '새크레파스', desc: '한 번도 안 써서 뾰족, 그게 자랑',
+    update(t) {
+      const hop = Math.max(0, Math.sin(t * PI * 2));
+      C.who.position.y = hop * 0.014;
+      C.body.scale.set(1 - hop * 0.05, 1 + hop * 0.1, 1 - hop * 0.05);
+      C.who.rotation.x = -0.12 - hop * 0.08; // 거만하게 뒤로 젖힘
+      C.feet.forEach((f, i) => (f.rotation.x = hop * 0.5 * (i ? 1 : -1)));
+    },
+  };
+});
+
+// 2. 갸웃크레파스: 한쪽으로만 칠해서 끝이 비스듬히 닳음. 그 바람에 늘 고개가 갸웃
+crayon.push(() => {
+  const g = new THREE.Group();
+  const C = makeCrayon('#ff8a3d', '#b5561a', { tip: 'worn', len: 0.058, wrap: [0.008, 0.046] });
+  g.add(C.who);
+  return {
+    g, name: '갸웃크레파스', desc: '끝이 비스듬히 닳아 늘 갸웃',
+    update(t) {
+      const c = t % 3;
+      const peck = c > 2.2 ? Math.sin((c - 2.2) / 0.8 * PI * 2) : 0; // 바닥을 콕콕 (칠해 보려는 것)
+      C.who.rotation.z = 0.18 + Math.sin(t * 1.5) * 0.06;
+      C.who.rotation.x = Math.max(0, peck) * 0.45;
+      C.who.position.y = 0;
+    },
+  };
+});
+
+// 3. 몽당크레파스: 너무 써서 손톱만 해짐. 벗겨진 종이 한 자락이 걸을 때마다 펄럭
+crayon.push(() => {
+  const g = new THREE.Group();
+  const C = makeCrayon('#f5c623', '#b8860b', { tip: 'worn', len: 0.03, wrap: [0.003, 0.03] });
+  g.add(C.who);
+  const flap = new THREE.Group();
+  flap.position.set(C.wr, LEG + 0.03, -0.004);
+  C.who.add(flap);
+  const strip = mesh(new THREE.PlaneGeometry(0.014, 0.022).translate(0.006, -0.011, 0), C.paper, flap, '종이옷');
+  strip.rotation.y = -0.5;
+  return {
+    g, name: '몽당크레파스', desc: '손톱만 해짐, 종이가 벗겨져 펄럭',
+    update(t) {
+      C.who.rotation.z = Math.sin(t * 9) * 0.14; // 짧은 다리로 뒤뚱
+      C.who.position.y = Math.abs(Math.sin(t * 9)) * 0.004;
+      walkLegs(C.feet, t, 9, 0.6);
+      flap.rotation.z = 0.5 + Math.sin(t * 18) * 0.35;
+    },
+  };
+});
+
+// 4. 두동강크레파스: 부러진 윗토막을 머리에 얹고 다니는데 자꾸 떨어뜨림
+crayon.push(() => {
+  const g = new THREE.Group();
+  const len = 0.046;
+  const C = makeCrayon('#3f7be0', '#244f9e', { tip: 'broken', len, wrap: [0.006, 0.04] });
+  g.add(C.who);
+  const top = new THREE.Group();
+  g.add(top);
+  const piece = new THREE.CylinderGeometry(0.022, 0.022, 0.02, 28).translate(0, 0.01, 0);
+  jagged(piece, 0);
+  mesh(piece, C.wax, top, '몸');
+  mesh(new THREE.CylinderGeometry(0.0066, 0.022, 0.024, 28).translate(0, 0.032, 0), C.wax, top, '몸');
+  const ON = new THREE.Vector3(0, LEG + len + 0.004, 0), OFF = new THREE.Vector3(0.05, 0.022, 0.01);
+  return {
+    g, name: '두동강크레파스', desc: '부러진 윗토막을 자꾸 떨어뜨림',
+    update(t) {
+      const c = t % 4.2;
+      let k = 0; // 0 = 머리 위, 1 = 바닥
+      if (c > 2 && c < 2.5) k = ease((c - 2) / 0.5);
+      else if (c >= 2.5 && c < 3.7) k = 1;
+      else if (c >= 3.7) k = 1 - ease((c - 3.7) / 0.5);
+      top.position.lerpVectors(ON, OFF, k);
+      top.position.y += Math.sin(k * PI) * 0.02; // 떨어질 때 포물선
+      top.rotation.z = -k * PI / 2 + (k === 0 ? Math.sin(t * 5) * 0.08 : 0);
+      top.position.x += k === 0 ? Math.sin(t * 5) * 0.002 : 0;
+      C.who.rotation.z = -Math.min(1, k * 2) * 0.28; // 떨어진 토막을 내려다봄
+      C.who.rotation.x = k === 1 ? 0.12 : 0;
+      C.mouth.rotation.z = k > 0.5 ? 0 : PI; // 시무룩
+    },
+  };
+});
+
+// 5. 데굴크레파스: 서 있질 못하고 데굴데굴. 동그래서 멈추고 싶어도 못 멈춤
+crayon.push(() => {
+  const g = new THREE.Group();
+  const C = makeCrayon('#3fae55', '#23733a', { legs: false });
+  const roller = new THREE.Group(), spin = new THREE.Group();
+  roller.rotation.z = PI / 2;
+  roller.position.y = C.wr;
+  g.add(roller);
+  roller.add(spin);
+  spin.add(C.who);
+  C.who.position.y = -0.046; // 크레파스 가운데가 굴대
+  return {
+    g, name: '데굴크레파스', desc: '동그래서 서지도 멈추지도 못함',
+    update(t) {
+      const a = Math.sin(t * 1.3) * 3.4 + PI / 2; // 왔다 갔다 구름 (얼굴이 앞을 볼 때 쉬어 감)
+      spin.rotation.y = a;
+      roller.position.z = -(a - PI / 2) * C.wr;
+    },
+  };
+});
+
+// 6. 낙서크레파스: 할 줄 아는 건 땅바닥에 낙서뿐. 끝으로 그리려면 물구나무를 서야 해서 얼굴이 빨개짐
+crayon.push(() => {
+  const g = new THREE.Group();
+  const C = makeCrayon('#8a52cc', '#5a2f91');
+  const hold = new THREE.Group();
+  g.add(hold);
+  hold.add(C.who);
+  C.who.rotation.z = PI;
+  C.who.position.y = LEG + 0.068 + 0.024; // 뾰족한 끝이 hold 자리(땅)에 닿게
+  const path = (u) => new THREE.Vector3(-0.06 + u * 0.12, 0.0012, Math.sin(u * PI * 4) * 0.014);
+  const dots = [];
+  for (let i = 0; i < 70; i++) {
+    const d = mesh(new THREE.CylinderGeometry(0.0034, 0.0034, 0.002, 10), C.wax, g, '낙서');
+    d.position.copy(path(i / 69));
+    d.userData.noOutline = true;
+    dots.push(d);
+  }
+  return {
+    g, name: '낙서크레파스', desc: '물구나무 서서 땅에 낙서, 얼굴 빨개짐',
+    update(t) {
+      const u = Math.min(1, (t % 5) / 4); // 4초 동안 긋고 1초 쉼 (다음 바퀴엔 지워짐)
+      hold.position.copy(path(u)).setY(0);
+      hold.rotation.z = Math.sin(t * 3) * 0.12;
+      hold.rotation.x = Math.cos(u * PI * 4) * 0.25; // 구불구불 따라 몸이 기울어짐
+      dots.forEach((d, i) => (d.visible = i / 69 <= u));
+      walkLegs(C.feet, t, 7, 0.7); // 허공에서 버둥
+    },
+  };
+});
+
 // ── 배치 ──
-const SET = new URLSearchParams(location.search).get('set');
+const SET =new URLSearchParams(location.search).get('set');
 const SETS = {
   basic: { list: monsters, title: '쪼렙 몬스터 시안', link: '?' },
   stationery: { list: stationery, title: '필기도구 몬스터 시안', link: '?set=stationery' },
@@ -3356,13 +4354,16 @@ const SETS = {
   kkakkakLook: { list: kkakkakLook.map(pigeonLine), title: '깍깍이 체형 시안', link: '?set=kkakkakLook', cols: 4, spacing: 0.62, side: true, dist: 3.4 }, // 몸 비율이 잘 보이게 옆모습, 두 줄을 앞에서
   kkakkakWith: { list: kkakkakWith.map(pigeonLine), title: '깍깍이 어울림 시안', link: '?set=kkakkakWith', spacing: 1.3, dist: 7, lookY: 0.5 }, // 날개콩·구구가 멀리 도망가고 나무도 있어 넓게 (하나씩 크게 보려면 &only=이름)
   kkakkakGame: { list: kkakkakGame, title: '게임용 깍깍이 점검', link: '?set=kkakkakGame', cols: 6, side: true, dist: 3.4 },
+  jooljoolWith: { list: jooljoolWith.map(pigeonLine), title: '끄레용 어울림 시안', link: '?set=jooljoolWith', spacing: 0.75 },
+  jooljool: { list: jooljool, title: '끄레용 모션 시안', link: '?set=jooljool', cols: 4 },
+  crayon: { list: crayon, title: '크레파스 몬스터 시안', link: '?set=crayon', dist: 2.6 }, // 한 줄로 앞에서 봐야 얼굴·자세가 보임
   guguHaak: { list: guguHaak.map(pigeonLine), title: '구구·하악냥 어울림 시안', link: '?set=guguHaak', spacing: 0.9 }, // 둘이 같이 뛰노는 자리가 넓어 띄워 놓음
 };
 const cur = SETS[SET] ? SET : 'basic';
 // 시안 목록은 비슷한 종류끼리 한 줄씩 (새 세트를 만들면 여기 알맞은 줄에 넣기)
 const GROUPS = [
   ['쪼렙·들판', ['basic', 'field']],
-  ['학용품', ['stationery', 'school', 'eraser']],
+  ['학용품', ['stationery', 'school', 'eraser', 'crayon']],
   ['반쪽이', ['banjjok', 'banjjokEyes']],
   ['고양이', ['cat', 'haak', 'haakEyes']],
   ['비둘기', ['pigeon', 'gugu', 'guguWith', 'guguHaak']],

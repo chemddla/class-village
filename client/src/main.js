@@ -710,6 +710,8 @@ const fieldMonsters = FIELD_MONSTERS.map((spot, i) => createPlazaMonsters(scene,
 fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[3], r: FIELD_MONSTERS[3].r / 2, kind: 'gugu', phase: 3.7, perches: guguPerches }));
 // 들판 깍깍이 (공격형 까치): 날개콩 자리 안쪽 작은 원에서 깡총깡총 텃세, 나무·머리에 앉거나 멀리 높이 날아갔다 옴
 fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[4], r: FIELD_MONSTERS[4].r / 2, kind: 'kkakkak', phase: 6.1, perches: guguPerches }));
+// 들판 끄레용 (크레파스): 몽당연필 자리 안쪽 작은 원
+fieldMonsters.push(createPlazaMonsters(scene, { ...monsterOpts, ...FIELD_MONSTERS[1], r: FIELD_MONSTERS[1].r / 2, kind: 'kkreyong', phase: 9.4 }));
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
 const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters);
@@ -1915,7 +1917,8 @@ function attach(r) {
       plazaMonsters = [createPlazaMonsters(scene, monsterOpts), createPlazaMonsters(scene, { ...monsterOpts, kind: 'mongdang', phase: 11 }),
         createPlazaMonsters(scene, { ...monsterOpts, kind: 'banjjok', phase: 5.5 }), createPlazaMonsters(scene, { ...monsterOpts, kind: 'haak', phase: 16.5, ...preyOpts }),
         createPlazaMonsters(scene, { ...monsterOpts, kind: 'gugu', phase: 8.2, perches: guguPerches }),
-        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkakkak', phase: 13.4, perches: guguPerches })]; // 깍깍이: 공격형이라 다가가면 쫓아옴
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkakkak', phase: 13.4, perches: guguPerches }),
+        createPlazaMonsters(scene, { ...monsterOpts, kind: 'kkreyong', phase: 19.6 })]; // 깍깍이: 공격형이라 다가가면 쫓아옴 · 끄레용: 도망형 크레파스
       for (const m of plazaMonsters) m.root.visible = !onField;
     }
   });

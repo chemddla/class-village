@@ -11,6 +11,7 @@ import { createBanjjok } from './banjjok.js';
 import { createHaaknyang, swatTaps } from './haaknyang.js';
 import { createGugu } from './gugu.js';
 import { createKkakkak, KKAK_JAB } from './kkakkak.js';
+import { createKkreyong } from './kkreyong.js';
 import { canvasTexture } from '../villager/textures.js';
 
 // 몬스터 종류: 만드는 함수 · 몸 반지름(시안 크기) · 일정의 특기 칸에 하는 동작 · 기본 성격 · size(크기 배율, 없으면 1) · shadow(발밑 그림자 좌우·앞뒤 배율, 없으면 동그랗게)
@@ -32,6 +33,8 @@ const KINDS = {
   kkakkak: { create: createKkakkak, r: 0.03, special: 'caw', temper: 'aggro', size: 0.85, shadow: [0.8, 1.2],
     plan: [['walk', 3], ['idle', 2.5], ['special', 3], ['walk', 4], ['idle', 2], ['walk', 3], ['special', 3], ['idle', 2.5]],
     flies: { speed: 3.4, chance: 0.1, cool: 7, far: 0.5, farDist: [20, 34], farArc: 5, nearArc: 1.0 } }, // 나들이 설정 (없는 값은 구구 값)
+  // 끄레용(크레파스): 도망형. 콩콩 다니다 물구나무 서서 바닥에 빙글빙글 낙서, 가만히 있으면 종이옷이 줄줄 흘러내림
+  kkreyong: { create: createKkreyong, r: 0.025, special: 'scribble', temper: 'flee', size: 1.3 },
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤
@@ -169,6 +172,97 @@ const BANJJOK_TOP = 0.02; // 반쪽이 몸 가운데에서 윗면까지 (반쪽�
 const DUO_PAIRS = {
   mongdang: [['banjjok', 'scrub'], ['haak', 'tip'], ['nalgae', 'wings']],
   banjjok: [['nalgae', 'lift'], ['haak', 'nap', true]],
+  kkreyong: [['nalgae', 'picture'], ['haak', 'poke'], ['mongdang', 'color'], ['banjjok', 'smear'], ['gugu', 'paint']], // 깍깍이 짝(peel)은 깍깍이 나들이에서
+};
+// ── 끄레용 합동 (그림 그려 주기 · 하악냥 툭툭 · 몽당연필 그림 색칠 · 반쪽이가 지우다 번짐 · 구구 배 칠하기 · 깍깍이가 종이옷 벗겨 감) ──
+const KK_DUOS = new Set(['picture', 'poke', 'color', 'smear', 'paint', 'peel']);
+const CRAYON = 0x5b8ff0;
+// 땅 자국: [첫째 marks, 둘째 marks2] 설정 — color: 연필 테두리 + 크레파스 색칠 · smear: 크레파스 낙서 + 지우개로 번진 얼룩
+const KK_MARKS = { picture: [{ color: CRAYON }], color: [{}, { color: CRAYON, r: 0.03 }], smear: [{ color: CRAYON }, { color: 0xb8cdf2, r: 0.055 }] };
+const FILL_GAP = 0.02; // 색칠 점 사이 (m)
+const PAINT_TIME = 5; // 구구 배를 다 칠하는 데 (초)
+const KK_PEEL_GAP = 0.075; // 깍깍이가 끄레용 옆에 내려앉는 거리 (깍깍이 크기 기준)
+// 고리 하나: 가운데 (cx, cz) · 반지름 rx·rz · a0 에서 시작 (첫 점은 펜을 들고 감)
+const ring = (cx, cz, rx, rz, a0, n) => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (i / n) * Math.PI * 2; return { x: cx + Math.cos(a) * rx, z: cz + Math.sin(a) * rz, pen: i > 0 }; });
+// 날개콩 그림 (가운데 기준 x 옆·z 앞, m): 콩 몸 → 왼날개 → 오른날개 → 눈 둘
+const PICTURE = (() => {
+  const RX = 0.34, RZ = 0.27, WR = 0.12;
+  return [...ring(0, 0, RX, RZ, Math.PI, 60), ...ring(-RX - WR, 0, WR, WR * 1.3, 0, 30), ...ring(RX + WR, 0, WR, WR * 1.3, Math.PI, 30),
+    ...ring(-0.1, -0.07, 0.035, 0.035, 0, 12), ...ring(0.1, -0.07, 0.035, 0.035, 0, 12)];
+})();
+// 몽당연필이 그리는 테두리 (반지름 1 언저리, 각도 a → x·z): 동그라미 · 하트 · 별 · 꽃
+const SHAPES = [
+  (a) => [Math.cos(a), Math.sin(a)],
+  (a) => [Math.sin(a) ** 3, 0.2 - (13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a)) / 16],
+  (a) => {
+    const k = (a / (Math.PI * 2)) * 10, i = Math.floor(k), f = k - i;
+    const v = (j) => { const r = j % 2 ? 0.45 : 1.05, b = (j / 10) * Math.PI * 2 - Math.PI / 2; return [Math.cos(b) * r, Math.sin(b) * r]; };
+    const p = v(i), q = v(i + 1);
+    return [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f];
+  },
+  (a) => { const r = 0.62 + 0.38 * Math.abs(Math.cos(2.5 * a)); return [Math.cos(a) * r, Math.sin(a) * r]; },
+];
+// 모양 테두리 길과 그 안을 바깥부터 빙글빙글 메우는 색칠 길 (가운데 cx·cz, 크기 R m)
+function shapePaths(shape, cx, cz, R) {
+  const edge = Array.from({ length: 121 }, (_, i) => { const [x, z] = shape((i / 120) * Math.PI * 2); return { x: cx + x * R, z: cz + z * R, pen: i > 0 }; });
+  const BINS = 72, rad = new Array(BINS).fill(0); // 각도마다 테두리까지 거리
+  for (let i = 0; i < 360; i++) {
+    const [x, z] = shape((i / 360) * Math.PI * 2), b = Math.floor((Math.atan2(z, x) / (Math.PI * 2) + 1) * BINS) % BINS;
+    rad[b] = Math.max(rad[b], Math.hypot(x, z));
+  }
+  for (let i = 0; i < BINS; i++) if (!rad[i]) rad[i] = rad[(i + 1) % BINS] || rad[(i + BINS - 1) % BINS];
+  const fill = Array.from({ length: 301 }, (_, i) => {
+    const s = i / 300, a = s * Math.PI * 2 * 5, b = Math.floor(((a / (Math.PI * 2)) % 1) * BINS) % BINS, r = (rad[b] * 0.82 * (1 - s) + 0.04) * R;
+    return { x: cx + Math.cos(a) * r, z: cz + Math.sin(a) * r, pen: i > 0 };
+  });
+  return { edge, fill };
+}
+console.assert(shapePaths(SHAPES[0], 0, 0, 1).fill[0].x > 0.8 && Math.abs(shapePaths(SHAPES[2], 0, 0, 1).edge[0].z + 1.05) < 1e-9, 'shapePaths: 바깥에서 시작 · 별은 위 꼭짓점부터');
+// 반쪽이가 지울 크레파스 낙서: 앞으로 나아가며 빙글빙글 (끄레용 기준 x 옆·z 앞, m)
+const SCRIBBLE = Array.from({ length: 91 }, (_, i) => { const s = i / 90, a = s * Math.PI * 2 * 5; return { x: Math.cos(a) * 0.14, z: 0.2 + s * 0.8 + Math.sin(a) * 0.16, pen: i > 0 }; });
+// 크기 기준 길을 (cx, cz) 에서 h 쪽(앞)을 보게 놓음
+const place = (path, cx, cz, h) => {
+  const fx = Math.sin(h), fz = Math.cos(h), rx = Math.cos(h), rz = -Math.sin(h);
+  return path.map((p) => ({ x: cx + rx * p.x + fx * p.z, z: cz + rz * p.x + fz * p.z, pen: p.pen }));
+};
+// 구구 배에 칠하는 크레파스 (구구 몸 기준, 시안과 같음)
+const PAINT_COLS = 20, PAINT_ROWS = 12;
+let paintMat = null;
+const paintMaterial = () => (paintMat ??= new THREE.MeshBasicMaterial({
+  transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
+  map: canvasTexture('pigeonPaint', 128, 128, (c, w, h) => {
+    let s = 7;
+    const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    c.lineCap = 'round';
+    for (let i = 0; i < 90; i++) { // 비스듬히 박박 칠한 결
+      c.strokeStyle = `rgba(70,120,230,${0.65 + r() * 0.35})`;
+      c.lineWidth = 5 + r() * 6;
+      const x = r() * w * 1.4 - w * 0.2, y = r() * h;
+      c.beginPath(); c.moveTo(x, y); c.lineTo(x + 30 + r() * 20, y - 12 - r() * 10); c.stroke();
+    }
+    c.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < 900; i++) { c.fillStyle = `rgba(0,0,0,${0.2 + r() * 0.5})`; c.fillRect(r() * w, r() * h, 1 + r(), 1); }
+  }),
+}));
+// 날개콩 머리 위에 퐁퐁 뜨는 하트
+const heartMark = () => {
+  const q = new THREE.Sprite(new THREE.SpriteMaterial({
+    transparent: true, depthWrite: false, depthTest: false,
+    map: canvasTexture('monsterHeart', 128, 128, (g, w, h) => {
+      g.beginPath();
+      g.moveTo(w / 2, h * 0.86);
+      g.bezierCurveTo(w * 0.05, h * 0.55, w * 0.1, h * 0.12, w / 2, h * 0.32);
+      g.bezierCurveTo(w * 0.9, h * 0.12, w * 0.95, h * 0.55, w / 2, h * 0.86);
+      g.lineJoin = 'round';
+      g.lineWidth = 12;
+      g.strokeStyle = '#4a3525';
+      g.stroke();
+      g.fillStyle = '#ff6f91';
+      g.fill();
+    }),
+  }));
+  q.renderOrder = 2;
+  return q;
 };
 // 몽당연필 물구나무 낙서 모양: [점 사이, 좌우 지그재그 폭, 그리는 시간(초), 처음 자리에서 퍼지는 거리]
 const DRAW = { scrub: [DOT_GAP, ZIG, DOODLE_TIME, DOODLE_SPREAD], seed: [SEED_GAP, 0, 4.2, 0.5], tip: [DOT_GAP, ZIG, 9, DOODLE_SPREAD] };
@@ -288,6 +382,7 @@ function endDuo(duo) {
   duo.p.duo = duo.e.duo = null;
   duo.p.duoCool = duo.e.duoCool = DUO_COOL;
   duo.marks?.fadeOut(); // 구구 합동은 낙서가 없음
+  duo.marks2?.fadeOut();
 }
 
 // 한 바퀴 일정 (동작 이름, 초)
@@ -480,6 +575,22 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
   const core = nBody?.parent;
   const bBody = kind === 'banjjok' ? mon.root.getObjectByName('몸') : null;
   const hHead = kind === 'haak' ? mon.root.getObjectByName('머리') : null;
+  const gBody = kind === 'gugu' ? mon.root.getObjectByName('몸')?.parent : null; // 구구 몸통 (끄레용이 배를 칠함)
+  let paint = null, paintHold = 0; // 구구 배 칠 · 남은 시간 (초)
+  const kBeak = kind === 'kkakkak' ? mon.root.getObjectByName('부리') : null;
+  let carry = null; // 깍깍이가 문 끄레용 종이옷 { m, fall (떨어뜨린 지 초, 물고 있으면 null), d }
+  if (kind === 'kkreyong') self.makeWrapper = mon.makeWrapper;
+  let hearts = null;
+  // 날개콩 머리 위 하트 셋 (c: 시작한 지 초)
+  const showHearts = (c) => {
+    hearts ??= [0, 1, 2].map(() => { const h = heartMark(); mon.root.add(h); return h; });
+    hearts.forEach((h, i) => {
+      const k = THREE.MathUtils.clamp((c - i * 0.3) / 1.0, 0, 1);
+      h.visible = k > 0 && k < 1;
+      h.scale.setScalar(((0.035 * Math.sin(k * Math.PI) * 1.2 * SCALE) / S) || 1e-6);
+      h.position.set(((i - 1) * 0.03 * SCALE) / S, 0.17 + k * 0.07, 0);
+    });
+  };
   const groundAt = (x, z) => groundY(x, z) - curveDrop(x, z);
   const home = () => { const { x, z } = target(); return { x, z }; };
   const stopTrip = () => { trip = null; air = 0; mon.setAir?.(0); };
@@ -582,7 +693,8 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
     const pen = free('mongdang', GUGU_REACH);
     const spots = (perches?.() ?? []).filter((o) => Math.hypot(o.x - px, o.z - pz) < GUGU_REACH && o.get());
     const pig = kind === 'kkakkak' && free('gugu', GUGU_REACH);
-    const opts = (kind === 'kkakkak' ? [nal && 'bully', nal && 'headPeck', cat && 'fight', pig && 'shoo', spots.length && 'spot']
+    const cray = kind === 'kkakkak' && free('kkreyong', GUGU_REACH);
+    const opts = (kind === 'kkakkak' ? [nal && 'bully', nal && 'headPeck', cat && 'fight', pig && 'shoo', cray && 'peel', spots.length && 'spot']
       : [cat && 'catJump', cat && 'catPounce', nal && 'perch', spots.length && 'spot', ban && 'prints', pen && 'seed']).filter(Boolean);
     if (!opts.length) return;
     const pick = opts[Math.floor(r * opts.length)];
@@ -598,7 +710,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       ]);
       return;
     }
-    if (kind === 'kkakkak') { kkakkakDuo(pick, { bully: nal, headPeck: nal, fight: cat, shoo: pig }[pick], r); return; }
+    if (kind === 'kkakkak') { kkakkakDuo(pick, { bully: nal, headPeck: nal, fight: cat, shoo: pig, peel: cray }[pick], r); return; }
     const mate = { perch: nal, prints: ban, seed: pen }[pick] ?? cat;
     const d = { type: pick, p: self, e: mate, over: false, landed: false, nT: 0, hop: 0, hovering: false, catT: -1 };
     if (pick === 'prints') Object.assign(d, { marks: createMarks(scene, { color: 0x8a6a4a, r: 0.011 }), round: 0, walking: false });
@@ -768,6 +880,33 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         { start() { d.sulk = true; flyOff(1, 1.3).start(); }, fly: () => esc, dur: 0.8 },
         homeStep,
       ]);
+    } else if (pick === 'peel') {
+      // 끄레용 옆에 내려앉아 깍깍 → 종이옷을 콕 물어 쏙 → 문 채로 끄레용 둘레를 빙빙 놀림 → 머리 위에서 툭 떨어뜨려 줌 → 깍깍
+      const hit = jabs([0.1]);
+      const hold = () => {
+        if (!d.hits || carry || !mate.makeWrapper) return;
+        const m = mate.makeWrapper();
+        kBeak.add(m);
+        const ks = (SCALE * KINDS.kkreyong.size) / kBeak.getWorldScale(TMP).x; // 끄레용 크기대로
+        m.scale.setScalar(ks);
+        m.position.set(0, -0.036 * ks, 0.012);
+        m.rotation.x = 0.3;
+        carry = { m, fall: null, d };
+      };
+      const around = (i, y) => () => { const a = side + i * 2.1; return { x: mate.x + Math.sin(a) * 0.9, z: mate.z + Math.cos(a) * 0.9, y: groundAt(mate.x, mate.z) + y }; };
+      const over = () => ({ x: mate.x - Math.sin(side) * 0.25, z: mate.z - Math.cos(side) * 0.25, y: groundAt(mate.x, mate.z) + 1.0 });
+      startTrip([
+        { fly: beside(KK_PEEL_GAP), land: true, arc: 0.3, bail },
+        { wait: true, act: 'caw', face, dur: 1.4, bail },
+        { wait: true, face, dur: 0.9, tick: (T) => { hit(T); hold(); }, bail },
+        { fly: around(0.6, 1.2), arc: 0.3, dur: 1.0, bail },
+        { fly: around(1.6, 1.0), arc: 0.15, dur: 0.9, bail },
+        { fly: around(2.6, 1.2), arc: 0.15, dur: 0.9, bail },
+        { fly: over, dur: 0.8, bail },
+        { hover: over, face, dur: 0.6, down: true, bail },
+        { start() { if (carry) carry.fall = 0; }, hover: over, face, dur: 1.2, down: true },
+        homeStep,
+      ]);
     } else {
       // 구구를 보고 부르르 화냄 → 구구한테 날아가면 구구는 화들짝 날아 도망 → 그 자리에 앉아 깍깍
       let spot;
@@ -840,7 +979,12 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       const { s, th, x: tx, z: tz } = target();
       extraY = 0;
       if (qMark) qMark.visible = false;
-      if (!self.duo) { duoMood = false; if (!FLY) air = 0; } // 반쪽이 위에 올라탔던 날개콩도 합동이 끊기면 땅으로
+      if (hearts) for (const h of hearts) h.visible = false;
+      if (!self.duo) {
+        duoMood = false;
+        if (!FLY) air = 0; // 반쪽이 위에 올라탔던 날개콩도 합동이 끊기면 땅으로
+        if (kind === 'kkreyong') { mon.setSlip(0); mon.setBare(false); } // 툭툭 흘러내린·벗겨진 종이옷도 합동이 끊기면 제자리
+      }
       if (px === null) { px = tx; pz = tz; }
       sinceHit += dt;
       let legs = 1; // 동작 빠르기 배수 (도망·쫓을 때 다리를 빨리 놀림)
@@ -936,7 +1080,7 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
         if (!busy && (mode === 'route' || mode === 'duo')) mode = 'duo';
         else { endDuo(self.duo); if (mode === 'duo') mode = 'route'; }
       } else if (mode === 'duo') mode = 'route';
-      if (mode !== 'duo' && (mon.state === 'doodle' || mon.state === 'scrub')) mon.play('idle'); // 끝없이 도는 합동 동작은 그만두면 바로 멈춤
+      if (mode !== 'duo' && (mon.state === 'doodle' || mon.state === 'scrub' || mon.state === 'panic' || mon.state === 'paint')) mon.play('idle'); // 끝없이 도는 합동 동작은 그만두면 바로 멈춤
       // 한가한지: 제 길 가까이에서 걷거나 쉬는 중 (짝이 될 수 있음. 같은 길을 줄지어 따라가며 조금 처질 때도 있어 넉넉히)
       const onRoute = mode === 'route' && !busy && Math.hypot(tx - px, tz - pz) < 0.6 && (mon.state === 'idle' || mon.state === 'walk');
       self.free = onRoute && !self.duo && self.duoCool <= 0;
@@ -969,8 +1113,10 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           const ph = Math.round(phase * 10);
           if (mates.length && dice(sec, ph) < DUO_CHANCE) {
             const [mate, type] = mates[Math.floor(dice(sec, ph + 3) * mates.length)];
+            const mk = KK_MARKS[type];
             const duo = { type, p: self, e: mate, over: false, t: 0, cx: px, cz: pz, dir: heading, turn: 0, dist: 0, len: 0,
-              rng: seeded(sec * 31 + ph), marks: type === 'lift' || type === 'nap' ? null : createMarks(scene), drawn: false, cleaned: false };
+              rng: seeded(sec * 31 + ph), marks: type === 'lift' || type === 'nap' || (KK_DUOS.has(type) && !mk) ? null : createMarks(scene, mk?.[0]),
+              marks2: mk?.[1] ? createMarks(scene, mk[1]) : null, drawn: false, cleaned: false };
             self.duo = mate.duo = duo;
             self.free = mate.free = mate.napping = false;
             mode = 'duo';
@@ -1121,7 +1267,12 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
               [px, pz] = move(px, pz, px + Math.sin(want) * step, pz + Math.cos(want) * step);
             }
             turnTo(want, 3);
-            if (duoT > 0.3 && d.marks.erase(px + Math.sin(heading) * 0.1, pz + Math.cos(heading) * 0.1, ERASE_R, dt)) noErase = 0;
+            if (duoT > 0.3) {
+              const ex = px + Math.sin(heading) * 0.1, ez = pz + Math.cos(heading) * 0.1, n = d.marks.erase(ex, ez, ERASE_R, dt);
+              if (n) noErase = 0;
+              // 크레파스 낙서는 지워지지 않고 번지기만 함
+              if (d.marks2) for (let i = 0; i < Math.ceil(n / 2); i++) d.marks2.add(ex + (d.rng() - 0.5) * ERASE_R * 1.6, ez + (d.rng() - 0.5) * ERASE_R * 1.6);
+            }
           }
           return true;
         };
@@ -1144,8 +1295,169 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
           legs = speed / SPEED * 0.7;
           return false;
         };
+        // 물구나무 서서 길(tr.path)을 따라 그림 (펜 든 구간은 자국 없이 지나감) → 다 그렸으면 true
+        const tracePath = (tr, marks, speed, gap) => {
+          let left = speed * dt;
+          while (left > 0 && tr.i < tr.path.length) {
+            const t = tr.path[tr.i], dx = t.x - px, dz = t.z - pz, dist = Math.hypot(dx, dz), step = Math.min(dist, left);
+            if (dist > 1e-6) { tr.dir = Math.atan2(dx, dz); px += (dx / dist) * step; pz += (dz / dist) * step; }
+            left -= step;
+            if (t.pen) {
+              tr.dist += step;
+              while (tr.dist >= gap) { tr.dist -= gap; marks.add(px - Math.sin(tr.dir) * tr.dist, pz - Math.cos(tr.dir) * tr.dist); }
+            }
+            if (step >= dist) tr.i++;
+          }
+          turnTo(tr.dir, 10);
+          return tr.i >= tr.path.length;
+        };
         if (duoT > 30) endDuo(d); // 혹시 어딘가 끼어 끝나지 않으면 그만둠
-        else if (d.type === 'perch') {
+        else if (KK_DUOS.has(d.type)) {
+          // 끄레용 합동: 끄레용과 짝이 d 의 표시(drawn·filled·taps·hits·back …)를 보고 차례로 움직임
+          const cr = d.type === 'peel' ? d.e : d.p, mate = d.type === 'peel' ? d.p : d.e;
+          // 첫 점으로 가서 물구나무 → 길 따라 그리기 → 내려옴 → then() (이 단계들이 아니면 false)
+          const drawAlong = (tr, marks, speed, gap, then) => {
+            if (duoStep === 'go') { if (walkTo(tr.path[0].x, tr.path[0].z, 0.7, 0.06) || duoT > 6) { duoStep = 'flip'; duoT = 0; mon.play('doodle'); } }
+            else if (duoStep === 'flip') { if (duoT > 0.5) duoStep = 'trace'; }
+            else if (duoStep === 'trace') { if (tracePath(tr, marks, speed, gap)) { duoStep = 'land'; mon.play('doodleEnd'); } }
+            else if (duoStep === 'land') { if (mon.state !== 'doodleEnd') { duoT = 0; then(); } }
+            else return false;
+            return true;
+          };
+          const goAside = (x, z) => { asideX = x; asideZ = z; if (wall(x, z)) { asideX = px; asideZ = pz; } duoStep = 'aside'; duoT = 0; };
+          const aside = () => { if (walkTo(asideX, asideZ, 0.7) || duoT > 4) { duoStep = 'look'; duoT = 0; if (mon.state === 'walk') mon.play('idle'); } };
+          const idleFace = (o) => { if (mon.state === 'walk') mon.play('idle'); face(o); };
+          if (d.type === 'picture') {
+            // 끄레용이 땅에 날개콩을 그려 줌 → 날개콩이 와서 보고 깜짝 → 신나서 파닥파닥, 하트 퐁퐁 → 끄레용 킥킥
+            if (!d.tr) {
+              const a = Math.atan2(cr.x - mate.x, cr.z - mate.z); // 날개콩 반대쪽으로 조금 물러난 자리에 그림
+              let cx = cr.x + Math.sin(a) * 0.5, cz = cr.z + Math.cos(a) * 0.5;
+              if (wall(cx, cz)) { cx = cr.x; cz = cr.z; }
+              d.c = { x: cx, z: cz, h: a + Math.PI }; // 그림 앞(h)은 날개콩 쪽
+              d.tr = { path: place(PICTURE, cx, cz, d.c.h), i: 0, dist: 0, dir: 0 };
+            }
+            const C = d.c, fx = Math.sin(C.h), fz = Math.cos(C.h);
+            if (kind === 'kkreyong') {
+              if (duoStep === 'watch') duoStep = 'go';
+              if (drawAlong(d.tr, d.marks, 0.7, DOT_GAP, () => { d.drawn = true; goAside(C.x + fz * 1.0, C.z - fx * 1.0); })) { /* 그리는 중 */ }
+              else if (duoStep === 'aside') aside();
+              else {
+                idleFace(mate);
+                if (d.loved && !d.shy) { d.shy = true; mon.play('giggle'); }
+                if (d.done || duoT > 14) endDuo(d);
+              }
+            } else if (duoStep === 'watch') { idleFace(cr); if (d.drawn) { duoStep = 'come'; duoT = 0; } }
+            else if (duoStep === 'come') { if (walkTo(C.x + fx * 0.85, C.z + fz * 0.85, 0.6, 0.08) || duoT > 6) { duoStep = 'see'; duoT = 0; mon.play('notice'); } }
+            else if (duoStep === 'see') { face(C); if (mon.state !== 'notice') { duoStep = 'yay'; duoT = 0; mon.play('flutter'); d.loved = true; } }
+            else { face(C); showHearts(duoT); if (duoT > 2.2 && mon.state !== 'flutter') { d.done = true; endDuo(d); } }
+          } else if (d.type === 'poke') {
+            // 하악냥이 호기심에 앞발로 종이옷을 툭툭 → 툭 할 때마다 종이옷이 쑥쑥 (끄레용 부끄) → 세 번째 뒤 끄레용이 폴짝 끌어올리면 하악냥이 깜짝
+            if (kind === 'haak') {
+              if (duoStep === 'watch') { idleFace(cr); if (duoT > 1.2) { duoStep = 'stalk'; duoT = 0; } }
+              else if (duoStep === 'stalk') {
+                if (walkTo(cr.x, cr.z, 0.5, BODY_R + cr.r + HUNT_REACH * 0.5)) {
+                  idleFace(cr);
+                  if (Math.abs(wrap(Math.atan2(cr.x - px, cr.z - pz) - heading)) < 0.3) {
+                    mon.setReach?.(0);
+                    tapsAt = swatTaps(0);
+                    taps = 0;
+                    mon.play('swat');
+                    duoStep = 'swat';
+                    d.round = (d.round ?? 0) + 1;
+                  }
+                } else if (duoT > 8) endDuo(d);
+              } else if (duoStep === 'swat') {
+                face(cr);
+                if (taps < tapsAt.length && mon.time >= tapsAt[taps]) { taps++; d.taps = (d.taps ?? 0) + 1; }
+                if (mon.state !== 'swat') { duoT = 0; if (d.round >= 3) { duoStep = 'after'; d.swatted = true; } else duoStep = 'stalk'; }
+              } else {
+                idleFace(cr);
+                if (d.pulled && !d.jumped) { d.jumped = true; mon.play('notice'); }
+                else if ((d.jumped && mon.state !== 'notice') || duoT > 6) endDuo(d);
+              }
+            } else {
+              idleFace(mate);
+              if ((d.taps ?? 0) > (d.seen ?? 0)) { d.seen = d.taps; mon.setSlip(Math.min(0.85, d.taps * 0.15)); mon.play('poked'); }
+              if (d.swatted && !d.pulled && mon.state !== 'poked') { d.pulled = true; mon.setSlip(0); mon.play('notice'); }
+            }
+          } else if (d.type === 'color') {
+            // 몽당연필이 땅에 테두리(동그라미·하트·별·꽃)를 그리면 → 끄레용이 물구나무 서서 안을 빙글빙글 색칠 → 끄레용 킥킥, 연필은 우와
+            if (!d.paths) {
+              const mx = (cr.x + mate.x) / 2, mz = (cr.z + mate.z) / 2, a = Math.atan2(mate.x - cr.x, mate.z - cr.z) + Math.PI / 2;
+              let cx = mx + Math.sin(a), cz = mz + Math.cos(a);
+              if (wall(cx, cz)) { cx = mx - Math.sin(a); cz = mz - Math.cos(a); }
+              d.c = { x: cx, z: cz };
+              d.paths = shapePaths(SHAPES[Math.floor(d.rng() * SHAPES.length)], cx, cz, 0.5);
+              d.tr1 = { path: d.paths.edge, i: 0, dist: 0, dir: 0 };
+              d.tr2 = { path: d.paths.fill, i: 0, dist: 0, dir: 0 };
+            }
+            const C = d.c;
+            if (kind === 'mongdang') {
+              if (duoStep === 'watch') duoStep = 'go';
+              if (drawAlong(d.tr1, d.marks, 0.7, DOT_GAP, () => {
+                d.drawn = true;
+                const a = Math.atan2(px - C.x, pz - C.z);
+                goAside(C.x + Math.sin(a) * 1.15, C.z + Math.cos(a) * 1.15);
+              })) { /* 그리는 중 */ }
+              else if (duoStep === 'aside') aside();
+              else { idleFace(C); if (d.filled && !d.wow) { d.wow = true; mon.play('notice'); } }
+            } else if (duoStep === 'watch') { idleFace(d.drawn ? C : mate); if (d.drawn) { duoStep = 'go'; duoT = 0; } else if (duoT > 25) endDuo(d); }
+            else if (!drawAlong(d.tr2, d.marks2, 0.9, FILL_GAP, () => { d.filled = true; duoStep = 'done'; mon.play('giggle'); })) {
+              if (mon.state !== 'giggle') endDuo(d);
+            }
+          } else if (d.type === 'smear') {
+            // 끄레용이 크레파스로 빙글빙글 낙서 → 반쪽이가 지우려고 박박 → 크레파스라 번지기만 함 → 반쪽이 당황 "?!", 끄레용 킥킥
+            if (!d.tr) d.tr = { path: place(SCRIBBLE, cr.x, cr.z, Math.atan2(mate.x - cr.x, mate.z - cr.z) + Math.PI / 2), i: 0, dist: 0, dir: 0 };
+            if (kind === 'kkreyong') {
+              if (duoStep === 'watch') duoStep = 'go';
+              if (drawAlong(d.tr, d.marks, 0.8, DOT_GAP, () => {
+                d.drawn = true;
+                const a = Math.atan2(px - mate.x, pz - mate.z);
+                goAside(px + Math.sin(a) * 0.6, pz + Math.cos(a) * 0.6);
+              })) { /* 그리는 중 */ }
+              else if (duoStep === 'aside') aside();
+              else {
+                idleFace(mate);
+                if (d.panic && !d.giggled) { d.giggled = true; mon.play('giggle'); }
+                if (d.done || duoT > 25) endDuo(d);
+              }
+            } else if (duoStep === 'watch') { idleFace(cr); if (d.drawn) { duoStep = 'erase'; noErase = 0; } else if (duoT > 20) endDuo(d); }
+            else if (duoStep === 'erase') { if (!scrubMarks()) { duoStep = 'oops'; duoT = 0; mon.play('notice'); d.panic = true; } }
+            else {
+              // 어? 어?! 좌우로 홱홱 돌아보며 동동
+              const c = duoT, k = 1 - sm(c, 2.2, 2.6);
+              showQ(sm(c, 0.2, 0.4) * k, 0.07, c);
+              post = () => {
+                mon.root.rotation.y += Math.sin(c * 11) * 0.5 * k;
+                mon.root.children[0].position.y += Math.abs(Math.sin(c * 17)) * 0.012 * k;
+              };
+              if (c > 2.8) { d.done = true; endDuo(d); }
+            }
+          } else if (d.type === 'paint') {
+            // 콕콕 쪼며 다니는 구구 배 한쪽(구구 오른쪽)에 슬쩍 붙어 파랗게 칠함 → 구구는 무신경해서 모름 → 끄레용 킥킥
+            d.paint ??= 0;
+            if (duoStep === 'done') { if (mon.state !== 'giggle') endDuo(d); }
+            else {
+              const a = mate.h - Math.PI / 2, gap = mate.r + BODY_R + 0.03;
+              const gx = mate.x + Math.sin(a) * gap, gz = mate.z + Math.cos(a) * gap;
+              if (Math.hypot(gx - px, gz - pz) > (mon.state === 'paint' ? 0.18 : 0.08)) { if (mon.state === 'paint') mon.play('walk'); walkTo(gx, gz, 0.8, 0.04); }
+              else {
+                turnTo(Math.atan2(mate.x - px, mate.z - pz), 8);
+                if (mon.state !== 'paint') mon.play('paint');
+                else if (mon.time > 0.3) d.paint = Math.min(1, d.paint + dt / PAINT_TIME);
+                if (d.paint >= 1) { duoStep = 'done'; mon.play('giggle'); }
+              }
+              if (duoT > 25) endDuo(d);
+            }
+          } else if (duoStep === 'watch') {
+            // 깍깍이가 종이옷을 콕 물어 벗겨 감 → 끄레용 당황 (발 동동, 깍깍이를 눈으로 쫓음) → 머리 위에서 떨어뜨려 주면 다시 입고 휴~
+            idleFace(mate);
+            if (d.hits) { duoStep = 'bare'; mon.setBare(true); mon.play('panic'); } else if (duoT > 15) endDuo(d);
+          } else if (duoStep === 'bare') {
+            face(mate);
+            if (d.back) { mon.setBare(false); duoStep = 'calm'; mon.play('relief'); }
+          } else if (mon.state !== 'relief') endDuo(d);
+        } else if (d.type === 'perch') {
           // 날개콩: 머리에 구구가 앉으면 물음표 띄우고 갸웃갸웃 "뭐지?" → 깜짝! → 위를 째려보며 화내고 방방 → 날아간 하늘에 대고 한 번 더 씩씩
           if (mon.state === 'walk') mon.play('idle');
           if (!d.landed) { if (duoT > 10) endDuo(d); } // 구구가 끝내 못 오면 그만
@@ -1605,6 +1917,37 @@ export function createPlazaMonsters(scene, { x = PLAZA.fountain.x, z = PLAZA.fou
       blendPose(dt);
       post?.();
       post = null;
+      if (gBody) { // 끄레용이 칠한 구구 배: 칠한 만큼 보이고, 합동이 끝나도 한참 남았다가 스르르
+        const d = self.duo;
+        if (d?.type === 'paint') {
+          if (!paint) {
+            paint = new THREE.Mesh(new THREE.SphereGeometry(1, PAINT_COLS, PAINT_ROWS, -0.95, 1.9, 1.35, 1.2).scale(0.0352, 0.0322, 0.043).translate(0, 0, -0.005), paintMaterial().clone());
+            paint.name = '색칠';
+            gBody.add(paint);
+          }
+          paint.visible = true;
+          paint.material.opacity = 1;
+          paint.geometry.setDrawRange(0, Math.floor((d.paint ?? 0) * PAINT_ROWS) * PAINT_COLS * 6);
+          paintHold = 20;
+        } else if (paint?.visible) {
+          paintHold -= dt;
+          paint.material.opacity = Math.min(1, paintHold / 3);
+          if (paintHold <= 0) paint.visible = false;
+        }
+      }
+      if (carry) { // 깍깍이가 문 종이옷: 합동이 끊기면 치움 · 떨어뜨리면 끄레용 위로 툭 떨어져 쏙 끼워짐
+        if (carry.fall == null) { if (carry.d.over) { carry.m.removeFromParent(); carry = null; } }
+        else {
+          if (carry.fall === 0) { scene.attach(carry.m); carry.y0 = carry.m.position.y; }
+          carry.fall += dt;
+          const m = carry.m, o = carry.d.e, k = Math.min(1, dt * 10);
+          m.position.x += (o.x - m.position.x) * k;
+          m.position.z += (o.z - m.position.z) * k;
+          m.position.y = carry.y0 - 4.9 * carry.fall ** 2;
+          m.quaternion.slerp(new THREE.Quaternion(), Math.min(1, dt * 8));
+          if (m.position.y <= groundAt(o.x, o.z) + 0.05) { carry.d.back = true; m.removeFromParent(); carry = null; }
+        }
+      }
       if (bBody) { // 반쪽이 윗면 높이 (날개콩이 올라설 때)
         bBody.getWorldPosition(TMP);
         const y = TMP.y;
