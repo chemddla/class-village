@@ -22,7 +22,6 @@ import { createChulBoss } from './monsters/chul.js';
 import { createArrows } from './arrows.js';
 
 const params = new URLSearchParams(location.search);
-const LOW = params.get('q') === 'low';
 // 실제 서버(HTTPS)에서는 같은 주소의 /colyseus 경로로 접속한다 (학교 방화벽 대비 443 포트만 사용)
 // 내 컴퓨터 시험(HTTP)에서는 기존처럼 2567 포트로 접속한다
 // (원격 main을 보여 주는 상시 서버는 VITE_GAME_PORT 로 다른 게임 서버 포트를 알려 준다: tools/live-server.cjs --main)
@@ -41,6 +40,9 @@ const store = {
   set(s, k, v) { try { s.setItem(k, v); } catch { /* 무시 */ } },
   del(s, k) { try { s.removeItem(k); } catch { /* 무시 */ } },
 };
+// 가벼운 모드: ?q=low 이거나, 고화질에서 끊겨 저절로 바뀐 적이 있는 기기 (autoLow 기억, 아래 자동 화질). ?q=high 는 늘 고화질로 시작
+const AUTO_LOW = params.get('q') !== 'low' && params.get('q') !== 'high' && store.get(localStorage, 'autoLow') === '1';
+const LOW = params.get('q') === 'low' || AUTO_LOW;
 
 // ── 3D 기본 설정 ──
 const canvas = document.getElementById('game');
@@ -2769,8 +2771,9 @@ let noLines = !!qLines; // 다른 학생의 외곽선을 끈 상태인지 (자�
 // FPS 를 누르면 처음 화질로 되돌린다 (어쩌다 한 번 느렸던 기기가 계속 낮은 화질에 머물지 않게)
 ui.fps.style.cssText += ';pointer-events:auto;cursor:pointer';
 ui.fps.onclick = () => {
-  if (!qStep || !confirm('화질을 처음으로 되돌릴까요? (화면을 새로 고칩니다)')) return;
+  if (!(qStep || AUTO_LOW) || !confirm('화질을 처음으로 되돌릴까요? (화면을 새로 고칩니다)')) return;
   store.del(localStorage, 'quality');
+  store.del(localStorage, 'autoLow');
   location.reload();
 };
 let fpsFrames = 0;
@@ -2914,14 +2917,19 @@ function frame() {
   fpsFrames++;
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
-    ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS${qStep ? ` · 화질 -${qStep}` : ''}`;
-    // 자동 화질: 2초 넘게 27fps 에 못 미치면 한 단계씩 낮춘다. 다른 학생 외곽선 끄기 → 해상도 0.5배까지(20%씩)
+    ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS${AUTO_LOW ? ' · 가벼운' : ''}${qStep ? ` · 화질 -${qStep}` : ''}`;
+    // 자동 화질: 2초 넘게 27fps 에 못 미치면 한 단계씩 낮춘다. 고화질이면 먼저 가벼운 모드로 (풀·나무 수와 안티에일리어싱은
+    // 처음 만들 때 정해져 화면을 새로 고쳐 바꾼다, 이 기기에 기억) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지(20%씩)
     // 해상도는 화면 전체가 흐려져 가장 티가 나므로 맨 나중에 (외곽선은 그리기 횟수가, 해상도는 화면 칠하기가 벅찬 기기에 듣는다)
     // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
     // 기준은 27fps: 화면이 30Hz 인 기기는 멀쩡해도 딱 30fps 라, 30을 기준으로 하면 끝 단계까지 내려가 (기억까지 돼) 머문다
     slowFor = slowFrames > 5 && slowTime / slowFrames > 1 / 27 ? slowFor + 1 : 0;
     slowFrames = slowTime = 0;
-    if (slowFor >= 4 && (renderer.getPixelRatio() > 0.5 || !noLines)) {
+    if (slowFor >= 4 && !LOW && params.get('q') !== 'high') { // ?q=high 는 새로 고쳐도 고화질이라 되풀이되므로 아래 단계로
+      store.set(localStorage, 'autoLow', '1');
+      store.del(localStorage, 'quality'); // 고화질에서 낮춘 단계는 버리고 가벼운 모드 처음부터
+      location.reload();
+    } else if (slowFor >= 4 && (renderer.getPixelRatio() > 0.5 || !noLines)) {
       if (!noLines) {
         noLines = true;
         for (const o of others.values()) o.char.setOutline(false);
