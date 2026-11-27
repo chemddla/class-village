@@ -40,10 +40,9 @@ const store = {
   set(s, k, v) { try { s.setItem(k, v); } catch { /* 무시 */ } },
   del(s, k) { try { s.removeItem(k); } catch { /* 무시 */ } },
 };
-// 가벼운 모드: ?q=low 이거나, 고화질에서 끊겨 방금 저절로 바꿔 새로 고친 때 (아래 자동 화질). ?q=high 는 늘 고화질로 시작
-// 그 한 번만 가볍다: 다시 새로 고치거나 다시 들어오면 고화질부터 (기억해 둔 화질 단계도 없다)
+// 가벼운 모드: ?q=low 이거나, 이 탭에서 고화질이 끊겨 저절로 바꾼 적이 있을 때 (아래 자동 화질). ?q=high 는 늘 고화질로 시작
+// 이 탭에서는 새로 고쳐도 가벼운 채로 (새로 고칠 때마다 고화질로 버벅이다 또 새로 고치지 않게), 새 탭은 고화질부터
 const AUTO_LOW = params.get('q') !== 'low' && params.get('q') !== 'high' && store.get(sessionStorage, 'autoLow') === '1';
-store.del(sessionStorage, 'autoLow');
 store.del(localStorage, 'autoLow'); // 예전 판이 기기에 기억해 둔 것
 store.del(localStorage, 'quality');
 const LOW = params.get('q') === 'low' || AUTO_LOW;
@@ -2802,6 +2801,7 @@ let noLines = false; // 다른 학생의 외곽선을 끈 상태인지 (자동 �
 ui.fps.style.cssText += ';pointer-events:auto;cursor:pointer';
 ui.fps.onclick = () => {
   if (!(qStep || AUTO_LOW) || !confirm('화질을 처음으로 되돌릴까요? (화면을 새로 고칩니다)')) return;
+  store.del(sessionStorage, 'autoLow');
   location.reload();
 };
 let fpsFrames = 0;
@@ -2963,7 +2963,7 @@ function frame() {
   if (fpsTime >= 0.5) {
     ui.fps.textContent = `${Math.round(fpsFrames / fpsTime)} FPS${AUTO_LOW ? ' · 가벼운' : ''}${qStep ? ` · 화질 -${qStep}` : ''}`;
     // 자동 화질: 2초 넘게 27fps 에 못 미치면 한 단계씩 낮춘다. 고화질이면 먼저 가벼운 모드로 (풀·나무 수와 안티에일리어싱은
-    // 처음 만들 때 정해져 화면을 새로 고쳐 바꾼다, 이 탭의 이번 한 번만) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지(20%씩)
+    // 처음 만들 때 정해져 화면을 새로 고쳐 바꾼다, 이 탭에 기억) → 다른 학생 외곽선 끄기 → 해상도 0.5배까지(20%씩)
     // 해상도는 화면 전체가 흐려져 가장 티가 나므로 맨 나중에 (외곽선은 그리기 횟수가, 해상도는 화면 칠하기가 벅찬 기기에 듣는다)
     // shortcut: 한 번 낮추면 다시 올리지 않는다 (오르내리며 깜빡이지 않게), 올려야 하면 새로고침
     // 기준은 27fps: 화면이 30Hz 인 기기는 멀쩡해도 딱 30fps 라, 30을 기준으로 하면 끝 단계까지 내려가 (기억까지 돼) 머문다
