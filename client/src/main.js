@@ -3027,6 +3027,14 @@ function frame() {
       m.root.visible = onField;
       fieldMonsters.push(m);
     }
+    // 들판을 다 만들었으면 들판 것의 셰이더를 그리기를 막지 않고 미리 준비한다. 안 하면 들판 몬스터·풀숲이 처음 화면에 들어오는 순간
+    // 셰이더 20~30개를 한꺼번에 준비하느라 느린 기기에서 0.3~1초씩 멈췄다 (학생 기기 진단값). compile 은 보이는 것만 보므로 잠깐 다 켰다 되돌린다
+    if (!fieldJobs.length) {
+      const was = onField;
+      showMap(true);
+      renderer.compileAsync(scene, camera).catch(() => {});
+      showMap(was);
+    }
   }
   buildPending();
   if (me) minimap.draw(me, [...others.values()].map((o) => o.char), cam.yaw);
