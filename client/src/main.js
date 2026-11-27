@@ -2870,15 +2870,21 @@ ui.fps.onclick = () => {
 let fpsFrames = 0;
 let fpsTime = 0;
 // 선생님 관찰용 (tools/observe.js): 10초마다 [평균 FPS, 가장 느린 0.5초의 FPS, 가장 긴 장면 ×10ms, 화질(0 보통 · 1 가벼운 + 화질 낮춘 단계 ×2)] 을 서버로
-const perf = { frames: 0, time: 0, low: 255, worst: 0, wFrames: 0, wTime: 0 };
+// 가장 긴 장면의 진단값도 함께 보낸다: 그 앞 장면에서 [계산 ms, 그리기 ms, 그리기 뒤 ms(캐릭터 만들기 등), 장면 밖 ms(통신 처리·메모리 정리·GPU 기다림),
+// 새로 만든 셰이더 수, 새 텍스처 수, 새 도형 수, 그리기 횟수, 들판(1)]
+const perf = { frames: 0, time: 0, low: 255, worst: 0, wFrames: 0, wTime: 0, wd: null };
+const pf = { logic: 0, render: 0, after: 0, total: 0, prog: 0, tex: 0, geo: 0, calls: 0, field: 0 }; // 바로 앞 장면 (frame 끝에서 채움)
 function trackPerf(rawDt) {
   if (rawDt > 3) return; // 탭을 내렸다 돌아온 것: 버벅임이 아니다
   perf.frames++; perf.time += rawDt; perf.wFrames++; perf.wTime += rawDt;
-  perf.worst = Math.max(perf.worst, rawDt);
+  if (rawDt > perf.worst) {
+    perf.worst = rawDt;
+    perf.wd = [pf.logic, pf.render, pf.after, rawDt * 1000 - pf.total, pf.prog, pf.tex, pf.geo, pf.calls, pf.field].map((v) => Math.max(0, Math.round(v)));
+  }
   if (perf.wTime >= 0.5) { perf.low = Math.min(perf.low, perf.wFrames / perf.wTime); perf.wFrames = perf.wTime = 0; }
   if (perf.time < 10) return;
-  room?.send('perf', [Math.round(perf.frames / perf.time), Math.round(Math.min(perf.low, 255)), Math.min(255, Math.round(perf.worst * 100)), (LOW ? 1 : 0) + qStep * 2]);
-  Object.assign(perf, { frames: 0, time: 0, low: 255, worst: 0 });
+  room?.send('perf', [Math.round(perf.frames / perf.time), Math.round(Math.min(perf.low, 255)), Math.min(255, Math.round(perf.worst * 100)), (LOW ? 1 : 0) + qStep * 2, ...(perf.wd ?? [])]);
+  Object.assign(perf, { frames: 0, time: 0, low: 255, worst: 0, wd: null });
 }
 
 // 나무·건물이 내 캐릭터를 가리면 그 부분을 비쳐 보이게 (materials.js HOLE)
@@ -3006,7 +3012,12 @@ function frame() {
 
   // 가벼운 모드(해상도 1배, 안티에일리어싱 끔): 캐릭터·몬스터·나무·바위 윤곽선이 화면에서 1.2픽셀보다 얇아지지 않게 (먼 윤곽선이 끊겨 보이지 않게)
   if (LOW) OUTLINE_MIN.value = (1.2 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / renderer.domElement.height;
+  const rT0 = performance.now();
+  const progs0 = renderer.info.programs?.length ?? 0;
+  const tex0 = renderer.info.memory.textures;
+  const geo0 = renderer.info.memory.geometries;
   renderer.render(scene, camera);
+  const rT1 = performance.now();
   if (loading.isConnected) { // 첫 장면까지 그렸으면 로딩 화면을 걷는다
     loading.remove();
     performance.measure('first-frame', { start: now }); // 점검용: 첫 장면(셰이더 컴파일·도형 올리기)에 걸린 시간
@@ -3021,6 +3032,10 @@ function frame() {
   if (me) minimap.draw(me, [...others.values()].map((o) => o.char), cam.yaw);
 
   trackPerf(rawDt);
+  const fEnd = performance.now();
+  Object.assign(pf, { logic: rT0 - now, render: rT1 - rT0, after: fEnd - rT1, total: fEnd - now,
+    prog: (renderer.info.programs?.length ?? 0) - progs0, tex: renderer.info.memory.textures - tex0,
+    geo: renderer.info.memory.geometries - geo0, calls: renderer.info.render.calls, field: onField ? 1 : 0 });
   fpsFrames++;
   fpsTime += realDt;
   if (fpsTime >= 0.5) {

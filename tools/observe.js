@@ -2,7 +2,7 @@
 // 사용법: node tools/observe.js [서버 주소]   (기본: 테스트판)
 // 기록: observe-data/<날짜>/events.jsonl (입장·퇴장·대화·낚시·쓰러짐·레벨업·전직),
 //       snapshots.jsonl (10초마다 모두의 자리·동작·도구·레벨), summary.json (1분마다 학생별 합계),
-//       perf.jsonl·perf-summary.json (1분마다 학생별 끊김·버벅임)
+//       perf.jsonl·perf-summary.json (1분마다 학생별 끊김·버벅임), hitch.jsonl (0.3초 넘게 멈춘 장면의 진단값)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,8 +90,15 @@ async function run() {
     let lastS = 0; let lastT = 0; let lastMoving = false; let sc = 0; let base = Infinity; let lastFps = '';
     $(p).onChange(() => {
       // shortcut: 10초 전과 네 값이 똑같으면 바뀐 게 없어 소식이 오지 않아 한 번 빠진다 (가운데값에는 거의 영향 없음)
-      const f = `${p.fps},${p.fpsLow},${p.hitch},${p.gq}`;
-      if (p.fps && f !== lastFps) { const n = perfOf(p.name); n.fps.push(p.fps); n.low.push(p.fpsLow); n.hitch.push(p.hitch); n.gq = p.gq; }
+      const f = `${p.fps},${p.fpsLow},${p.hitch},${p.gq},${p.pd}`;
+      if (p.fps && f !== lastFps) {
+        const n = perfOf(p.name); n.fps.push(p.fps); n.low.push(p.fpsLow); n.hitch.push(p.hitch); n.gq = p.gq;
+        // 0.3초 넘게 멈춘 장면은 진단값과 함께 hitch.jsonl 에 (화면이 보내는 순서: main.js trackPerf)
+        if (p.hitch >= 30 && p.pd) {
+          const [logic, render, after, outside, prog, tex, geo, calls, field] = p.pd.split(',').map(Number);
+          write('hitch.jsonl', { name: p.name, ms: p.hitch * 10, logic, render, after, outside, prog, tex, geo, calls, field: !!field, fps: p.fps, gq: p.gq });
+        }
+      }
       lastFps = f;
       if (!p.s || p.s === lastS) return;
       const t = performance.now();
