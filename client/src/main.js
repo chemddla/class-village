@@ -728,6 +728,7 @@ let invItems = [1, 2, 4, NET, STAFF, DAGGER, SHOVEL].filter((t) => !toolBroken(T
 let lifeSpots = []; // 테스트 서버에서만 광장에 놓는 체험용 나무
 let lifeSpotsMesh = null;
 let plazaMonsters = []; // 테스트 서버에서만 광장에 소환하는 몬스터 (날개콩·몽당연필·반쪽이·하악냥)
+const PLAZA_MONSTERS = false; // 일단 꺼 둠: 몬스터는 들판에서만 (다시 광장에 내보내려면 true)
 // 들판 몬스터: 정해진 자리를 빙 돈다 (서로 다른 동작을 하도록 일정을 어긋나게, 날개콩·몽당연필·반쪽이·하악냥을 돌아가며)
 // 몬스터 공통 설정: 공격이 닿으면 내가 맞음 (구르는 중·이미 맞는 중이면 피함) · 도망·쫓을 때 벽·분수·광장 나무에 막힘
 const monsterOpts = {
@@ -2106,7 +2107,7 @@ function attach(r) {
     renderQuick();
     renderInv();
     if (free && !lifeSpotsMesh) lifeSpotsMesh = buildLifeSpots(scene);
-    if (free && !plazaMonsters.length) {
+    if (free && PLAZA_MONSTERS && !plazaMonsters.length) {
       // 하악냥은 광장 둘레 곤충을 쫓아가 툭툭 침: 두 번째 툭에 서버에 알려 곤충이 놀라 날아가게 (들판엔 곤충이 없어 광장 하악냥만)
       const preyOpts = { prey: () => bugSpots, onSwat: (id, x, z) => room?.send('catSwat', [id, toCm(x), toCm(z)]) };
       // 몽당연필·반쪽이·하악냥·구구는 날개콩과 같은 분수 둘레 길을 일정을 어긋나게 돈다
