@@ -514,23 +514,47 @@ const CARRY_ACTIONS = new Set(['idle', 'walk', 'run', 'jump', 'flip', 'roll', 'w
 // 소켓을 비우고 새 장비를 쥐어 준다
 // 재질은 dispose 하지 않는다: 버리면 셰이더 프로그램까지 지워져, 다음에 쥘 때 다시 컴파일하느라 화면이 수십 ms 멈춘다
 // (재질이 쥔 GPU 자원은 프로그램뿐이고 종류가 정해져 있어 쌓이지 않는다. 지오메트리는 버린다)
+// 내려놓은 도구는 버리지 않고 이 몸(rig)에 넣어 두었다가 다시 쥘 때 그대로 쓴다: 새로 만들면 툰·외곽선까지 한 번에
+// 수십 ms (느린 기기에서 0.2초 넘게) 걸려, 다른 학생이 도구를 바꾸거나 공격·생활 행동으로 자동으로 쥘 때마다 모두의 화면이 멈칫했다.
+// 몸을 버릴 때는 disposeEquipment 로 넣어 둔 것까지 치운다
+const takeOut = (rig, slot, make) => {
+  const c = rig.equipCache?.get(slot)?.get(make);
+  if (c) { rig.equipCache.get(slot).delete(make); return c; }
+  const n = make();
+  n.userData.make = make;
+  return n;
+};
+const putAway = (rig, slot, c) => {
+  rig.equipCache ??= new Map();
+  if (!rig.equipCache.has(slot)) rig.equipCache.set(slot, new Map());
+  const keep = rig.equipCache.get(slot);
+  const make = c.userData.make;
+  if (!make || keep.has(make)) c.traverse((x) => x.geometry?.dispose()); // 만든 곳을 모르거나 이미 하나 있으면 버린다
+  else keep.set(make, c);
+};
+export function disposeEquipment(rig) {
+  for (const keep of rig?.equipCache?.values() ?? []) for (const c of keep.values()) c.traverse((x) => x.geometry?.dispose());
+  rig?.equipCache?.clear();
+}
+
 export function attachEquipment(rig, id) {
   const e = EQUIPMENT[id] ?? EQUIPMENT.none;
-  for (const [sock, make] of [[rig.rightSocket, e.right], [rig.leftSocket, e.left]]) {
+  for (const [slot, sock, make] of [['R', rig.rightSocket, e.right], ['L', rig.leftSocket, e.left]]) {
+    if (make && sock.children.length === 1 && sock.children[0].userData.make === make) continue; // 이미 쥐고 있다
     for (const c of [...sock.children]) {
       sock.remove(c);
-      c.traverse((x) => x.geometry?.dispose());
+      putAway(rig, slot, c);
     }
-    if (make) sock.add(make());
+    if (make) sock.add(takeOut(rig, slot, make));
   }
   // 등에 메는 것 (활을 들면 화살통): 몸통에 붙인다
   for (const c of rig.spine.children.filter((x) => x.userData.back)) {
     rig.spine.remove(c);
-    c.traverse((x) => x.geometry?.dispose());
+    putAway(rig, 'B', c);
   }
   rig.quiver = null;
   if (e.back) {
-    const b = e.back();
+    const b = takeOut(rig, 'B', e.back);
     b.userData.back = true;
     b.position.set(...BACK_AT.pos);
     b.rotation.set(...BACK_AT.rot);

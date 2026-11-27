@@ -101,6 +101,10 @@ function shakeStep(x, z) {
 
 export const actTime = (a) => LOOP_TIME[ACTS[a]] ?? ACTIONS[ACTS[a]]?.duration ?? 0;
 
+// 말풍선 그림 모음: 말 → 처음 만든 말풍선 (최근 BUBBLE_KEEP 개만, 오래된 것부터 버림)
+const BUBBLES = new Map();
+const BUBBLE_KEEP = 24;
+
 export class Character {
   // deferToon: 툰·외곽선은 부르는 쪽이 다음 장면에 toon() 으로 (다른 학생 캐릭터를 여러 장면에 나눠 만들 때)
   constructor(name, colorIndex, look = {}, { deferToon = false } = {}) {
@@ -196,7 +200,17 @@ export class Character {
   // 머리 위 말풍선: secs 초 동안 보였다가 흐려지며 사라진다 (새로 말하면 바꿔 끼움)
   say(text, secs = 4) {
     this.unsay();
-    this.bubble = makeBubble(text);
+    // 같은 말(맞을 때 자동으로 외치는 '아야!' 등)은 말풍선 그림을 한 번만 그려 모두 같이 쓴다: 때리기 놀이 때 분당 40개 가까이
+    // 새 캔버스를 그리고 GPU 로 올리느라 쓰레기 메모리가 쌓였다. 흐려지기(opacity)는 말풍선마다라 재질만 따로
+    let src = BUBBLES.get(text);
+    if (!src) {
+      src = makeBubble(text);
+      if (BUBBLES.size >= BUBBLE_KEEP) { const [k, old] = BUBBLES.entries().next().value; BUBBLES.delete(k); old.material.map.dispose(); old.material.dispose(); }
+      BUBBLES.set(text, src);
+    }
+    this.bubble = new THREE.Sprite(src.material.clone());
+    this.bubble.scale.copy(src.scale);
+    this.bubble.renderOrder = src.renderOrder;
     this.bubble.position.y = LABEL_Y + 0.2 + this.bubble.scale.y / 2;
     this.bubbleT = secs;
     this.root.add(this.bubble);
@@ -204,8 +218,7 @@ export class Character {
   unsay() {
     if (!this.bubble) return;
     this.bubble.removeFromParent();
-    this.bubble.material.map.dispose();
-    this.bubble.material.dispose();
+    this.bubble.material.dispose(); // 그림(map)은 BUBBLES 가 갖고 있다
     this.bubble = null;
   }
 

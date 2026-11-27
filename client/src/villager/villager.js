@@ -7,7 +7,7 @@ import {
   plaidTexture, soleBump, pocketTexture, shade, logoTexture, canvasTexture, FACE,
 } from './textures.js';
 import { ACTIONS, ARM_REST, createAnimator } from './actions.js';
-import { EQUIPMENT, attachEquipment, updateEquipment, straightenWrists } from './equipment.js';
+import { EQUIPMENT, attachEquipment, disposeEquipment, updateEquipment, straightenWrists } from './equipment.js';
 import { resolveArmCollision } from './collision.js';
 
 const PI = Math.PI;
@@ -1556,6 +1556,7 @@ export function createVillager(options = {}, { texScale = 1, hairSegs = 720, seg
 
   // 지오메트리만 버린다. 재질은 그냥 둔다: 버리면 셰이더 프로그램이 지워져 다시 만들 때 컴파일로 화면이 멈춘다 (equipment.js attachEquipment 참고)
   function clear() {
+    disposeEquipment(rig); // 내려놓고 넣어 둔 도구까지
     for (const c of [...root.children]) {
       root.remove(c);
       c.traverse((x) => { if (x.isMesh) { x.geometry.dispose(); x.skeleton?.dispose(); } });
