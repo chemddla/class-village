@@ -2765,7 +2765,7 @@ let [qStep, qRatio, qLines] = (() => {
   return [0, Infinity, false];
 })();
 renderer.setPixelRatio(Math.min(renderer.getPixelRatio(), qRatio));
-let noLines = LOW || !!qLines; // 다른 학생의 외곽선을 끈 상태인지 (자동 화질 2단계, ?q=low 는 처음부터)
+let noLines = !!qLines; // 다른 학생의 외곽선을 끈 상태인지 (자동 화질 2단계) · ?q=low 도 캐릭터·몬스터는 고화질로 두어 켜 둔다
 // FPS 를 누르면 처음 화질로 되돌린다 (어쩌다 한 번 느렸던 기기가 계속 낮은 화질에 머물지 않게)
 ui.fps.style.cssText += ';pointer-events:auto;cursor:pointer';
 ui.fps.onclick = () => {
@@ -2898,7 +2898,7 @@ function frame() {
     label.position.set(b.x, b.y - curveDrop(b.x, b.z), b.z);
   }
 
-  // 가벼운 모드(안티에일리어싱 끔): 나무·바위 윤곽선이 화면에서 1.2픽셀보다 얇아지지 않게 (먼 윤곽선이 끊겨 보이지 않게)
+  // 가벼운 모드(해상도 1배, 안티에일리어싱 끔): 캐릭터·몬스터·나무·바위 윤곽선이 화면에서 1.2픽셀보다 얇아지지 않게 (먼 윤곽선이 끊겨 보이지 않게)
   if (LOW) OUTLINE_MIN.value = (1.2 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / renderer.domElement.height;
   renderer.render(scene, camera);
   if (loading.isConnected) { // 첫 장면까지 그렸으면 로딩 화면을 걷는다

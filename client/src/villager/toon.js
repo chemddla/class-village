@@ -1,6 +1,7 @@
 // 카툰 모드 (쇼룸·마을 공용): 역법선(Inverted Hull) 외곽선 + 반-툰 명암
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { OUTLINE_MIN } from '../materials.js';
 
 export const OUTLINE_COLOR = 0x4a3525; // 검정 대신 따뜻한 짙은 갈색
 // 눈·렌즈 같은 평면 데칼과 그물·발목 입구처럼 얇은 면에는 외곽선을 두르지 않음
@@ -28,11 +29,19 @@ export function outlineMaterial(thickness, color, seam = null, skinned = false) 
       // noLine: 정점마다 외곽선을 줄이는 정도(0~1). 이 속성이 없는 메시는 0으로 읽혀 평소 두께 그대로다
       // armSeam: 어깨 관절 둘레 몸통 쪽 이음새 (오른쪽 음수, 왼쪽 양수). 팔을 내리고 있을 때만(seamHide) 외곽선을 지운다
       sh.uniforms.seamHide = { value: seam ?? NO_SEAM };
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float noLine;\nattribute float armSeam;\nuniform vec2 seamHide;')
+      sh.uniforms.uOutlineMin = OUTLINE_MIN; // 가벼운 모드: 화면에서 1픽셀보다 얇아지지 않게 (materials.js)
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float noLine;\nattribute float armSeam;\nuniform vec2 seamHide;\nuniform float uOutlineMin;')
         .replace('#include <begin_vertex>',
           `#include <begin_vertex>
   float seamCut = abs(armSeam) * (armSeam < 0.0 ? seamHide.x : seamHide.y);
-  if (dot(normal, normal) > 1e-12) transformed += normalize(normal) * ${thickness.toFixed(4)} * (1.0 - noLine) * (1.0 - seamCut);`); // 앞뒤 면이 맞붙어 법선이 0이 된 꼭짓점은 그대로
+  if (dot(normal, normal) > 1e-12) {
+    mat4 olM = modelMatrix;
+#ifdef USE_INSTANCING
+    olM = olM * instanceMatrix;
+#endif
+    float olD = -(viewMatrix * olM * vec4(transformed, 1.0)).z;
+    transformed += normalize(normal) * max(${thickness.toFixed(4)}, uOutlineMin * olD / length(olM[0].xyz)) * (1.0 - noLine) * (1.0 - seamCut);
+  }`); // 앞뒤 면이 맞붙어 법선이 0이 된 꼭짓점은 그대로
     };
     m.customProgramCacheKey = () => `outline:${key}`;
     cache.set(key, m);
