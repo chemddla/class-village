@@ -781,7 +781,27 @@ class VillageRoom extends Room {
       Object.assign(p, { fps, fpsLow: low, hitch, gq });
       p.pd = m.slice(4, 14).map((v) => Math.max(0, Math.min(99999, Number(v) | 0))).join(',');
       p.pl = typeof m[14] === 'string' ? m[14].replace(/[^\w.:;|@?$-]/g, '').slice(0, 200) : '';
+      // 선생님 기록 (관찰 도구 없이도 서버 기록에 남는다): 1분마다 학생별 FPS 를 모으고, 0.3초 넘게 멈춘 장면은 바로 한 줄로
+      const s = this.perfLog.get(p.name) ?? { fps: [], low: 255, worst: 0, gq: 0 };
+      s.fps.push(fps); s.low = Math.min(s.low, low); s.worst = Math.max(s.worst, hitch); s.gq = gq;
+      this.perfLog.set(p.name, s);
+      if (hitch >= 30) {
+        const [logic, render, after, outside, prog, tex, , calls, field, heap] = p.pd.split(',').map(Number);
+        console.log(`[멈춤] ${p.name} ${(hitch / 100).toFixed(1)}초 · 계산 ${logic} 그리기 ${render} 그린 뒤 ${after} 장면 밖 ${outside}ms`
+          + ` · 새 셰이더 ${prog} 새 텍스처 ${tex} · 그리기 ${calls}번 · ${field ? '들판' : '마을'} · 메모리 ${heap}MB · FPS ${fps} · ${gq & 1 ? '가벼운' : '고화질'}${gq >> 1 ? `-${gq >> 1}` : ''}${p.pl ? ` · 코드 ${p.pl}` : ''}`);
+      }
     });
+    // 1분마다 학생별 FPS 한 줄 (이름 평균/가장 낮은 0.5초/가장 긴 장면 초, 가벼운 모드는 *)
+    this.perfLog = new Map();
+    this.clock.setInterval(() => { // 방이 닫히면 함께 멈춘다
+      if (!this.perfLog.size) return;
+      const rows = [...this.perfLog].map(([name, s]) => {
+        const avg = Math.round(s.fps.reduce((a, b) => a + b, 0) / s.fps.length);
+        return { name, avg, text: `${name}${s.gq & 1 ? '*' : ''} ${avg}/${Math.round(s.low)}/${(s.worst / 100).toFixed(1)}s` };
+      }).sort((a, b) => a.avg - b.avg);
+      console.log(`[FPS 1분] ${rows.length}명 (평균/가장 낮은/가장 긴 멈춤, *가벼운): ${rows.map((r) => r.text).join(' · ')}`);
+      this.perfLog.clear();
+    }, 60000);
 
     // 외형 바꾸기 (테스트 서버에서만)
     this.onMessage('look', (client, look) => {
