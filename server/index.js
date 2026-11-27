@@ -17,6 +17,9 @@ const PORT = Number(process.env.GAME_PORT || 2567);
 const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
 // 몬스터 피해 나누기 (monHit·monHurt): 한 번에 믿어 주는 가장 큰 피해 · 이만큼(ms) 안 맞으면 기여도를 잊음 (몬스터 체력도 10초면 다시 참) · 같은 몬스터 두 번 나누기 막는 시간
 const MON_HIT_MAX = 2000;
+const PVP_MAX = 10; // 친구를 PVP_WINDOW 안에 이만큼 때리면 PVP_SLOW 동안 느려짐
+const PVP_WINDOW = 10 * 60 * 1000;
+const PVP_SLOW = 60 * 1000;
 const MON_FORGET = 12000;
 const BOSS_FORGET = 90000; // 보스(id 가 b 로 시작)는 싸움이 길고 체력이 서서히 차므로 오래 기억
 const BOSS_SPILL_GAP = 10000; // 보스 졸개 소환 사이 최소 간격 (ms)
@@ -647,6 +650,24 @@ class VillageRoom extends Room {
     this.waiting = new Map(); // 다시 접속하기를 기다리는 sessionId → { name, wait }
 
     this.onMessage('bye', (client) => this.bye.add(client.sessionId));
+
+    // 친구 때리기 벌: 맞은 학생 화면이 [때린 학생 번호]를 알린다. 10분 안에 10번 때리면 1분 동안 모든 속도 80% 감소 ('slow' [ms])
+    this.pvpHits = new Map(); // 때린 sessionId → 때린 시각들
+    this.onMessage('pvp', (client, sid) => {
+      const now = Date.now();
+      const by = this.clients.find((c) => c.sessionId === sid);
+      if (!by || sid === client.sessionId || !this.state.players.has(client.sessionId)) return;
+      if (now - (client.userData?.pvpAt ?? 0) < 400) return; // 맞은 쪽이 너무 잦게 알리면 무시 (아파하는 동안은 또 맞지 않는다)
+      client.userData = { ...client.userData, pvpAt: now };
+      if (now < (by.userData?.slowUntil ?? 0)) return; // 벌 받는 중에는 세지 않는다
+      const hits = (this.pvpHits.get(sid) ?? []).filter((t) => now - t < PVP_WINDOW);
+      hits.push(now);
+      if (hits.length < PVP_MAX) { this.pvpHits.set(sid, hits); return; }
+      this.pvpHits.delete(sid);
+      by.userData = { ...by.userData, slowUntil: now + PVP_SLOW };
+      by.send('slow', PVP_SLOW);
+      console.log(`[친구 때리기] ${this.state.players.get(sid)?.name}: 10분 안에 ${PVP_MAX}번 → 1분 느려짐`);
+    });
 
     // 말풍선 대화: [글자]. 40자까지, 너무 잦으면(0.7초) 무시. 모두에게 ['say', 학생 번호, 글자] (선생님이 볼 수 있게 서버 기록에도 남김)
     this.onMessage('say', (client, text) => {

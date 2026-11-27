@@ -336,8 +336,10 @@ function getHit(fromX, fromZ, mon = null, id = null) {
 // (내 동작이 다른 학생 화면에도 그대로 보여, 아파하는 얼굴·화내는 모습을 모두가 본다)
 const ANGRY_HITS = 3; // ANGRY_WINDOW 초 안에 이만큼 맞으면 화낸다
 const ANGRY_WINDOW = 8;
-function ouch(fromX, fromZ) {
+function ouch(fromX, fromZ, by = null) {
   const now = performance.now();
+  const bySid = by && [...others].find(([, o]) => o.char === by)?.[0];
+  if (bySid) room?.send('pvp', bySid); // 친구에게 맞음: 서버가 때린 횟수를 센다 (자꾸 때리면 느려지는 벌)
   local.hits = (local.hits ?? []).filter((t) => now - t < ANGRY_WINDOW * 1000);
   local.hits.push(now);
   const angry = local.hits.length >= ANGRY_HITS;
@@ -566,7 +568,7 @@ function arrowHit(a, from, mine) {
     burst('star', 8, c.x, c.groundY + 1.3, c.z, { power: 0.8 });
     // 사람끼리는 데미지 없이 움찔만 (체력은 그대로)
     if (c !== me) predictOuch(c);
-    else if (local.dodge <= 0 && local.hurt <= 0) { ouch(bx, bz); FX.hitstop(0.05); } // 구르는 중에는 피한다
+    else if (local.dodge <= 0 && local.hurt <= 0) { ouch(bx, bz, from); FX.hitstop(0.05); } // 구르는 중에는 피한다
     return done();
   }
   const dmg = atkOf(mine, 'bow') * a.dmg;
@@ -623,7 +625,7 @@ function boltBurst(a, at) {
     star(c.x, c.groundY + 1.3, c.z, c.x - at.x, c.z - at.z);
     // 사람끼리는 데미지 없이 움찔만 (체력은 그대로)
     if (c !== me) predictOuch(c);
-    else if (local.dodge <= 0 && local.hurt <= 0) { ouch(at.x, at.z); FX.hitstop(0.05); } // 구르는 중에는 피한다
+    else if (local.dodge <= 0 && local.hurt <= 0) { ouch(at.x, at.z, from); FX.hitstop(0.05); } // 구르는 중에는 피한다
   }
   let any = false;
   for (const mon of hereMonsters()) {
@@ -1611,7 +1613,7 @@ function netBonk(c, v, p) {
   if (v !== me) predictOuch(v);
   if (v === me && local.dodge <= 0 && local.hurt <= 0) {
     // 내가 맞았다: 휘두른 쪽으로 돌아보며 아파한다 (그물이라 체력은 그대로). 자꾸 맞으면 화낸다
-    ouch(c.x, c.z);
+    ouch(c.x, c.z, c);
   }
 }
 
@@ -2308,6 +2310,10 @@ function attach(r) {
   });
 
   // 서버가 이상한 이동이라고 판단하면 되돌림
+  r.onMessage('slow', (ms) => { // 친구를 너무 많이 때림: 잠깐 모든 속도 80% 감소
+    local.slowUntil = performance.now() + ms;
+    me?.say('친구를 너무 많이 때려서 1분 동안 느려져요 🐢', 4);
+  });
   r.onMessage('fix', ([x, z]) => {
     if (!me) return;
     const nx = fromCm(x);
@@ -2732,7 +2738,7 @@ function updateOthers(now) {
       const test = strike ? inStrike
         : o.hitAnim === ANIM.SLASH3 ? inThrust : o.hitAnim === ANIM.DAGGER_SLAM ? inDive : inSwing;
       // 다른 학생에게 맞으면 데미지 없이 움찔만 (체력은 그대로)
-      if (me && local.dodge <= 0 && local.hurt <= 0 && test(char.x, char.z, char.targetRot, me.x, me.z)) ouch(char.x, char.z);
+      if (me && local.dodge <= 0 && local.hurt <= 0 && test(char.x, char.z, char.targetRot, me.x, me.z)) ouch(char.x, char.z, char);
     }
   }
 }
@@ -2836,7 +2842,8 @@ function frame() {
   field.update(now / 1000);
   if (me && inField(me.x, me.z) !== onField) showMap(!onField);
 
-  if (me) updateMe(dt);
+  const myDt = now < (local.slowUntil ?? 0) ? dt * 0.2 : dt; // 친구 때리기 벌: 내 캐릭터의 시간만 느리게 (걷기·공격·동작 모두)
+  if (me) updateMe(myDt);
   updateOthers(now);
 
   // 카메라는 부드럽게 따라감. exp 로 줄여야 장면 빠르기가 출렁여도 캐릭터가 화면에서 앞뒤로 떨리지 않는다
@@ -2876,7 +2883,7 @@ function frame() {
     local.netStuck -= realDt;
     if (local.netStuck <= 0 && NET_ANIMS.has(local.act)) local.actLeft = 0;
   }
-  if (me) me.update(local.netStuck > 0 ? 0 : dt);
+  if (me) me.update(local.netStuck > 0 ? 0 : myDt);
   checkNetCatch();
   // 화면 밖 학생은 숨기고 움직이지도 않는다 (숨기지 않으면 보이지 않아도 매 장면 뼈대를 계산한다).
   // 동작 중이면 화면 밖이어도 움직인다: 화면 밖에서 쏜 화살·휘두른 타격이 그 동작의 '맞는 순간'에 나온다
