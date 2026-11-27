@@ -69,6 +69,7 @@ const FLEE_RUN = 8; // 이만큼 달아나면 멈춤 (m)
 const AGGRO_SIGHT = 5; // 공격형이 알아채는 거리 (m)
 const CHASE_LOSE = 9; // 이만큼 멀어지면 쫓기를 그만둠 (m): 화난 도망형도 이만큼 멀어지면 나를 잊는다
 const CHASE_SPEED = 1.6; // 쫓아오는 빠르기 (m/s)
+const AGGRO_REFRESH = 3; // 이만큼마다 상대할 학생을 가장 가까운 학생으로 다시 고름 (초)
 const ANGRY_CHASE = 1.75; // 맞아서 화나 쫓아올 때 빠르기 배수 (1.6 → 2.8 m/s: 걸어서 달아나면 겨우, 달리면 따돌림. 하악냥은 4.2 m/s로 걷기보다 빠름)
 const LEASH = 7; // 제 길에서 이보다 멀리는 가지 않음 (m)
 const ZONE = 10; // 쫓던 캐릭터가 제 자리(제 길)에서 이보다 멀어지면 포기하고 돌아감 (m): 철필통 싸움터처럼, 원 표시는 없음
@@ -590,6 +591,7 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
   let followUntil = 0; // 이때까지 받은 상태를 따름 (performance.now ms): 소식이 끊기면 스스로 정함
   let foeSid = null; // 상대하는 학생 (쫓거나 도망치거나 노려보는)
   let mySid = null;
+  let refreshAt = 0; // 이때 상대할 학생을 다시 고름 (performance.now ms)
   let atkSeq = 0; // 공격을 시작한 횟수 (받는 화면이 새 공격을 알아챔)
   let atkSeen = -1;
   let snap = null; // 마지막으로 받은 상태 { x, z, h, t, vx, vz }
@@ -602,7 +604,11 @@ export function createPlazaMonsters(scene, { id = null, x = PLAZA.fountain.x, z 
     const find = (sid) => ctx.people.find((p) => p.sid === sid) ?? null;
     if (follow) return foeSid ? find(foeSid) : null;
     const cur = foeSid && find(foeSid);
-    if (cur && (angry || targeting || ENGAGED.has(mode))) return cur;
+    const now = performance.now();
+    // 화난 건 때린 학생만 계속 노림(새로 때리면 그 학생으로 바뀜). 그 밖엔 몇 초마다 가장 가까운 학생으로 다시 고름
+    const refresh = !angry && now >= refreshAt;
+    if (refresh) refreshAt = now + AGGRO_REFRESH * 1000;
+    if (cur && !refresh && (angry || targeting || ENGAGED.has(mode))) return cur;
     let best = null, bd = Infinity;
     const ox = px ?? f.x, oz = px === null ? f.z : pz;
     for (const p of ctx.people) { const d = Math.hypot(p.x - ox, p.z - oz); if (d < bd) { bd = d; best = p; } }
