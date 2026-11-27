@@ -41,7 +41,7 @@ function dirt(x, z) {
 
 function buildGround() {
   const size = 2 * FIELD.r + 42; // 들판 + 둘레 숲까지
-  const seg = Math.round(size / 0.5);
+  const seg = Math.round(size / 1); // 1m 칸: 0.5m 와 눈으로 차이가 없고 태블릿 GPU 시간이 10% 준다 (땅이 들판에서 가장 비쌌음)
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2).translate(FIELD.x, 0, FIELD.z);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
@@ -256,7 +256,7 @@ function buildMeadow(group, low) {
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2;
     const h = 0.35 + (i % 3) * 0.12;
-    blades.push(new THREE.ConeGeometry(0.05, h, 4).translate(0, h / 2, 0).rotateZ(0.25).rotateY(a).translate(Math.cos(a) * 0.06, 0, Math.sin(a) * 0.06));
+    blades.push(new THREE.ConeGeometry(0.05, h, 4, 1, true).translate(0, h / 2, 0).rotateZ(0.25).rotateY(a).translate(Math.cos(a) * 0.06, 0, Math.sin(a) * 0.06));
   }
   const tuftGeo = mergeGeometries(blades);
   const tufts = [];
@@ -278,7 +278,7 @@ function buildMeadow(group, low) {
 
   // 들꽃: 노랑·하양·주홍 (마을보다 들판다운 색)
   const palette = [0xfff08a, 0xffffff, 0xffbe94, 0xffd35c].map((c) => new THREE.Color(c));
-  const stem = new THREE.CylinderGeometry(0.018, 0.024, 0.26, 5).translate(0, 0.13, 0);
+  const stem = new THREE.CylinderGeometry(0.018, 0.024, 0.26, 5, 1, true).translate(0, 0.13, 0); // 밑면·윗면은 땅·꽃에 가려 안 보여 뺀다 (풀잎도)
   const head = paint(new THREE.SphereGeometry(0.07, 8, 5).scale(1, 0.45, 1).translate(0, 0.27, 0), 0xffffff);
   const flowers = [];
   for (let tries = 0; flowers.length < (low ? 1050 : 1925) && tries < 35000; tries++) {
