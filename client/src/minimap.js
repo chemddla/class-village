@@ -5,7 +5,7 @@ import {
 } from '../../shared/world.js';
 
 const RANGE = HALF + 12; // 가운데에서 이만큼(m)까지 보여 줌 (섬 바닷가가 약 HALF + 11m)
-const RES = 240; // 배경 그림 크기 (px)
+const RES = 320; // 배경 그림 크기 (px)
 const hex = (c) => `#${c.toString(16).padStart(6, '0')}`;
 
 // 배경(바다·모래·풀·강·나무)은 지도가 늘 같으니 한 번만 그린다

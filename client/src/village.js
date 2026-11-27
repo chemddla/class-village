@@ -9,7 +9,7 @@ import {
 } from '../../shared/world.js';
 import { buildPortal } from './portal.js';
 import {
-  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME, instancedCells, cullCells, tiled, curveDrop, TREE_TALL,
+  toon, windToon, swayToon, basic, paint, vertexColorToon, addOutline, TIME, instancedCells, cullCells, tiled, curveDrop, TREE_TALL, CURVE, VIEW,
 } from './materials.js';
 import { makeLabel } from './label.js';
 
@@ -221,55 +221,77 @@ function flowTexture(seed, count) {
 }
 
 // 강 속 돌과 연잎 (다리 근처는 비움)
+// 마을이 넓어 강가 장식이 수백 개라 하나씩 그리면 그리기 횟수만 는다: 종류마다 칸(instancedCells)으로 묶어 지평선 너머 칸은 빠지게 한다
 function buildRiverDecor(group) {
   const rand = seeded(23);
   const W = RIVER_HALF_WIDTH;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const p = new THREE.Vector3();
+  const sc = new THREE.Vector3();
+  const Y = new THREE.Vector3(0, 1, 0);
+  const NO_TURN = new THREE.Quaternion();
+  // 모양·재질은 한 번만 만들어 칸마다 함께 쓴다
+  const rockGeo = new THREE.SphereGeometry(1, 10, 7);
   const rockMat = toon(0xa9a59b);
+  const ringGeo = new THREE.RingGeometry(1.25, 1.55, 20).rotateX(-Math.PI / 2);
   const ringMat = basic(0xffffff, { transparent: true, opacity: 0.6, depthWrite: false });
+  const padMats = [toon(0x86cf68), toon(0x6fbf5a)];
+  const lotusGeo = new THREE.ConeGeometry(0.07, 0.08, 6);
+  const lotusMat = toon(0xf6a8c8);
   const rocks = [];
-  for (const [x, side] of [[-52, -1], [-41, 1], [-31, -1], [-21, 1], [-12, -1], [-6.5, 1], [7, -1], [15, 1], [23, -1], [33, 1], [44, -1], [54, 1]]) {
+  for (const [x, side] of [[-112, 1], [-97, -1], [-83, 1], [-68, -1], [-52, -1], [-41, 1], [-31, -1], [-21, 1], [-12, -1], [-6.5, 1], [7, -1], [15, 1], [23, -1], [33, 1], [44, -1], [54, 1], [69, -1], [84, 1], [98, -1], [113, 1]]) {
     const zc = riverCenterZ(x) + side * (W - 0.55 - rand() * 0.4);
     for (let k = 0; k < 2; k++) {
       const s = k ? 0.18 + rand() * 0.08 : 0.3 + rand() * 0.12;
       const rx = x + (k ? 0.4 + rand() * 0.2 : 0);
       const rz = zc + (k ? (rand() - 0.5) * 0.4 : 0);
-      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 7).scale(s * 1.3, s * 0.7, s), rockMat);
-      m.position.set(rx, -0.08, rz);
-      m.rotation.y = rand() * Math.PI;
-      group.add(addOutline(m, 0.02));
-      // 돌을 감도는 물거품 고리
-      const ring = new THREE.Mesh(new THREE.RingGeometry(s * 1.25, s * 1.55, 20).rotateX(-Math.PI / 2), ringMat);
-      ring.position.set(rx, -0.045, rz);
-      group.add(ring);
-      rocks.push({ ring, s, ph: rand() * 6 });
+      rocks.push({ x: rx, z: rz, s, rot: rand() * Math.PI, ph: rand() * 6 });
     }
   }
+  // 돌 (외곽선 두께는 도형 단위라 돌 크기(약 0.3)로 나눠 예전 0.02m 와 맞춤)
+  instancedCells(group, rocks, (n) => addOutline(new THREE.InstancedMesh(rockGeo, rockMat, n), 0.06), (mesh, j, i) => {
+    const r = rocks[i];
+    mesh.setMatrixAt(j, m.compose(p.set(r.x, -0.08, r.z), q.setFromAxisAngle(Y, r.rot), sc.set(r.s * 1.3, r.s * 0.7, r.s)));
+  }, { tall: 1 });
+  // 돌을 감도는 물거품 고리 (장면마다 숨 쉬듯 커졌다 작아짐)
+  const ringPose = (r, t) => m.compose(p.set(r.x, -0.045, r.z), NO_TURN, sc.setScalar(r.s * (1 + Math.sin(t * 2.2 + r.ph) * 0.08)));
+  const ringAt = instancedCells(group, rocks, (n) => new THREE.InstancedMesh(ringGeo, ringMat, n), (mesh, j, i) => mesh.setMatrixAt(j, ringPose(rocks[i], 0)), { tall: 1 });
+  const placeRing = (i, t) => {
+    const { mesh, j } = ringAt[i];
+    mesh.setMatrixAt(j, ringPose(rocks[i], t));
+    mesh.instanceMatrix.needsUpdate = true;
+  };
   // 연잎: 물살이 느린 강가에 몇 장씩, 가끔 분홍 꽃
-  const padMat = toon(0x6fbf5a);
-  const padMat2 = toon(0x86cf68);
-  const flowerMat = toon(0xf6a8c8);
   const pads = [];
-  for (const [x, side] of [[-47, 1], [-36, -1], [-25, -1], [-16, 1], [-3.5, -1], [11, 1], [19, -1], [29, -1], [39, 1], [50, -1]]) {
+  const lotus = [];
+  for (const [x, side] of [[-106, -1], [-89, 1], [-74, -1], [-60, 1], [-47, 1], [-36, -1], [-25, -1], [-16, 1], [-3.5, -1], [11, 1], [19, -1], [29, -1], [39, 1], [50, -1], [63, 1], [77, -1], [92, 1], [108, -1]]) {
     const n = 3 + Math.floor(rand() * 3);
     for (let k = 0; k < n; k++) {
       const px = x + (rand() - 0.5) * 2.2;
       const pz = riverCenterZ(px) + side * (W - 0.35 - rand() * 0.6);
       const r = 0.18 + rand() * 0.12;
-      const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 16, 0.3, Math.PI * 2 - 0.6).rotateX(-Math.PI / 2), k % 2 ? padMat : padMat2);
-      pad.position.set(px, -0.04, pz);
-      pad.rotation.y = rand() * Math.PI * 2;
-      group.add(pad);
-      if (rand() < 0.3) {
-        const fl = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.08, 6), flowerMat);
-        fl.position.set(px, 0.0, pz);
-        group.add(fl);
-      }
-      pads.push({ pad, y: -0.04, ph: rand() * 6 });
+      const rot = rand() * Math.PI * 2;
+      if (rand() < 0.3) lotus.push({ x: px, z: pz });
+      pads.push({ x: px, z: pz, r, rot, light: k % 2 === 0, ph: rand() * 6 });
     }
   }
+  const padGeo = new THREE.CircleGeometry(1, 16, 0.3, Math.PI * 2 - 0.6).rotateX(-Math.PI / 2);
+  const padLists = [pads.filter((o) => o.light), pads.filter((o) => !o.light)];
+  const placePad = (o, mesh, j, t) => mesh.setMatrixAt(j, m.compose(p.set(o.x, -0.04 + Math.sin(t * 1.3 + o.ph) * 0.006, o.z), q.setFromAxisAngle(Y, o.rot), sc.setScalar(o.r)));
+  const padAt = padLists.map((list, k) => instancedCells(group, list, (n) => new THREE.InstancedMesh(padGeo, padMats[k], n),
+    (mesh, j, i) => placePad(list[i], mesh, j, 0), { tall: 1 }));
+  instancedCells(group, lotus, (n) => new THREE.InstancedMesh(lotusGeo, lotusMat, n),
+    (mesh, j, i) => mesh.setMatrixAt(j, m.compose(p.set(lotus[i].x, 0, lotus[i].z), NO_TURN, sc.setScalar(1))), { tall: 1 });
   return (t) => {
-    for (const r of rocks) r.ring.scale.setScalar(1 + Math.sin(t * 2.2 + r.ph) * 0.08);
-    for (const p of pads) p.pad.position.y = p.y + Math.sin(t * 1.3 + p.ph) * 0.006;
+    // 안 보이는 칸(지평선 너머)은 건너뛴다
+    rocks.forEach((_, i) => { if (ringAt[i].mesh.visible) placeRing(i, t); });
+    padLists.forEach((list, k) => list.forEach((o, i) => {
+      const { mesh, j } = padAt[k][i];
+      if (!mesh.visible) return;
+      placePad(o, mesh, j, t);
+      mesh.instanceMatrix.needsUpdate = true;
+    }));
   };
 }
 
@@ -346,6 +368,7 @@ const ROUND_BLOBS = [
 // 위는 햇빛을 받아 밝고 아래는 그늘지게 꼭짓점 색을 칠함
 // seg: 공 하나의 [가로, 세로] 칸 수 (멀리 있는 나무는 FAR_SEG 로 거칠게)
 export const FAR_SEG = [8, 6];
+const VERY_FAR_SEG = [6, 4]; // LOD_FAR 보다 먼 나무
 export function roundCanopy(seed = 7, BLOBS = ROUND_BLOBS, top = 3.1, seg = [14, 10]) {
   const parts = BLOBS.map(([x, y, z, r]) => {
     const g = new THREE.SphereGeometry(r, ...seg).translate(x, y, z); // 잎 덩어리 7개 × 나무 수십 그루 × 외곽선: 칸 수가 곧 장면 무게 (번호(index)를 남겨 맞닿은 꼭짓점을 한 번만 계산)
@@ -449,8 +472,8 @@ export function fruitCanopy(fruit, count = FRUIT_MAX) {
 
 // 침엽수 한 층: 꼭대기에서 퍼져 내려와 가장자리가 뾰족뾰족 처진 치마 모양
 // 중간 고리도 살짝 물결져서 가지가 겹친 듯 보이고, 아래는 짙은 밑면으로 막혀 있다
-function pineTier(yb, h, R, turn, bright) {
-  const M = 33; // 11갈래 × 3
+// M: 둘레 꼭짓점 수 (3의 배수: 갈래 × 3). 멀리 있는 나무는 갈래를 줄인다
+function pineTier(yb, h, R, turn, bright, M = 33) {
   const verts = [0, yb + h, 0];
   const colors = [bright * 0.82, bright * 0.86, bright * 0.84];
   const ring = (t, scallop, droop, shade) => {
@@ -477,15 +500,17 @@ function pineTier(yb, h, R, turn, bright) {
   return meshFrom(verts, colors, index);
 }
 
-export function pineCanopy(seed = 11) {
+export function pineCanopy(seed = 11, M = 33) {
   const rand = seeded(seed);
   const tiers = [[0.95, 1.0, 1.08], [1.55, 0.95, 0.9], [2.12, 0.88, 0.72], [2.65, 0.8, 0.52], [3.12, 0.72, 0.32]];
-  const g = mergeGeometries(tiers.map(([yb, h, R], i) => pineTier(yb, h, R, rand() * 6.28, 0.92 + i * 0.03)));
+  const g = mergeGeometries(tiers.map(([yb, h, R], i) => pineTier(yb, h, R, rand() * 6.28, 0.92 + i * 0.03, M)));
   return tintByHeight(g, 0.8, 3.9, 0.74, 1.08);
 }
 
 // far: 멀리 있는 칸에 쓸 거친 모양 (swapLod)
 export function trunkGeometry(far = false) {
+  // 아주 먼 나무(far === 2): 잎에 거의 가려 줄기만 (뿌리 없이 다섯 모)
+  if (far === 2) return mergeGeometries([new THREE.CylinderGeometry(0.16, 0.25, 1.45, 5).translate(0, 0.72, 0)]);
   // 아래로 갈수록 굵어지는 줄기 + 땅을 움켜쥔 듯 퍼진 뿌리 다섯 갈래
   // 뿌리는 뾰족하지 않게, 길쭉한 공을 바깥으로 갈수록 낮게 눕혀 끝이 뭉툭하게 땅에 묻히도록
   const parts = [new THREE.CylinderGeometry(0.16, 0.25, 1.45, far ? 6 : 10).translate(0, 0.72, 0)];
@@ -555,7 +580,7 @@ function buildTrees(group) {
   const trunkGeo = trunkGeometry();
   const trunkMat = toon(0xc0905c);
   const trunkAt = instancedCells(group, WORLD.trees, (n) => addOutline(new THREE.InstancedMesh(trunkGeo, trunkMat, n), 0.03),
-    (mesh, j, i) => mesh.setMatrixAt(j, m.compose(base[i].pos, base[i].q, s.setScalar(base[i].s))), { tall: TREE_TALL, lo: trunkGeometry(true) });
+    (mesh, j, i) => mesh.setMatrixAt(j, m.compose(base[i].pos, base[i].q, s.setScalar(base[i].s))), { tall: TREE_TALL, lo: [trunkGeometry(true), trunkGeometry(2)] });
 
   // 잎 색: 나무마다 조금씩 다른 초록 (연두 ~ 짙은 초록), 과일나무는 잎 색을 미리 칠해 두어 흰색
   const tintOf = (k, h, h2) => {
@@ -565,7 +590,12 @@ function buildTrees(group) {
     return col.setRGB(1, 1, 1);
   };
   const leafMat = swayToon(0xffffff, { vertexColors: true });
-  const far = [roundCanopy(7, ROUND_BLOBS, 3.1, FAR_SEG), null, ovalCanopy(FAR_SEG)]; // 뾰족한 나무는 원래 칸 수가 적어 그대로
+  // 멀리(LOD_NEAR) · 아주 멀리(LOD_FAR) 쓸 거친 잎. 뾰족한 나무는 갈래 수를 줄인다
+  const far = [
+    [roundCanopy(7, ROUND_BLOBS, 3.1, FAR_SEG), roundCanopy(7, ROUND_BLOBS, 3.1, VERY_FAR_SEG)],
+    [pineCanopy(11, 21), pineCanopy(11, 12)],
+    [ovalCanopy(FAR_SEG), ovalCanopy(VERY_FAR_SEG)],
+  ];
   [roundCanopy(), pineCanopy(), ovalCanopy()].forEach((geo, k) => {
     const list = kinds[k];
     instancedCells(group, list.map((o) => o.t), (n) => addOutline(new THREE.InstancedMesh(geo, leafMat, n), 0.025, { sway: true }), (mesh, j, n) => {
@@ -694,7 +724,7 @@ function buildMeadow(group, { low = false } = {}) {
   // 들꽃: 마을 꽃(채집 대상) + 장식용 꽃
   const palette = [0xffa8c5, 0xfff08a, 0xffffff, 0xcdb4ff, 0xffbe94, 0xa8d8ff].map((c) => new THREE.Color(c));
   const flowers = WORLD.flowers.map((f) => ({ ...f }));
-  for (let tries = 0; flowers.length < (low ? 880 : 1520) && tries < 12000; tries++) {
+  for (let tries = 0; flowers.length < (low ? 3000 : 4800) && tries < 40000; tries++) {
     const x = (rand() * 2 - 1) * (HALF - 1.5);
     const z = (rand() * 2 - 1) * (HALF - 1.5);
     if (grassy(x, z)) flowers.push({ x, z, c: Math.floor(rand() * palette.length), s: 0.6 + rand() * 0.5 });
@@ -970,7 +1000,7 @@ function buildClouds(group) {
   const shapes = [0, 1, 2].map(() => cloudGeometry(rand));
   const SPAN = HALF + 55; // 이 범위를 벗어나면 반대편에서 다시 나타남
   const clouds = [];
-  for (let i = 0; i < 36; i++) {
+  for (let i = 0; i < 44; i++) {
     const a = rand() * Math.PI * 2;
     const r = HALF + 10 + rand() * 34; // 섬 바깥쪽 하늘
     const m = new THREE.Mesh(shapes[i % shapes.length], mat);
@@ -1607,8 +1637,8 @@ function buildFishShadows(group) {
       f.v = (rand() < 0.5 ? -1 : 1) * (0.25 + rand() * 0.35);
     }
   }
-  for (let i = 0; i < 20; i++) fish.push(make('river', -0.045));
-  for (let i = 0; i < 80; i++) fish.push(make('sea', SEA_Y + 0.003)); // 섬 둘레가 길어서 넉넉히
+  for (let i = 0; i < 36; i++) fish.push(make('river', -0.045));
+  for (let i = 0; i < 140; i++) fish.push(make('sea', SEA_Y + 0.003)); // 섬 둘레가 길어서 넉넉히
   for (let i = 0; i < 7; i++) fish.push(make('river', -0.06, true)); // 들판 연못 (민물고기, 물 높이 -0.07 바로 위)
   const showFish = (f, on) => { for (const m of f.parts) m.visible = on; };
   return {
@@ -1650,7 +1680,7 @@ function buildFishShadows(group) {
         } else if (f.kind === 'river') {
           // 물살 따라 오가다가 강 끝(바다)에 가까워지면 돌아선다
           f.rx += step;
-          if (Math.abs(f.rx) > 33) { f.v = -f.v; f.rx = Math.sign(f.rx) * 33; }
+          if (Math.abs(f.rx) > HALF + 2) { f.v = -f.v; f.rx = Math.sign(f.rx) * (HALF + 2); }
           f.x = f.rx;
           f.z = riverCenterZ(f.x) + f.off + Math.sin(t * 0.4 + f.ph) * 0.5;
           const hz = Math.cos(t * 0.4 + f.ph) * 0.2 * Math.sign(f.v);
@@ -1670,6 +1700,10 @@ function buildFishShadows(group) {
           f.hx = -c * Math.cos(yaw) + sn * Math.sin(yaw);
           f.hz = -sn * Math.cos(yaw) - c * Math.sin(yaw);
         }
+        // 보이는 거리(둥근 지평선) 밖이면 숨기고 몸 휘기 계산도 건너뛴다: 마을이 넓어 물고기 대부분이 멀리 있다
+        const near = Math.hypot(f.x - CURVE.center.x, f.z - CURVE.center.y) < VIEW.reach + 4;
+        if (f.parts[0].visible !== near) showFish(f, near);
+        if (!near) continue;
         // 몸 휘기: 머리는 거의 그대로, 뒤로 갈수록 크게 좌우로 (꼬리 끝이 가장 많이)
         const amp = 0.05 + 0.07 * burst;
         for (const m of f.parts) {

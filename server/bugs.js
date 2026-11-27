@@ -82,7 +82,7 @@ export function setupBugs(room, Bug, speedOf) {
       s.next = Date.now() + rnd(18, 35) * 1000;
     } else if (sp.move === 'tree') {
       const fruit = new Set(WORLD.fruitTrees);
-      const free = WORLD.trees.map((t, i) => ({ t, i })).filter(({ t, i }) => !fruit.has(i) && t.kind === 0 && !taken.has(`t${i}`) && ((Math.abs(t.x) < 29 && Math.abs(t.z) < 29) || inField(t.x, t.z)));
+      const free = WORLD.trees.map((t, i) => ({ t, i })).filter(({ t, i }) => !fruit.has(i) && t.kind === 0 && !taken.has(`t${i}`) && ((Math.abs(t.x) < HALF - 1 && Math.abs(t.z) < HALF - 1) || inField(t.x, t.z)));
       const pick = free[Math.floor(Math.random() * free.length)];
       if (!pick) return null;
       const { t, i } = pick;

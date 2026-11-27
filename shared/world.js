@@ -1,7 +1,7 @@
 // 마을 지도 데이터 (화면과 서버가 함께 사용)
 // 같은 시드로 만들기 때문에 지도 자체를 네트워크로 보낼 필요가 없다.
 
-export const WORLD_SIZE = 120; // 한 변 120m (넓이는 처음 60m 마을의 4배)
+export const WORLD_SIZE = 240; // 한 변 240m (넓이는 처음 60m 마을의 16배). 바닷가가 가운데에서 약 HALF + 11m 라 들판(z 137m~)과 겹치지 않는 가장 큰 크기
 export const HALF = WORLD_SIZE / 2;
 export const EDGE = HALF - 1.2; // 마을(숲) 가장자리. 그 바깥은 모래 해변이 둘러싼 섬이다
 export const PLAYER_RADIUS = 0.35;
@@ -407,7 +407,7 @@ export function generateWorld(seed = 20261118) {
   };
 
   // 가장자리를 두르는 나무
-  for (let i = 0; i < 280; i++) {
+  for (let i = 0; i < 560; i++) { // 둘레가 2배라 2배만 (넓이처럼 4배 하면 가장자리 숲만 빽빽해진다)
     const side = Math.floor(rand() * 4);
     const t = (rand() * 2 - 1) * (HALF - 1);
     const inset = HALF - 1 - rand() * 3;
@@ -417,7 +417,7 @@ export function generateWorld(seed = 20261118) {
     if (ok(x, z, 0.6, trees)) trees.push({ x, z, s, r: 0.55 * s, kind: rand() < 0.35 ? 1 : 0 });
   }
   // 안쪽 숲
-  for (let i = 0; i < 640 && trees.length < 440; i++) {
+  for (let i = 0; i < 2560 && trees.length < 1760; i++) {
     const x = (rand() * 2 - 1) * (HALF - 4);
     const z = (rand() * 2 - 1) * (HALF - 4);
     const s = 0.75 + rand() * 0.55;
@@ -425,7 +425,7 @@ export function generateWorld(seed = 20261118) {
   }
   // 바위
   const all = [...trees];
-  for (let i = 0; i < 320 && rocks.length < 72; i++) {
+  for (let i = 0; i < 1280 && rocks.length < 288; i++) {
     const x = (rand() * 2 - 1) * (HALF - 3);
     const z = (rand() * 2 - 1) * (HALF - 3);
     const s = 0.5 + rand() * 0.6;
@@ -436,7 +436,7 @@ export function generateWorld(seed = 20261118) {
     }
   }
   // 꽃 (부딪히지 않는 장식). 강둑(강가에서 3m)에는 피지 않는다: 낚시할 때 가리지 않게
-  for (let i = 0; i < 1040 && flowers.length < 560; i++) {
+  for (let i = 0; i < 4160 && flowers.length < 2240; i++) {
     const x = (rand() * 2 - 1) * (HALF - 2);
     const z = (rand() * 2 - 1) * (HALF - 2);
     if (ok(x, z, 0.3, all) && !nearRiver(x, z, RIVER_BANK_CLEAR)) flowers.push({ x, z, c: Math.floor(rand() * 4), s: 0.7 + rand() * 0.5 });
@@ -462,7 +462,7 @@ export function generateWorld(seed = 20261118) {
 // ── 들판(저렙 사냥터, 가명): 마을 섬과 멀리 떨어진 곳에 따로 있는 맵. 걸어서는 못 가고 포탈로만 오간다 ──
 // 같은 방·같은 좌표계 안이라 접속을 바꾸지 않고 순간이동만 하면 된다 (z는 int16 cm 라 327m 안쪽이어야 함)
 export const FIELD = { x: 0, z: 224, r: 80 }; // 가운데 · 걸어 다닐 수 있는 대략의 반지름 (가장자리는 물결 모양 숲)
-export const inField = (x, z) => z > 120;
+export const inField = (x, z) => z > HALF + 14; // 마을 바닷가(최대 약 HALF + 11m)와 들판 남쪽 숲(약 137m) 사이
 // 그 방향의 들판 가장자리까지 거리 (이보다 멀면 숲이라 못 감)
 export function fieldEdge(x, z) {
   const a = Math.atan2(z - FIELD.z, x - FIELD.x);
@@ -596,6 +596,22 @@ export function outcropStones(o) {
 // 한 번만 만들어 두고 함께 쓴다
 export const WORLD = generateWorld();
 WORLD.colliders.push(...portalPillars(PORTALS[0]));
+// 마을 부딪힘 원을 4m 칸에 나눠 둔다: 나무·바위가 2천 개 가까이라 걸을 때마다 다 훑지 않고 둘레 칸만 본다
+const CELL = 4;
+const cellKey = (cx, cz) => cx * 4096 + cz;
+const VILLAGE_CELLS = new Map();
+for (const c of WORLD.colliders) {
+  const x0 = Math.floor((c.x - c.r - 1) / CELL), x1 = Math.floor((c.x + c.r + 1) / CELL);
+  const z0 = Math.floor((c.z - c.r - 1) / CELL), z1 = Math.floor((c.z + c.r + 1) / CELL);
+  for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+    const k = cellKey(cx, cz);
+    if (!VILLAGE_CELLS.has(k)) VILLAGE_CELLS.set(k, []);
+    VILLAGE_CELLS.get(k).push(c);
+  }
+}
+const NO_CELL = [];
+// (x, z) 둘레(반지름 1m 까지)의 마을 부딪힘 원
+const villageCollidersNear = (x, z) => VILLAGE_CELLS.get(cellKey(Math.floor(x / CELL), Math.floor(z / CELL))) ?? NO_CELL;
 export const FIELD_MAP = generateField();
 // 들판 나무·바위·꽃도 마을 목록 뒤에 이어 붙인다: 벌목·바위 깨기·과일·채집·곤충이 번호 하나로 마을과 똑같이 돈다
 // (들판 k 번째 나무 = WORLD.trees[FIELD_MAP.base.trees + k]). 부딪힘은 들판 것(FIELD_MAP.colliders)을 따로 본다
@@ -625,7 +641,7 @@ export function isBlocked(x, z, radius = PLAYER_RADIUS) {
   if (islandN(x, z) > shoreN(x, z) - BEACH.walk) return true; // 바다
   const onBridge = Math.abs(x - BRIDGE.x) < BRIDGE.halfWidth - radius * 0.5;
   if (!onBridge && Math.abs(z - riverCenterZ(x)) < RIVER_HALF_WIDTH + radius * 0.3) return true;
-  for (const c of WORLD.colliders) {
+  for (const c of (radius <= 1 ? villageCollidersNear(x, z) : WORLD.colliders)) {
     if (c.rock !== undefined && ROCKS_GONE.has(c.rock)) continue; // 삽으로 깨뜨린 바위는 지나갈 수 있다
     const dx = x - c.x;
     const dz = z - c.z;
@@ -747,7 +763,7 @@ export const BUG_SHY = {
 };
 export const NET_CATCH = 0.42; // 그물 테가 지나간 길에서 이만큼 안에 있던 곤충이 잡힌다 (m)
 export const NET_ROOM = 3.2; // 휘두른 길은 캐릭터 둘레 이만큼 안이어야 믿는다 (m)
-export const BUG_COUNT = 90; // 마을·들판에 늘 있는 곤충 수 (둘에 하나쯤 들판)
+export const BUG_COUNT = 150; // 마을·들판에 늘 있는 곤충 수 (둘에 하나쯤 들판)
 // 곤충이 머무를 수 있는 풀밭: 갈 수 있는 곳이면서 광장·길·모래사장·강에서 떨어진 곳
 export function onGrass(x, z) {
   if (isBlocked(x, z, 0.3)) return false;
@@ -884,7 +900,7 @@ export const STONE_BY_ID = Object.fromEntries(STONES.map((s) => [s.id, s]));
 // 화석: 땅에 금(✱)이 간 자리(화석 자리)를 파면 나온다. 희귀할수록 덜 나오고(RARITY weight) 상점에서 비싸게 판다
 // shape: 땅에 놓인 모양 (bone 뼈 · shell 조개·소용돌이 · slab 납작한 돌판 · amber 호박 · egg 알)
 // 화석 자리: 마을·들판에 늘 이만큼 있고, 파낸 자리는 respawn 초 뒤 다른 곳에 새로 생긴다. reach: 이만큼 가까이 파야 나온다 (m)
-export const FOSSIL_SPOTS = { village: 5, field: 2, respawn: 90, reach: 0.6 };
+export const FOSSIL_SPOTS = { village: 12, field: 2, respawn: 90, reach: 0.6 };
 export const FOSSILS = [
   { id: 'shellfossil', name: '조개 화석', rarity: 'common', price: 400, shape: 'shell', color: 0xd9c7a3 },
   { id: 'fernfossil', name: '고사리 화석', rarity: 'common', price: 450, shape: 'slab', color: 0xb9b09a },
