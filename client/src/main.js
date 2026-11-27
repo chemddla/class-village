@@ -2070,10 +2070,14 @@ function attach(r) {
       // 따로 만든 그림판에 그리면 색 공간이 달라 다른 셰이더가 컴파일되므로 화면에 직접 그린다)
       camera.position.set(me.x, 3, me.z + 5);
       camera.lookAt(me.x, 1, me.z);
+      // 나만 남기고 그린다 (빛은 셰이더가 달라지지 않게 둔다): 장면 전체를 도구 수(9)만큼 그리면 느린 기기에서 들어올 때마다 1~1.5초 멈췄다
+      const hidden = scene.children.filter((o) => o !== me.root && !o.isLight && o.visible);
+      for (const o of hidden) o.visible = false;
       renderer.setScissorTest(true);
       renderer.setScissor(0, 0, 1, 1);
       for (let t = 1; t < TOOLS.length; t++) { me.villager.equip(TOOLS[t]); renderer.render(scene, camera); }
       renderer.setScissorTest(false);
+      for (const o of hidden) o.visible = true;
       me.villager.equip(TOOLS[local.tool]);
       camTarget.set(me.x, 0, me.z);
       local.last = null;

@@ -477,9 +477,7 @@ function staff() {
   const crystal = part(new THREE.SphereGeometry(R * TIP, 10, 6), mat(WOOD, { roughness: 0.85, emissive: '#2a1808', emissiveIntensity: 0.5 }), g, '끝마개', [0, WAND_TOP, 0]);
   // 외곽선 두께를 부품 크기 대신 하나로 (대는 길어서 두껍고 끝마개는 작아서 얇아, 끝에 대 외곽선 입구가 뚫려 보였다)
   g.traverse((m) => { if (m.isMesh) m.userData.outlineWidth = 0.003; });
-  const light = new THREE.PointLight('#ffcf7a', 0, 0.6);
-  light.position.copy(crystal.position);
-  g.add(light);
+  // 빛(PointLight)은 달지 않는다: 지팡이를 든 사람 수만큼 장면의 빛 수가 바뀌어, 들거나 놓을 때마다 모두의 화면이 셰이더를 다시 컴파일하며 멈췄다
   // 끝에 모인 기: 날아가는 에너지 볼(arrows.js makeBolt)과 같은 하얀 심 + 파란 겉껍질. 크기 1 = 날아가는 볼 크기 (주민 크기 배율 1.7 로 나눔)
   // 투명 재질이라 툰·외곽선을 입히지 않는다. 평소엔 숨겨 둔다
   const orb = new THREE.Group();
@@ -488,7 +486,7 @@ function staff() {
   orb.add(new THREE.Mesh(new THREE.SphereGeometry(0.13 / 1.7, 12, 8), new THREE.MeshBasicMaterial({ color: '#7dd6ff', transparent: true, opacity: 0.5, depthWrite: false })));
   orb.visible = false;
   g.add(orb);
-  g.userData.staff = { crystal, light, orb };
+  g.userData.staff = { crystal, orb };
   return grip(g);
 }
 
@@ -1229,12 +1227,10 @@ export function updateEquipment(rig, root, fx, t, dt, { equipment, action, arrow
       if (st) {
         const glow = fx.glow ?? 0;
         st.crystal.material.emissiveIntensity = 0.5 + glow * 2.2;
-        st.light.intensity = glow * 0.08; // 얼굴 가까이 오므로 아주 약하게
         st.crystal.rotation.y = t * 1.5;
         const c = fx.charge ?? 0;
         st.orb.visible = c > 0.01;
         if (st.orb.visible) st.orb.scale.setScalar(c * (1 + Math.sin(t * 24) * 0.06)); // 살짝 일렁인다
-        st.light.intensity += c * 0.15;
       }
     });
   }
