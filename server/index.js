@@ -17,9 +17,9 @@ const PORT = Number(process.env.GAME_PORT || 2567);
 const MAX_CLIENTS = Number(process.env.MAX_CLIENTS || 40);
 // 몬스터 피해 나누기 (monHit·monHurt): 한 번에 믿어 주는 가장 큰 피해 · 이만큼(ms) 안 맞으면 기여도를 잊음 (몬스터 체력도 10초면 다시 참) · 같은 몬스터 두 번 나누기 막는 시간
 const MON_HIT_MAX = 2000;
-const PVP_MAX = 10; // 친구를 PVP_WINDOW 안에 이만큼 때리면 PVP_SLOW 동안 느려짐
+const PVP_MAX = 10; // 친구를 PVP_WINDOW 안에 이만큼 때리면 PVP_CUFF 동안 수갑 (꼼짝 못 함)
 const PVP_WINDOW = 10 * 60 * 1000;
-const PVP_SLOW = 60 * 1000;
+const PVP_CUFF = 60 * 1000;
 const MON_FORGET = 12000;
 const BOSS_FORGET = 90000; // 보스(id 가 b 로 시작)는 싸움이 길고 체력이 서서히 차므로 오래 기억
 const BOSS_SPILL_GAP = 10000; // 보스 졸개 소환 사이 최소 간격 (ms)
@@ -56,6 +56,7 @@ const Player = schema({
   fpsLow: 'uint8',
   hitch: 'uint8',
   gq: 'uint8',
+  cuff: 'boolean', // 수갑 (친구를 너무 많이 때린 벌): 찬 동안은 움직이지 못한다
   s: 'uint16', // 이 자리를 보낸 때 (보낸 쪽 시계, 10ms 단위로 1~65535 를 돈다. 0 = 모름): 받는 쪽이 자리 사이 간격을 고르게 잡는 데 쓴다
 }, 'Player');
 
@@ -651,23 +652,30 @@ class VillageRoom extends Room {
 
     this.onMessage('bye', (client) => this.bye.add(client.sessionId));
 
-    // 친구 때리기 벌: 맞은 학생 화면이 [때린 학생 번호]를 알린다. 10분 안에 10번 때리면 1분 동안 모든 속도 80% 감소 ('slow' [ms])
-    this.pvpHits = new Map(); // 때린 sessionId → 때린 시각들
+    // 친구 때리기 벌: 맞은 학생 화면이 [때린 학생 번호]를 알린다. 10분 안에 10번 때리면 1분 동안 수갑을 차고 꼼짝 못 함 (Player.cuff)
+    // 이름으로 기억해, 새로 고치거나 다시 들어와도 남은 시간만큼 다시 찬다
+    this.pvpHits = new Map(); // 때린 학생 이름 → 때린 시각들
+    this.cuffUntil = new Map(); // 이름 → 수갑이 풀리는 시각
     this.onMessage('pvp', (client, sid) => {
       const now = Date.now();
-      const by = this.clients.find((c) => c.sessionId === sid);
-      if (!by || sid === client.sessionId || !this.state.players.has(client.sessionId)) return;
+      const p = this.state.players.get(sid);
+      if (!p || sid === client.sessionId || !this.state.players.has(client.sessionId)) return;
       if (now - (client.userData?.pvpAt ?? 0) < 400) return; // 맞은 쪽이 너무 잦게 알리면 무시 (아파하는 동안은 또 맞지 않는다)
       client.userData = { ...client.userData, pvpAt: now };
-      if (now < (by.userData?.slowUntil ?? 0)) return; // 벌 받는 중에는 세지 않는다
-      const hits = (this.pvpHits.get(sid) ?? []).filter((t) => now - t < PVP_WINDOW);
+      if (p.cuff) return; // 벌 받는 중에는 세지 않는다
+      const hits = (this.pvpHits.get(p.name) ?? []).filter((t) => now - t < PVP_WINDOW);
       hits.push(now);
-      if (hits.length < PVP_MAX) { this.pvpHits.set(sid, hits); return; }
-      this.pvpHits.delete(sid);
-      by.userData = { ...by.userData, slowUntil: now + PVP_SLOW };
-      by.send('slow', PVP_SLOW);
-      console.log(`[친구 때리기] ${this.state.players.get(sid)?.name}: 10분 안에 ${PVP_MAX}번 → 1분 느려짐`);
+      if (hits.length < PVP_MAX) { this.pvpHits.set(p.name, hits); return; }
+      this.pvpHits.delete(p.name);
+      this.cuffUntil.set(p.name, now + PVP_CUFF);
+      p.cuff = true;
+      console.log(`[친구 때리기] ${p.name}: 10분 안에 ${PVP_MAX}번 → 1분 수갑`);
     });
+    this.clock.setInterval(() => { // 시간이 다 된 수갑 풀기
+      const now = Date.now();
+      for (const [name, t] of this.cuffUntil) if (t <= now) this.cuffUntil.delete(name);
+      this.state.players.forEach((p) => { if (p.cuff && !this.cuffUntil.has(p.name)) p.cuff = false; });
+    }, 500);
 
     // 말풍선 대화: [글자]. 40자까지, 너무 잦으면(0.7초) 무시. 모두에게 ['say', 학생 번호, 글자] (선생님이 볼 수 있게 서버 기록에도 남김)
     this.onMessage('say', (client, text) => {
@@ -721,7 +729,8 @@ class VillageRoom extends Room {
       // 허용 거리: 달리기 속도 × 시간 × 여유를 '모아 둔 여유(b)'에 쌓고, 움직인 만큼 쓴다 (+ 작은 오차).
       // 메시지 사이 시간만 보면, 통신이 잠깐 밀려 두 메시지가 한꺼번에 도착할 때(사이 시간 0) 달리던 학생이 뒤로 튕긴다
       const budget = Math.min((prev.b ?? 0) + RUN_SPEED * dt * 1.6, RUN_SPEED * 1.5 * 1.6);
-      if (dist > budget + 0.4 || isBlocked(x, z, 0.2)) {
+      const cuffed = p.cuff; // 수갑 찬 동안은 제자리 (동작 번호만 받는다)
+      if (dist > (cuffed ? 0.05 : budget + 0.4) || isBlocked(x, z, 0.2)) {
         // 이상한 이동 → 마지막 정상 위치로 되돌림
         client.send('fix', [toCm(prev.x), toCm(prev.z)]);
         return;
@@ -810,6 +819,7 @@ class VillageRoom extends Room {
     if (!p.dex) p.dex = new MapSchema();
     p.xp = 0; // 정하지 않으면 undefined 라서 += 하면 NaN
     p.job = '';
+    p.cuff = this.cuffUntil.has(p.name); // 수갑을 찬 채 새로 고쳐도 그대로
     // 같은 이름으로 새로 들어오면, 연결이 끊겨 기다리던 예전 캐릭터는 바로 지운다 (새 탭·다른 기기로 다시 들어온 경우)
     for (const w of this.waiting.values()) if (w.name === p.name) w.wait.reject(false);
     this.state.players.set(client.sessionId, p);

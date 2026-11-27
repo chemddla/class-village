@@ -275,6 +275,20 @@ export const ACTIONS = {
     P['head.rx'] = -0.12;
     P['head.rz'] = Math.sin(ph) * 0.06;
   },
+
+  // 수갑 (친구를 너무 많이 때린 벌): 두 손목을 배 앞에 모으고 고개를 푹, 가끔 손을 꼼지락
+  cuffed: { equip: 'none', expression: 'hurt', loop(t, P) {
+    const fid = Math.sin(t * 1.3) * 0.04;
+    for (const [s, k] of [['R', 1], ['L', -1]]) {
+      P[`shoulder${s}.rx`] = -0.45 + fid;
+      P[`shoulder${s}.rz`] = -k * 0.12;
+      P[`elbow${s}.rx`] = -0.75;
+      P[`elbow${s}.ry`] = k * 0.75;
+    }
+    P['spine.rx'] = 0.08;
+    P['head.rx'] = 0.3 + Math.sin(t * 0.7) * 0.03;
+    P['spine.py'] = Math.sin(t * 2) * 0.003;
+  } },
 };
 
 

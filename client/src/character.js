@@ -15,6 +15,11 @@ const SQ_K = 260;
 const SQ_C = 24;
 const vA = new THREE.Vector3();
 const vB = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+// 수갑 (세상 크기 m): 손목 고리 · 고리 사이 사슬 (길이 1 → 두 고리 사이만큼 늘인다)
+const CUFF_MAT = new THREE.MeshStandardMaterial({ color: 0xc4ccd4, metalness: 0.7, roughness: 0.3 });
+const CUFF_RING = new THREE.TorusGeometry(0.075, 0.018, 6, 16);
+const CUFF_CHAIN = new THREE.CylinderGeometry(0.01, 0.01, 1, 6);
 
 // 주민 모델은 키 약 1.0 → 예전 캐릭터(약 1.7)와 같은 크기로
 const SCALE = 1.7;
@@ -58,7 +63,7 @@ function lerpAngle(a, b, t) {
 const BASE = { [ANIM.IDLE]: 'idle', [ANIM.WALK]: 'walk', [ANIM.RUN]: 'run' };
 // 잠깐 하는 동작: 번호 → 주민 액션 이름. 길이는 일회성은 액션 길이, 반복형은 정해 둔 시간
 const ACTS = {
-  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.HURT]: 'hurt', [ANIM.DIG]: 'dig', [ANIM.FILL]: 'fill', [ANIM.ANGRY]: 'angry', [ANIM.FAINT]: 'faint',
+  [ANIM.WAVE]: 'wave', [ANIM.JUMP]: 'jump', [ANIM.FLIP]: 'flip', [ANIM.CHEER]: 'cheer', [ANIM.SURPRISE]: 'hit', [ANIM.HURT]: 'hurt', [ANIM.DIG]: 'dig', [ANIM.FILL]: 'fill', [ANIM.ANGRY]: 'angry', [ANIM.FAINT]: 'faint', [ANIM.CUFFED]: 'cuffed',
   [ANIM.GATHER]: 'gather', [ANIM.CHOP]: 'chop', [ANIM.FISH]: 'fish', [ANIM.SMASH]: 'clubSmash', [ANIM.SMASH2]: 'clubSmash2', [ANIM.SMASH3]: 'clubSmash3', [ANIM.SMASH4]: 'clubSmash4',
   [ANIM.CHOP2]: 'chopAgain', [ANIM.CHOP3]: 'chopAgain2', [ANIM.SMASH_AIR]: 'clubAir', [ANIM.SMASH_SLAM]: 'clubSlam', [ANIM.SMASH_DASH]: 'clubDash',
   [ANIM.TREE_SHAKE]: 'treeShake', [ANIM.POCKET]: 'pocket',
@@ -75,7 +80,7 @@ const CONTINUES = { [ANIM.SMASH_AIR]: ANIM.JUMP, [ANIM.SMASH_SLAM]: ANIM.FLIP, [
   [ANIM.BOW_AIR]: ANIM.JUMP, [ANIM.BOW_SLAM]: ANIM.FLIP };
 // 반복형은 정해 둔 시간, 쓰러지기는 누운 채 잠시 있다가 일어남
 // 입질 기다리기는 낚시가 끝날 때까지 (main.js 가 다시 이어 줌), 활 조준은 공격키를 뗄 때까지 (main.js 가 끝낸다)
-const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60, staffCharge: 60, bowStrike: 60, staffMeditate: 600 }; // 기 모으기도 떼거나 다 모을 때까지 (main.js 가 끝낸다)
+const LOOP_TIME = { wave: 1.6, cheer: 1.6, faint: 3.5, fishWait: 60, bowAim: 60, staffCharge: 60, bowStrike: 60, staffMeditate: 600, cuffed: 600 }; // 기 모으기도 떼거나 다 모을 때까지 (main.js 가 끝낸다)
 // 뛰어오른 뒤 발이 땅에 닿는 시각(초): 액션의 높이 곡선이 0이 되는 때 (jump: 진행도 0.78, flip: 0.74)
 export const BOW_SLAM_LAND = 0.85; // 활 더블 점프 공격은 쏠 틈을 두려고 조금 더 떠 있다가 내려앉는다
 export const LAND = { jump: 0.78 * ACTIONS.jump.duration + 0.015, flip: 0.74 * ACTIONS.flip.duration };
@@ -263,6 +268,36 @@ export class Character {
     this.root.position.y = -curveDrop(this.root.position.x, this.root.position.z);
     this.actSec += dt;
     this.juice(dt);
+    this.updateCuffs(this.current === 'cuffed');
+  }
+
+  // 수갑: 두 손목에 고리, 그 사이를 사슬로 (수갑 동작 중에만 보인다)
+  updateCuffs(on) {
+    if (!on && !this.cuffs) return;
+    const rig = this.villager.rig;
+    if (!this.cuffs) {
+      const rings = ['handR', 'handL'].map((j) => {
+        const m = new THREE.Mesh(CUFF_RING, CUFF_MAT);
+        m.rotation.x = Math.PI / 2; // 고리가 팔(뼈 -y)을 감싸게
+        m.scale.setScalar(1 / rig[j].getWorldScale(vA).x);
+        m.position.y = 0.012 / rig[j].getWorldScale(vA).y;
+        rig[j].add(m);
+        return m;
+      });
+      const chain = new THREE.Mesh(CUFF_CHAIN, CUFF_MAT);
+      this.root.add(chain);
+      this.cuffs = { rings, chain };
+    }
+    const { rings, chain } = this.cuffs;
+    for (const o of [...rings, chain]) o.visible = on;
+    if (!on) return;
+    rings[0].getWorldPosition(vA);
+    rings[1].getWorldPosition(vB);
+    this.root.worldToLocal(vA);
+    this.root.worldToLocal(vB);
+    chain.position.addVectors(vA, vB).multiplyScalar(0.5);
+    chain.scale.set(1, Math.max(0.01, vA.distanceTo(vB)), 1);
+    chain.quaternion.setFromUnitVectors(UP, vB.sub(vA).normalize());
   }
 
   // 늘어남·눌림: 정한 비율로 확 바꾼 뒤 스프링으로 통통 튀며 1로 돌아간다

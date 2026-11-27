@@ -2062,6 +2062,10 @@ function attach(r) {
       p.bag.forEach((n, f) => bag.set(f, n));
       renderInv();
       $(p).listen('xp', (v, prev) => showXp(v, prev));
+      $(p).listen('cuff', (v) => { // 친구를 너무 많이 때림: 수갑을 차고 잠깐 꼼짝 못 함 (서버가 풀어 준다)
+        local.cuffed = v;
+        if (v) { me?.say('친구를 너무 많이 때려서 1분 동안 수갑! 🔒', 4); toast('🔒 친구를 너무 많이 때려서 1분 동안 움직일 수 없어요'); }
+      });
       $(p).listen('job', (v, prev) => {
         myJob = v ?? '';
         ab = abilitiesOf(statsOf(levelOf(myXp).lv, myJob), levelOf(myXp).lv, myJob);
@@ -2309,10 +2313,6 @@ function attach(r) {
   });
 
   // 서버가 이상한 이동이라고 판단하면 되돌림
-  r.onMessage('slow', (ms) => { // 친구를 너무 많이 때림: 잠깐 모든 속도 80% 감소
-    local.slowUntil = performance.now() + ms;
-    me?.say('친구를 너무 많이 때려서 1분 동안 느려져요 🐢', 4);
-  });
   r.onMessage('fix', ([x, z]) => {
     if (!me) return;
     const nx = fromCm(x);
@@ -2459,6 +2459,17 @@ function updateMe(dt) {
   updateSkills(dt);
   if (STRIKE_CHARGE[local.act] && local.actLeft > 0 && !local.charged && actTime(local.act) - local.actLeft >= STRIKE_CHARGE[local.act].at) { local.charged = true; chargeFx(me, local.act); }
   local.dodge -= dt; // 0 아래로 내려간 만큼이 쿨타임이 지난 시간
+  if (local.cuffed) { // 수갑: 움직이지도, 공격·생활 행동도 못 하고 손을 모은 채 서 있는다
+    if (local.fishing) stopFishing();
+    local.dodge = Math.min(local.dodge, 0);
+    local.netStep = null;
+    local.diveQueued = false;
+    local.act = ANIM.CUFFED;
+    local.actLeft = 0;
+    me.setAnim(ANIM.CUFFED);
+    sendMove(ANIM.CUFFED, dt);
+    return;
+  }
   // 잠자리채: 휘두르기 전에 곤충과의 거리를 맞추는 한 발
   if (local.netStep?.left > 0) {
     const step = Math.min(local.netStep.left, local.netStep.speed * dt);
@@ -2693,7 +2704,10 @@ function updateMe(dt) {
   if (gate >= 0 && local.gate !== gate && room) room.send('portal', gate);
   local.gate = gate;
 
-  // 움직임이 있을 때만 초당 10회 전송
+  sendMove(anim, dt);
+}
+// 움직임이 있을 때만 초당 10회 전송
+function sendMove(anim, dt) {
   local.sendTimer += dt;
   if (local.sendTimer >= SEND_INTERVAL && room) {
     local.sendTimer %= SEND_INTERVAL; // 남은 시간을 넘겨 정확히 0.1초마다 (0으로 되돌리면 60fps에서 0.117초마다가 돼 서버 묶음과 계속 어긋난다)
@@ -2842,8 +2856,7 @@ function frame() {
   field.update(now / 1000);
   if (me && inField(me.x, me.z) !== onField) showMap(!onField);
 
-  const myDt = now < (local.slowUntil ?? 0) ? dt * 0.2 : dt; // 친구 때리기 벌: 내 캐릭터의 시간만 느리게 (걷기·공격·동작 모두)
-  if (me) updateMe(myDt);
+  if (me) updateMe(dt);
   updateOthers(now);
 
   // 카메라는 부드럽게 따라감. exp 로 줄여야 장면 빠르기가 출렁여도 캐릭터가 화면에서 앞뒤로 떨리지 않는다
@@ -2883,7 +2896,7 @@ function frame() {
     local.netStuck -= realDt;
     if (local.netStuck <= 0 && NET_ANIMS.has(local.act)) local.actLeft = 0;
   }
-  if (me) me.update(local.netStuck > 0 ? 0 : myDt);
+  if (me) me.update(local.netStuck > 0 ? 0 : dt);
   checkNetCatch();
   // 화면 밖 학생은 숨기고 움직이지도 않는다 (숨기지 않으면 보이지 않아도 매 장면 뼈대를 계산한다).
   // 동작 중이면 화면 밖이어도 움직인다: 화면 밖에서 쏜 화살·휘두른 타격이 그 동작의 '맞는 순간'에 나온다
