@@ -699,7 +699,6 @@ class VillageRoom extends Room {
       if (!p || !from || Math.hypot(fromCm(p.x) - from.x, fromCm(p.z) - from.z) > PORTAL.reach + 1) return;
       const to = portalArrive(PORTALS[from.to]);
       this.stopFishing(client.sessionId);
-      p.xp = afterDeath(p.xp);
       p.x = toCm(to.x);
       p.z = toCm(to.z);
       this.last.set(client.sessionId, { x: to.x, z: to.z, t: Date.now() });
@@ -711,6 +710,7 @@ class VillageRoom extends Room {
       if (!p) return;
       const to = portalArrive(PORTALS[0]);
       this.stopFishing(client.sessionId);
+      p.xp = afterDeath(p.xp);
       p.x = toCm(to.x);
       p.z = toCm(to.z);
       this.last.set(client.sessionId, { x: to.x, z: to.z, t: Date.now() });
