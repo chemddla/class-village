@@ -1,6 +1,6 @@
 // 생활 행동: 생활 대상(곤충·나무·물가·꽃) 앞에서 G 를 누르면, 손에 무엇을 들었든 그 일에 맞는 도구를 꺼내 들고 한다
 import * as THREE from 'three';
-import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM, waterNear, inField, FIELD_POND } from '../../shared/world.js';
+import { WORLD, LIFE_SPOTS, RIVER_HALF_WIDTH, riverCenterZ, ANIM, waterNear, waterAt, BOB_AHEAD, inField, FIELD_POND } from '../../shared/world.js';
 import { toon, swayToon, addOutline } from './materials.js';
 import { roundCanopy, trunkGeometry } from './village.js';
 
@@ -48,13 +48,22 @@ export function findTarget(tool, x, z, spots) {
     for (const t of WORLD.trees) near(t.x, t.z, t.r);
     for (const t of of('tree')) near(t.x, t.z, 0.3);
   } else if (tool === 'rod') {
-    // 강둑이면 강 가운데 쪽, 바닷가면 섬 바깥(바다) 쪽을 보고 던진다
     const where = waterNear(x, z);
     if (where === 'river' && inField(x, z)) near(FIELD_POND.x, FIELD_POND.z, FIELD_POND.r); // 들판 연못
     else if (where === 'river') near(x, riverCenterZ(x), RIVER_HALF_WIDTH);
-    else if (where === 'sea') {
-      const L = Math.hypot(x, z) || 1;
-      near(x + (x / L) * 3, z + (z / L) * 3, 2.9);
+    else if (where === 'sea') near(x, z, -0.1); // 바닷가: 예전처럼 거리 0.1m 로 셈 (방향은 아래에서 정함)
+    // 찌가 실제로 물에 떨어지는 방향들의 한가운데를 보고 던진다 (해안선이 구불구불해서 섬 바깥쪽이 모래일 수 있다)
+    if (best) {
+      const wet = [];
+      for (let i = 0; i < 32; i++) {
+        const a = (i / 32) * Math.PI * 2;
+        if (waterAt(x + Math.sin(a) * BOB_AHEAD, z + Math.cos(a) * BOB_AHEAD)) wet.push(a);
+      }
+      if (!wet.length) return null; // 물이 찌가 닿는 곳보다 멀다
+      const mean = Math.atan2(wet.reduce((s, a) => s + Math.sin(a), 0), wet.reduce((s, a) => s + Math.cos(a), 0));
+      const a = wet.reduce((p, q) => (Math.abs(Math.sin((q - mean) / 2)) < Math.abs(Math.sin((p - mean) / 2)) ? q : p)); // 한가운데와 가장 가까운 물 쪽 방향
+      best.x = x + Math.sin(a) * BOB_AHEAD;
+      best.z = z + Math.cos(a) * BOB_AHEAD;
     }
   } else {
     for (const f of WORLD.flowers) near(f.x, f.z);
