@@ -46,11 +46,14 @@ console.log('지형지물', Object.entries(FIELD_MAP.props.reduce((t, o) => ({ .
 console.log('world.check (들판): ok');
 
 // 레벨: 경계에서 정확히 오르고, 남은 경험치가 다음 레벨 몫으로 넘어간다
-import { levelOf, statsOf, abilitiesOf, defenseOf, defCut, DEF_HALF, MONSTERS, dmgRoll, DMG_SPREAD, shareXp } from './world.js';
+import { levelOf, afterDeath, statsOf, abilitiesOf, defenseOf, defCut, DEF_HALF, MONSTERS, dmgRoll, DMG_SPREAD, shareXp } from './world.js';
 assert.deepEqual(levelOf(0), { lv: 1, xp: 0, need: 20 });
 assert.deepEqual(levelOf(19), { lv: 1, xp: 19, need: 20 });
 assert.deepEqual(levelOf(20), { lv: 2, xp: 0, need: 40 });
 assert.deepEqual(levelOf(70), { lv: 3, xp: 10, need: 60 });
+assert.equal(afterDeath(70), 64); // Lv3 칸(60)의 10% = 6
+assert.equal(afterDeath(62), 60); // 모은 만큼까지만: 레벨은 그대로
+assert.equal(afterDeath(0), 0);
 console.log('world.check (레벨): ok');
 
 // 스텟: 모험가는 힘만 레벨마다 +4, 전직하면 처음부터 주 +3 · 부 +1 로 다시 짠다. Lv1 능력치는 예전 기본값 그대로

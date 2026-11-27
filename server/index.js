@@ -9,7 +9,7 @@ import {
   ANIM, ANIM_MAX, TOOLS, ARROW, COLORS, RUN_SPEED, SPAWN, isBlocked, toCm, fromCm, cleanLook,
   WORLD, fruitOf, FRUIT_MAX, FRUIT_REGROW, BAG_MAX, PICK_REACH, SHAKE_DROP, GRAB_REACH, DROP_LIFE, WOOD_STOCK, WOOD_REGROW, CHOP_REACH, rollWood, LIFE_SPOTS, DIG_HOLE, ROCK_HP, ROCK_REGROW, ROCKS_GONE, groundKind,
   FOSSIL_SPOTS, pickFossil, FLOWER_ITEMS, PICK_FLOWER_REACH, PLANT, plantKind, plantItem, SEEDS, HALF, FIELD, inField,
-  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, MONSTERS, killXp, shareXp, levelOf, JOBS, JOB_LEVEL, canWield,
+  PORTALS, PORTAL, portalArrive, RARITY, waterNear, waterAt, BOB_AHEAD, byteToAngle, fishForShadow, sizeOfShadow, FISH_APPROACH, NIBBLE_GAP, BITE_AFTER, REEL_SLACK, XP, MONSTERS, killXp, shareXp, levelOf, afterDeath, JOBS, JOB_LEVEL, canWield,
 } from '../shared/world.js';
 import { setupBugs } from './bugs.js';
 
@@ -664,6 +664,7 @@ class VillageRoom extends Room {
       if (!p || !from || Math.hypot(fromCm(p.x) - from.x, fromCm(p.z) - from.z) > PORTAL.reach + 1) return;
       const to = portalArrive(PORTALS[from.to]);
       this.stopFishing(client.sessionId);
+      p.xp = afterDeath(p.xp);
       p.x = toCm(to.x);
       p.z = toCm(to.z);
       this.last.set(client.sessionId, { x: to.x, z: to.z, t: Date.now() });

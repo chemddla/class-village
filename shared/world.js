@@ -87,6 +87,12 @@ export function levelOf(total) {
   while (xp >= xpNeed(lv)) { xp -= xpNeed(lv); lv++; }
   return { lv, xp, need: xpNeed(lv) };
 }
+// 쓰러지면 이번 레벨 경험치 칸의 DEATH_XP 만큼 잃는다. 레벨은 떨어지지 않는다 (이번 레벨에서 모은 만큼까지만)
+export const DEATH_XP = 0.1;
+export function afterDeath(total) {
+  const { xp, need } = levelOf(total);
+  return total - Math.min(xp, Math.round(need * DEATH_XP));
+}
 
 // 스텟: 레벨에 따라 저절로 오른다. Lv1 은 모두 1.
 // 모험가는 레벨마다 힘 +3, 전직하면 처음부터 그 직업이었던 것처럼 다시 짠다(주스텟 +3 · 부스텟 +1 = 4포인트): 전직하면 늘 조금 더 세진다

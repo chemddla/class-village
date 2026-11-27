@@ -200,7 +200,7 @@ function twistElbow(sh, el, hand, colliders, prev = 0) {
       // 바로 앞 각(아직 박힘)과 이 각(빠져나옴) 사이를 좁혀 '딱 빠져나오는' 각을 쓴다
       let lo = ang - Math.sign(ang) * (Math.PI / 12);
       let hi = ang;
-      for (let n = 0; n < 5; n++) {
+      for (let n = 0; n < 10; n++) { // 5번이면 0.47도씩 끊겨, 몸이 살랑일 때 팔꿈치가 툭툭 떨린다 (낚시 기다리기)
         const mid = (lo + hi) / 2;
         apply(mid);
         if (measure(el, hand, colliders, 'elbow') < 1e-4) hi = mid; else lo = mid;

@@ -245,7 +245,8 @@ function showXp(total, prev) {
   ui.xp.querySelector('i').style.width = `${(xp / need) * 100}%`;
   ui.xp.querySelector('em').textContent = lv;
   ui.xp.title = `경험치 ${xp} / ${need}`;
-  if (prev === undefined || total <= prev || !me) return;
+  if (prev === undefined || total === prev || !me) return;
+  if (total < prev) { FX.damage(`-${prev - total} XP`, me.x, me.groundY + 2.2, me.z, '#9aa3ad'); return; } // 쓰러져서 잃음
   FX.damage(`+${total - prev} XP`, me.x, me.groundY + 2.2, me.z, '#ffd45e');
   if (lv > levelOf(prev).lv) {
     toast(lv === JOB_LEVEL && !myJob ? `🎉 Lv ${lv}! 이제 전직할 수 있어요` : `🎉 레벨 업! 이제 Lv ${lv}`);
@@ -2316,7 +2317,7 @@ function attach(r) {
       showMap(inField(nx, nz));
       if (!local.revive) toast(`🌀 ${PORTALS[to.to].name}에 왔어요!`);
     } else me.setPose(nx, nz, me.targetRot);
-    if (local.revive) toast('💫 마을에서 다시 깨어났어요!');
+    if (local.revive) toast('💫 마을에서 다시 깨어났어요! (경험치가 조금 줄었어요)');
     local.revive = false;
     local.last = null;
   });
