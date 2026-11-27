@@ -238,7 +238,10 @@ export class Character {
     this.root.rotation.y = lerpAngle(this.root.rotation.y, this.targetRot, Math.min(1, dt * 14));
 
     if (this.actLeft > 0) this.actLeft -= dt;
-    const want = ACTS[this.anim] && this.actLeft > 0 ? ACTS[this.anim] : BASE[this.anim] ?? 'idle';
+    // 붙잡고 있는 동작(입질 기다리기·조준·기 모으기 등, 60초 이상)은 스스로 끝내지 않는다: 보낸 쪽이 끝낼 때까지.
+    // 화면마다 이 동작을 받은 때가 달라(늦게 들어옴·맞아서 끊김) 60초를 따로 세면, 내 화면과 친구 화면 모습이 어긋났다
+    const held = LOOP_TIME[ACTS[this.anim]] >= 60;
+    const want = ACTS[this.anim] && (this.actLeft > 0 || held) ? ACTS[this.anim] : BASE[this.anim] ?? 'idle';
     if (want !== this.current) {
       this.current = want;
       const at = ACTS[this.anim] === want ? this.startAt ?? 0 : 0;
