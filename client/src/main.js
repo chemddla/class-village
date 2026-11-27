@@ -44,7 +44,7 @@ const store = {
 
 // ── 3D 기본 설정 ──
 const canvas = document.getElementById('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW, powerPreference: 'high-performance', stencil: true }); // stencil: 삽으로 판 구덩이 속을 땅 아래로 그리기
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: true }); // stencil: 삽으로 판 구덩이 속을 땅 아래로 그리기
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1 : 1.5)); // 태블릿 성능을 위해 최대 1.5배
 const scene = new THREE.Scene();
 // 하늘: 위는 맑은 하늘색, 지평선 쪽은 안개와 같은 파스텔색으로 번지는 그라데이션
