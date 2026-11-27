@@ -2024,7 +2024,8 @@ function buildPending() {
   for (const [id, b] of pendingChars) {
     if (!b.char) {
       const spare = spareChars.get(charKey(b.p));
-      if (spare) { spareChars.delete(charKey(b.p)); b.char = spare.char; b.char.prev = null; b.ready = true; continue; }
+      // 남겨 둔 캐릭터는 이미 툰·외곽선을 입혔고 셰이더도 준비돼 있다 (toned 를 빼면 다음 장면에 toon() 을 또 불러 몸을 다시 합쳤다)
+      if (spare) { spareChars.delete(charKey(b.p)); b.char = spare.char; b.char.prev = null; b.toned = b.ready = true; continue; }
       b.char = new Character(b.p.name, b.p.color, parseLook(b.p.look), { deferToon: true });
       return;
     }
@@ -2042,15 +2043,41 @@ function buildPending() {
   }
 }
 
-function clearPlayers() {
-  for (const o of others.values()) o.char.dispose();
+// keep: 같은 방에 다시 붙은 경우(와이파이가 잠깐 끊김) 만들어 둔 캐릭터를 버리지 않고 남겨 두었다가 그대로 다시 쓴다.
+// 버리고 다시 만들면 학생 수만큼 몸·셰이더를 새로 만드느라, 다시 붙자마자 화면이 또 몇 초씩 멈췄다
+let spareMe = null; // 남겨 둔 내 캐릭터 { char, key }
+// 장면에서 빼서 남겨 둘 준비: 말풍선·휘두르던 자국이 그 자리에 굳어 남지 않게 치우고, 걷던 속도도 잊는다
+function stashChar(char) {
+  char.unsay();
+  for (const k in char.trails) char.trails[k].dispose();
+  char.trails = {};
+  char.prev = null;
+  char.root.removeFromParent();
+}
+function spareOther(key, char) {
+  stashChar(char);
+  spareChars.get(key)?.char.dispose(); // 같은 이름·색·외형이 이미 남아 있으면 그건 버린다
+  spareChars.set(key, { char, at: performance.now() });
+}
+function clearPlayers(keep = false) {
+  for (const o of others.values()) {
+    if (keep) spareOther(o.key, o.char); else o.char.dispose();
+  }
   others.clear();
   for (const b of pendingChars.values()) b.char?.dispose();
   pendingChars.clear();
-  for (const s of spareChars.values()) s.char.dispose();
-  spareChars.clear();
-  if (me) { me.dispose(); me = null; }
+  if (!keep) {
+    for (const s of spareChars.values()) s.char.dispose();
+    spareChars.clear();
+  }
+  spareMe?.char.dispose();
+  spareMe = null;
+  if (me) {
+    if (keep && me.key) { stashChar(me); spareMe = { char: me, key: me.key }; } else me.dispose();
+    me = null;
+  }
 }
+let toolsWarmed = false; // 도구 미리 그리기는 이 화면에서 한 번만 (셰이더·텍스처는 다시 접속해도 그대로 남아 있다)
 
 function attach(r) {
   room = r;
@@ -2059,7 +2086,10 @@ function attach(r) {
 
   $(r.state).players.onAdd((p, id) => {
     if (id === r.sessionId) {
-      me = new Character(p.name, p.color, parseLook(p.look));
+      if (spareMe?.key === charKey(p)) me = spareMe.char; // 잠깐 끊겼다 다시 붙음: 내 캐릭터도 그대로
+      else { spareMe?.char.dispose(); me = new Character(p.name, p.color, parseLook(p.look)); }
+      spareMe = null;
+      me.key = charKey(p);
       me.setTool(local.tool);
       me.setArrows(local.arrows);
       me.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
@@ -2071,13 +2101,16 @@ function attach(r) {
       camera.position.set(me.x, 3, me.z + 5);
       camera.lookAt(me.x, 1, me.z);
       // 나만 남기고 그린다 (빛은 셰이더가 달라지지 않게 둔다): 장면 전체를 도구 수(9)만큼 그리면 느린 기기에서 들어올 때마다 1~1.5초 멈췄다
-      const hidden = scene.children.filter((o) => o !== me.root && !o.isLight && o.visible);
-      for (const o of hidden) o.visible = false;
-      renderer.setScissorTest(true);
-      renderer.setScissor(0, 0, 1, 1);
-      for (let t = 1; t < TOOLS.length; t++) { me.villager.equip(TOOLS[t]); renderer.render(scene, camera); }
-      renderer.setScissorTest(false);
-      for (const o of hidden) o.visible = true;
+      if (!toolsWarmed) {
+        toolsWarmed = true;
+        const hidden = scene.children.filter((o) => o !== me.root && !o.isLight && o.visible);
+        for (const o of hidden) o.visible = false;
+        renderer.setScissorTest(true);
+        renderer.setScissor(0, 0, 1, 1);
+        for (let t = 1; t < TOOLS.length; t++) { me.villager.equip(TOOLS[t]); renderer.render(scene, camera); }
+        renderer.setScissorTest(false);
+        for (const o of hidden) o.visible = true;
+      }
       me.villager.equip(TOOLS[local.tool]);
       camTarget.set(me.x, 0, me.z);
       local.last = null;
@@ -2125,7 +2158,7 @@ function attach(r) {
       char.setPose(fromCm(p.x), fromCm(p.z), byteToAngle(p.r));
       char.root.rotation.y = char.targetRot;
       scene.add(char.root);
-      const o = { char, buf: [] };
+      const o = { char, buf: [], key: charKey(p) };
       others.set(id, o);
       const push = () => {
         const t = performance.now();
@@ -2152,7 +2185,7 @@ function attach(r) {
       };
       push();
       $(p).onChange(push);
-      $(p).listen('look', (v, prev) => { if (prev !== undefined) char.setLook(parseLook(v)); });
+      $(p).listen('look', (v, prev) => { o.key = charKey(p); if (prev !== undefined) char.setLook(parseLook(v)); });
     }
   }
 
@@ -2160,13 +2193,8 @@ function attach(r) {
     const b = pendingChars.get(id);
     if (b) { b.char?.dispose(); pendingChars.delete(id); }
     const o = others.get(id);
-    if (o) { // 곧 다시 들어올 수 있으니 버리지 않고 잠깐 둔다 (같은 이름·색·외형이 이미 남아 있으면 그건 버린다)
-      o.char.unsay();
-      for (const k in o.char.trails) o.char.trails[k].dispose(); // 휘두르던 자국이 그 자리에 굳어 남지 않게
-      o.char.trails = {};
-      o.char.root.removeFromParent();
-      spareChars.get(charKey(p))?.char.dispose();
-      spareChars.set(charKey(p), { char: o.char, at: performance.now() });
+    if (o) { // 곧 다시 들어올 수 있으니 버리지 않고 잠깐 둔다
+      spareOther(charKey(p), o.char);
       others.delete(id);
     }
     setPeople();
@@ -2419,7 +2447,7 @@ async function retryResume() {
     if (token) {
       try {
         const r = await client.reconnect(token);
-        clearPlayers();
+        clearPlayers(true);
         attach(r);
         return 'back';
       } catch { /* 자리가 없어졌거나 아직 연결이 안 됨 */ }
@@ -2443,7 +2471,7 @@ async function tryReconnect() {
   const how = await resume();
   // 서버가 다시 켜졌다 = 새 버전이 올라왔을 수 있다: 화면도 새로 불러 새 코드를 받는다
   // (방금 잡은 자리로 곧바로 다시 접속하고, 위치·카메라는 기억해 둔 그대로라 화면이 그대로 이어진다)
-  if (how === 'rejoined') { location.reload(); return; }
+  if (how === 'rejoined') { byeWhy = 'reload'; location.reload(); return; }
   resumed();
 }
 
@@ -2486,7 +2514,9 @@ ui.form.addEventListener('submit', async (e) => {
 });
 
 // 화면을 닫거나 다른 곳으로 갈 때: 서버에 알려 내 캐릭터가 오래 남아 있지 않게 (새로고침이면 곧바로 돌아온다)
-addEventListener('pagehide', () => { try { room?.send('bye'); } catch { /* 이미 끊김 */ } });
+// 까닭(byeWhy)도 함께 보내 서버 기록에서 학생이 직접 새로 고친 것과 화면이 스스로 새로 고친 것을 가른다 (없으면 학생이 직접)
+let byeWhy = '';
+addEventListener('pagehide', () => { try { room?.send('bye', byeWhy); } catch { /* 이미 끊김 */ } });
 
 // 새로고침·화면 꺼짐·서버 재시작 뒤에는 입장 화면 없이 자동으로 원래 자리로 돌아감 (이 탭에서 한 번 들어왔으면)
 // (새로고침 때는 위에서 자리를 비우므로, 기억해 둔 이름·외형·위치로 새로 들어간다)
@@ -2869,6 +2899,7 @@ ui.fps.style.cssText += ';pointer-events:auto;cursor:pointer';
 ui.fps.onclick = () => {
   if (!(qStep || AUTO_LOW) || !confirm('화질을 처음으로 되돌릴까요? (화면을 새로 고칩니다)')) return;
   store.del(sessionStorage, 'autoLow');
+  byeWhy = 'reset';
   location.reload();
 };
 let fpsFrames = 0;
@@ -3075,6 +3106,7 @@ function frame() {
       cover.querySelector('p').textContent = '가벼운 모드로 바꾸고 있어요…';
       document.body.append(cover);
       slowFor = -Infinity; // 새로 고칠 때까지 다시 들어오지 않게
+      byeWhy = 'low';
       setTimeout(() => location.reload(), 100);
     } else if (slowFor >= 4 && (renderer.getPixelRatio() > 0.5 || !noLines)) {
       if (!noLines) {

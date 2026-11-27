@@ -34,6 +34,10 @@ const monId = (v) => (typeof v === 'string' && /^[a-z][0-9]{1,4}$/.test(v) ? v :
 const RECONNECT_SECONDS = 60;
 // 화면을 닫거나 다른 곳으로 갈 때 '나가요(bye)'를 보낸 경우: 새로고침해서 돌아올 만큼만 기다린다
 const BYE_SECONDS = 8;
+// 연결 확인: 이만큼(ms)마다 확인을 보내고, 이만큼 연달아 답이 없으면 끊는다. 기본값(3초 × 2번)은 교실 와이파이가 6초만 멈춰도
+// 끊겨서, 다시 붙는 동안 화면이 마을을 다시 받느라 또 멈췄다. 20초까지는 끊지 않고 기다린다 (그동안 캐릭터는 그 자리에 서 있다)
+const PING_MS = 5000;
+const PING_RETRIES = 4;
 // 테스트 서버에서는 외형을 마음대로 바꿀 수 있다 (실제 수업 서버는 NODE_ENV=production 또는 FREE_LOOK=0 으로 끔)
 const FREE_LOOK = process.env.FREE_LOOK ? process.env.FREE_LOOK === '1' : process.env.NODE_ENV !== 'production';
 
@@ -126,6 +130,27 @@ function meter(client) {
     return send(data, ...rest);
   };
   ws.on?.('message', (d) => { traffic.in += d?.byteLength ?? d?.length ?? 0; });
+}
+
+// ── 끊긴 까닭 (선생님이 기록으로 보는 용도) ──
+// 학생 화면이 닫히며 보내는 'bye' 의 까닭 → 기록에 쓰는 말 (없으면 학생이 직접 새로 고치거나 탭을 닫은 것)
+const BYE_WHY = { low: '가벼운 모드로 바꾸려고 새로 고침', reset: '화질을 처음으로 되돌리려고 새로 고침', reload: '서버가 다시 켜져 새로 고침' };
+// 연결이 닫힐 때의 코드와, 서버가 응답 없는 연결을 끊은 것인지를 적어 둔다 (onLeave 에서 까닭을 적으려고)
+function watchClose(client) {
+  const ws = client.ref;
+  if (!ws?.prependListener || ws.__watched) return;
+  ws.__watched = true;
+  ws.prependListener('close', (code) => {
+    ws.__closeCode = code;
+    ws.__noAnswer = ws.pingCount >= PING_RETRIES; // 서버가 확인을 보냈는데 답이 없어 끊음 = 와이파이 끊김·기기 잠듦
+  });
+}
+function leaveWhy(client, bye) {
+  if (bye !== undefined) return BYE_WHY[bye] ?? '학생이 직접 새로 고치거나 탭을 닫음';
+  const ws = client.ref;
+  if (ws?.__noAnswer) return `응답 없음 ${(PING_MS * PING_RETRIES) / 1000}초 넘게 (와이파이 끊김·기기 잠듦)`;
+  if (ws?.__closeCode === 1001) return '탭이 닫히거나 다른 곳으로 감 (알림 없이)';
+  return `연결이 갑자기 끊김 (코드 ${ws?.__closeCode ?? '?'})`;
 }
 
 function cleanName(n) {
@@ -649,10 +674,10 @@ class VillageRoom extends Room {
     }, 30000);
     this.patchRate = 100; // 초당 10회만 바뀐 부분 전송
     this.last = new Map(); // sessionId → 마지막으로 인정한 위치와 시각
-    this.bye = new Set(); // 화면을 닫는다고 알려 온 sessionId
+    this.bye = new Map(); // 화면을 닫는다고 알려 온 sessionId → 까닭 (BYE_WHY, 없으면 '')
     this.waiting = new Map(); // 다시 접속하기를 기다리는 sessionId → { name, wait }
 
-    this.onMessage('bye', (client) => this.bye.add(client.sessionId));
+    this.onMessage('bye', (client, why) => this.bye.set(client.sessionId, typeof why === 'string' ? why.slice(0, 10) : ''));
 
     // 친구 때리기 벌: 맞은 학생 화면이 [때린 학생 번호]를 알린다. 10분 안에 10번 때리면 1분 동안 수갑을 차고 꼼짝 못 함 (Player.cuff)
     // 이름으로 기억해, 새로 고치거나 다시 들어와도 남은 시간만큼 다시 찬다
@@ -791,6 +816,7 @@ class VillageRoom extends Room {
 
   onJoin(client, options = {}) {
     meter(client);
+    watchClose(client);
     // 처음 위치: 광장 근처의 빈자리
     let x = SPAWN.x;
     let z = SPAWN.z;
@@ -834,17 +860,20 @@ class VillageRoom extends Room {
   async onLeave(client, consented) {
     const p = this.state.players.get(client.sessionId);
     if (!p) return;
+    const why = consented ? '' : leaveWhy(client, this.bye.get(client.sessionId));
     if (!consented) {
       // 와이파이가 끊기거나 화면이 꺼진 경우: 잠시 기다린다
       p.a = ANIM.IDLE;
+      const gone = Date.now();
       const wait = this.allowReconnection(client, this.bye.has(client.sessionId) ? BYE_SECONDS : RECONNECT_SECONDS);
       this.waiting.set(client.sessionId, { name: p.name, wait });
       try {
         const back = await wait;
         this.bye.delete(client.sessionId);
         meter(back);
+        watchClose(back);
         this.last.set(client.sessionId, { x: fromCm(p.x), z: fromCm(p.z), t: Date.now() });
-        console.log(`재접속: ${p.name}`);
+        console.log(`재접속: ${p.name} · ${why} · ${((Date.now() - gone) / 1000).toFixed(1)}초 만에`);
         return;
       } catch {
         // 시간 안에 돌아오지 않음 (또는 같은 이름으로 새로 들어옴)
@@ -857,7 +886,7 @@ class VillageRoom extends Room {
     this.freeMonsters?.(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.last.delete(client.sessionId);
-    console.log(`퇴장: ${p.name} (현재 ${this.clients.length}명)`);
+    console.log(`퇴장: ${p.name} (현재 ${this.clients.length}명)${why ? ` · ${why}` : ''}`);
   }
 }
 
@@ -870,7 +899,7 @@ const httpServer = http.createServer((req, res) => {
 });
 
 const gameServer = new Server({
-  transport: new WebSocketTransport({ server: httpServer }),
+  transport: new WebSocketTransport({ server: httpServer, pingInterval: PING_MS, pingMaxRetries: PING_RETRIES }),
 });
 gameServer.define('village', VillageRoom);
 

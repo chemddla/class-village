@@ -13,6 +13,7 @@ import { eraserChunk, eraserSleeve } from './monsters/banjjok.js';
 import { PINK, csm, bump, hBlink, catEars, catFace, catTail, makeHaak, HAAK_MOTIONS, HAAK_EYES } from './monsters/haaknyang.js';
 import { makePigeon, GUGU_MOTIONS, STAND_Y, foldWings, waddle, gBlink, gease, gseg, poseSmoother } from './monsters/gugu.js';
 import { makeChulBody, CHUL_MOTIONS } from './monsters/chul.js';
+import { makeJjaek, JJAEK_MOTIONS, jReset } from './monsters/jjaek.js';
 import { makeMagpie, caw, makeKkakkak, KKAK_MOTIONS, kReset, kPhase, kStand, kPuff, createKkakkak, KKAK_STATES } from './monsters/kkakkak.js';
 
 const PI = Math.PI;
@@ -2908,6 +2909,29 @@ const kkakkakLook = [
   return { g: P.g, name, desc, update: (t) => kFrame(P, t, {}, KM[Math.floor(t / 4) % 2 ? '대기' : '서서 깍깍']) };
 });
 
+// ── 짹짹이 시안 (monsters.html?set=jjaek): 들판 입구의 하찮은 참새. 몸·동작은 monsters/jjaek.js 에 ──
+const jjaek = JJAEK_MOTIONS.map((m) => () => {
+  const P = makeJjaek();
+  const X = m.extra?.(P) ?? {};
+  return { g: P.g, name: m.name, desc: m.desc, update: (t) => { jReset(P, t); m.update(P, t, X); } };
+});
+jjaek.push(() => { // 크기 비교: 구구 옆에 선 짹짹이
+  const g = new THREE.Group();
+  const J = makeJjaek();
+  J.g.position.x = 0.07;
+  const G = makePigeon();
+  G.g.position.x = -0.07;
+  g.add(J.g, G.g);
+  const M = JJAEK_MOTIONS.find((m) => m.name === '대기');
+  return {
+    g, name: '구구랑 크기', desc: '구구 옆에 서면 이만큼',
+    update(t) {
+      jReset(J, t); M.update(J, t, {});
+      G.reset(); foldWings(G, 1); G.fly.position.y = STAND_Y; G.body.rotation.x = -0.12; G.feet.forEach((f) => (f.rotation.x = 0)); G.plant(0);
+    },
+  };
+});
+
 // ── 구구 모션 시안 (monsters.html?set=gugu): 같은 구구로 게임에 쓸 동작을 하나씩 반복 ──
 const gugu = GUGU_MOTIONS.map((m) => () => {
   const P = makePigeon();
@@ -5380,6 +5404,7 @@ const SETS = {
   pilbox: { list: pilbox, title: '필통대장 시안', link: '?set=pilbox', cols: 3, scale: 2.4, spacing: 1.4, rowGap: 1.5, dist: 5 }, // 들판 필드보스 후보: 크게 두 줄
   chul: { list: chul, title: '철필통대장 모션 시안', link: '?set=chul', cols: 4, spacing: 1.0, rowGap: 1.25, dist: 5.2 }, // 보스라 크게 세 줄
   guguHaak: { list: guguHaak.map(pigeonLine), title: '구구·하악냥 어울림 시안', link: '?set=guguHaak', spacing: 0.9 }, // 둘이 같이 뛰노는 자리가 넓어 띄워 놓음
+  jjaek: { list: jjaek.map(pigeonLine), title: '짹짹이 시안', link: '?set=jjaek', cols: 5 },
 };
 const cur = SETS[SET] ? SET : 'basic';
 // 시안 목록은 비슷한 종류끼리 한 줄씩 (새 세트를 만들면 여기 알맞은 줄에 넣기)
@@ -5391,6 +5416,7 @@ const GROUPS = [
   ['비둘기', ['pigeon', 'gugu', 'guguWith', 'guguHaak']],
   ['보스', ['pilbox', 'chul']],
   ['까치', ['magpie', 'kkakkak', 'kkakkakLook', 'kkakkakWith', 'kkakkakGame']],
+  ['참새', ['jjaek']],
 ];
 const setLink = (k) => (k === cur ? `<b>${SETS[k].title.replace(' 시안', '')}</b>` : `<a href="${SETS[k].link}">${SETS[k].title.replace(' 시안', '')}</a>`);
 document.getElementById('title').innerHTML = `${SETS[cur].title}<span>마우스로 돌려 보기 · 휠로 확대 · 맨 오른쪽은 크기 비교용 주민</span>${
