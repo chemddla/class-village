@@ -54,8 +54,13 @@ button, input, textarea, select { font-family: inherit; }
   background: rgba(255, 250, 240, 0.9); padding: 6px 14px; border-radius: 999px;
   font-weight: 700; font-size: 15px; box-shadow: var(--shadow);
 }
-#hud { align-items: flex-start; }
-#hud .hud-right { display: flex; gap: 8px; }
+#hud { align-items: flex-start; z-index: 5; } /* 조작키 안내를 펼쳤을 때 아래 버튼들 위에 보이게 */
+#hud .hud-right { display: flex; gap: 8px; align-items: flex-start; }
+#keys-help { pointer-events: auto; border-radius: 16px; }
+#keys-help summary { cursor: pointer; list-style: none; }
+#keys-help dl { display: grid; grid-template-columns: auto auto; gap: 4px 10px; margin: 8px 0 2px; font-size: 13px; }
+#keys-help dt { font-weight: 900; text-align: right; }
+#keys-help dd { margin: 0; font-weight: 500; }
 /* 체력·마나: 아이콘 + 막대 + 숫자. 줄어든 만큼은 연한 잔상이 잠깐 남았다가 따라 줄어든다 */
 #stats { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px 8px 8px; border-radius: 18px; }
 #stats .stat { display: flex; align-items: center; gap: 6px; }

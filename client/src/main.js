@@ -318,10 +318,11 @@ function getHit(fromX, fromZ, mon = null, id = null) {
   if (!k) return; // 빗나가면 안 아프고 움찔하지도 않는다
   if (id) room?.send('monHurt', [id, Math.round(dmg * 10)]); // 몸으로 막아 준 것도 기여도
   stats.hp = Math.max(0, stats.hp - dmg);
-  if (stats.hp <= 0) { // 다 닳으면 벌러덩 쓰러졌다가 다시 꽉 찬다
+  if (stats.hp <= 0) { // 다 닳으면 벌러덩 쓰러졌다가 마을 광장에서 꽉 찬 채로 깨어난다
     stats.hp = ab.hpMax;
     local.act = ANIM.FAINT;
     local.actLeft = local.hurt = actTime(ANIM.FAINT);
+    setTimeout(() => { local.revive = true; room?.send('revive'); }, actTime(ANIM.FAINT) * 1000);
     return;
   }
   ouch(fromX, fromZ);
@@ -2293,8 +2294,10 @@ function attach(r) {
       me.setPose(nx, nz, to.rot);
       camTarget.set(nx, 0, nz); // 카메라도 바로 옮긴다 (멀리서 미끄러져 오지 않게)
       showMap(inField(nx, nz));
-      toast(`🌀 ${PORTALS[to.to].name}에 왔어요!`);
+      if (!local.revive) toast(`🌀 ${PORTALS[to.to].name}에 왔어요!`);
     } else me.setPose(nx, nz, me.targetRot);
+    if (local.revive) toast('💫 마을에서 다시 깨어났어요!');
+    local.revive = false;
     local.last = null;
   });
 

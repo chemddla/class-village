@@ -23,7 +23,12 @@
     {
       "name": "village-sketch",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "client", "--port", "5199"],
+      "runtimeArgs": [
+        "vite",
+        "client",
+        "--port",
+        "5199"
+      ],
       "port": 5199
     },
     {
@@ -39,6 +44,20 @@
         "VITE_GAME_PORT": "2591"
       },
       "port": 5191
+    },
+    {
+      "name": "village-own2",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "concurrently",
+        "node server/index.js",
+        "vite client --host --port 5193 --strictPort"
+      ],
+      "env": {
+        "GAME_PORT": "2593",
+        "VITE_GAME_PORT": "2593"
+      },
+      "port": 5193
     }
   ]
 }

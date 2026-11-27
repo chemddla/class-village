@@ -669,6 +669,17 @@ class VillageRoom extends Room {
       this.last.set(client.sessionId, { x: to.x, z: to.z, t: Date.now() });
       client.send('fix', [p.x, p.z]);
     });
+    // 쓰러짐: 마을 포탈 앞(광장)에서 다시 일어난다. 체력은 화면이 세므로 서버는 옮기기만 한다
+    this.onMessage('revive', (client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      const to = portalArrive(PORTALS[0]);
+      this.stopFishing(client.sessionId);
+      p.x = toCm(to.x);
+      p.z = toCm(to.z);
+      this.last.set(client.sessionId, { x: to.x, z: to.z, t: Date.now() });
+      client.send('fix', [p.x, p.z]);
+    });
 
     // 이동: [x(cm), z(cm), 방향(0~255), 동작, 도구, 화살 개수]
     this.onMessage('m', (client, msg) => {
