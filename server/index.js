@@ -49,6 +49,10 @@ const Player = schema({
   dex: { map: 'uint16' }, // 도감: 잡아 본 물고기 id → 지금까지 잡은 마릿수
   xp: 'uint32', // 지금까지 모은 경험치 (레벨은 levelOf 로 계산)
   job: 'string', // 직업 (JOBS 열쇠, 비어 있으면 모험가). 스텟은 레벨·직업으로 계산
+  fps: 'uint8', // 선생님 관찰용 (tools/observe.js): 화면이 10초마다 알려 주는 평균 FPS · 가장 느린 0.5초의 FPS · 가장 긴 장면(×10ms) · 화질
+  fpsLow: 'uint8',
+  hitch: 'uint8',
+  gq: 'uint8',
   s: 'uint16', // 이 자리를 보낸 때 (보낸 쪽 시계, 10ms 단위로 1~65535 를 돈다. 0 = 모름): 받는 쪽이 자리 사이 간격을 고르게 잡는 데 쓴다
 }, 'Player');
 
@@ -710,6 +714,14 @@ class VillageRoom extends Room {
       p.t = tool >= 0 && tool < TOOLS.length && canWield(TOOLS[tool], p.job, FREE_LOOK) ? tool : 0; // 전직 전에는 몽둥이만 (남의 화면에도)
       p.q = Math.max(0, Math.min(ARROW.max, arrows));
       p.s = stamp & 65535;
+    });
+
+    // 화면 성능 (10초마다): [평균 FPS, 가장 느린 0.5초의 FPS, 가장 긴 장면 ×10ms, 화질]
+    this.onMessage('perf', (client, m) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || !Array.isArray(m) || m.length < 4) return;
+      const [fps, low, hitch, gq] = m.slice(0, 4).map((v) => Math.max(0, Math.min(255, Number(v) | 0)));
+      Object.assign(p, { fps, fpsLow: low, hitch, gq });
     });
 
     // 외형 바꾸기 (테스트 서버에서만)

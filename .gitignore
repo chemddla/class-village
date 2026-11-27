@@ -22,3 +22,6 @@ desktop.ini
 # 이 컴퓨터 전용 설정 (Blender 연동 경로 등)
 .mcp.json
 
+
+# 수업 관찰 기록 (학생 이름·대화가 들어 있음, 공개 저장소에 올리지 않음)
+observe-data/

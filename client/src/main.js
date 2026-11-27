@@ -2800,6 +2800,17 @@ ui.fps.onclick = () => {
 };
 let fpsFrames = 0;
 let fpsTime = 0;
+// 선생님 관찰용 (tools/observe.js): 10초마다 [평균 FPS, 가장 느린 0.5초의 FPS, 가장 긴 장면 ×10ms, 화질(0 보통 · 1 가벼운 + 화질 낮춘 단계 ×2)] 을 서버로
+const perf = { frames: 0, time: 0, low: 255, worst: 0, wFrames: 0, wTime: 0 };
+function trackPerf(rawDt) {
+  if (rawDt > 3) return; // 탭을 내렸다 돌아온 것: 버벅임이 아니다
+  perf.frames++; perf.time += rawDt; perf.wFrames++; perf.wTime += rawDt;
+  perf.worst = Math.max(perf.worst, rawDt);
+  if (perf.wTime >= 0.5) { perf.low = Math.min(perf.low, perf.wFrames / perf.wTime); perf.wFrames = perf.wTime = 0; }
+  if (perf.time < 10) return;
+  room?.send('perf', [Math.round(perf.frames / perf.time), Math.round(Math.min(perf.low, 255)), Math.min(255, Math.round(perf.worst * 100)), (LOW ? 1 : 0) + qStep * 2]);
+  Object.assign(perf, { frames: 0, time: 0, low: 255, worst: 0 });
+}
 
 // 나무·건물이 내 캐릭터를 가리면 그 부분을 비쳐 보이게 (materials.js HOLE)
 const holeV = new THREE.Vector3();
@@ -2939,6 +2950,7 @@ function frame() {
   }
   if (me) minimap.draw(me, [...others.values()].map((o) => o.char), cam.yaw);
 
+  trackPerf(rawDt);
   fpsFrames++;
   fpsTime += realDt;
   if (fpsTime >= 0.5) {
