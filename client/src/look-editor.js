@@ -1,5 +1,5 @@
 // 테스트 서버 전용 외형 꾸미기 창: 고른 값만 담은 look 객체를 onChange 로 넘긴다
-import { COLORS, LOOK_BASES } from '../../shared/world.js';
+import { COLORS, LOOK_BASES, LOOK_OUTFITS } from '../../shared/world.js';
 import { HAIRSTYLES, OUTFITS, HATS, NOSE_STYLES } from './villager/villager.js';
 import { EYE_STYLES, MOUTH_STYLES } from './villager/textures.js';
 import { HAIR_COLORS, lookFor } from './character.js';
@@ -39,7 +39,7 @@ export function createLookEditor({ panel, button, getColor, onChange }) {
   const top = row('윗옷');
   for (const c of COLORS.map(hex)) add(top, { label: c, color: c, patch: { top: c }, isOn: () => cur().top === c });
   const fit = row('옷');
-  for (const [k, f] of Object.entries(OUTFITS)) add(fit, { label: f.label, patch: { outfit: k }, isOn: () => (cur().outfit ?? 'tee') === k });
+  for (const [k, f] of Object.entries(OUTFITS)) if (LOOK_OUTFITS.includes(k)) add(fit, { label: f.label, patch: { outfit: k }, isOn: () => (cur().outfit ?? 'tee') === k });
   const hats = row('모자');
   for (const [k, h] of Object.entries(HATS)) add(hats, { label: h.label, patch: () => ({ hat: cur().hat === k ? 'none' : k }), isOn: () => cur().hat === k });
   const skin = row('피부');

@@ -683,7 +683,8 @@ export const byteToAngle = (b) => (b / 256) * Math.PI * 2;
 // ── 외형 꾸미기 (테스트 서버 전용): 정해진 키·값만 통과시켜 JSON 문자열로 ──
 export const LOOK_BASES = ['boy', 'girl'];
 export const LOOK_HAIRS = ['side', 'bob', 'pony', 'short'];
-export const LOOK_OUTFITS = ['tee', 'street', 'hoodie', 'track', 'layered', 'base'];
+// 'base'(맨몸)는 아이들이 들어오는 동안 일단 숨김: 빼 두면 이미 고른 학생도 서버가 걸러 기본 티로 보인다 (다시 열 때 넣기)
+export const LOOK_OUTFITS = ['tee', 'street', 'hoodie', 'track', 'layered'];
 export const LOOK_HATS = ['none', 'beanie', 'cap'];
 // 눈·코·입 모양 이름 (client/src/villager 의 EYE_STYLES·NOSE_STYLES·MOUTH_STYLES 와 같아야 한다)
 export const LOOK_EYES = ['basic', 'shine', 'lash', 'sleepy', 'dot', 'bean', 'smile', 'cat', 'droopy', 'ring', 'star', 'heart', 'shadow', 'slit', 'double', 'lower', 'up', 'twotone'];
