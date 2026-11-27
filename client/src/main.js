@@ -2874,6 +2874,12 @@ let fpsTime = 0;
 // 새로 만든 셰이더 수, 새 텍스처 수, 새 도형 수, 그리기 횟수, 들판(1)]
 const perf = { frames: 0, time: 0, low: 255, worst: 0, wFrames: 0, wTime: 0, wd: null };
 const pf = { logic: 0, render: 0, after: 0, total: 0, prog: 0, tex: 0, geo: 0, calls: 0, field: 0 }; // 바로 앞 장면 (frame 끝에서 채움)
+// 10초 중 가장 긴 '긴 장면'(브라우저가 알려 줌): 그동안 돈 코드(통신 처리·타이머·장면)를 함께 보내 장면 밖 멈춤의 범인을 가린다. 코드가 없으면 메모리 정리·GPU 쪽
+try {
+  new PerformanceObserver((l) => {
+    for (const e of l.getEntries()) if (!perf.loaf || e.duration > perf.loaf.duration) perf.loaf = e;
+  }).observe({ type: 'long-animation-frame' });
+} catch { /* 크롬이 아니면 없음 */ }
 function trackPerf(rawDt) {
   if (rawDt > 3) return; // 탭을 내렸다 돌아온 것: 버벅임이 아니다
   perf.frames++; perf.time += rawDt; perf.wFrames++; perf.wTime += rawDt;
@@ -2883,8 +2889,11 @@ function trackPerf(rawDt) {
   }
   if (perf.wTime >= 0.5) { perf.low = Math.min(perf.low, perf.wFrames / perf.wTime); perf.wFrames = perf.wTime = 0; }
   if (perf.time < 10) return;
-  room?.send('perf', [Math.round(perf.frames / perf.time), Math.round(Math.min(perf.low, 255)), Math.min(255, Math.round(perf.worst * 100)), (LOW ? 1 : 0) + qStep * 2, ...(perf.wd ?? [])]);
-  Object.assign(perf, { frames: 0, time: 0, low: 255, worst: 0, wd: null });
+  const heap = Math.round((performance.memory?.usedJSHeapSize ?? 0) / 1e6); // MB (크롬만)
+  const lf = perf.loaf;
+  const loaf = lf ? `${Math.round(lf.duration)}|${Math.round(lf.blockingDuration)}|${lf.scripts.map((sc) => `${sc.invoker}:${sc.sourceFunctionName || '?'}@${(sc.sourceURL || '').split('/').pop()}:${sc.sourceCharPosition}:${Math.round(sc.duration)}`).sort((x, y) => +y.split(':').pop() - +x.split(':').pop()).slice(0, 2).join(';')}` : '';
+  room?.send('perf', [Math.round(perf.frames / perf.time), Math.round(Math.min(perf.low, 255)), Math.min(255, Math.round(perf.worst * 100)), (LOW ? 1 : 0) + qStep * 2, ...(perf.wd ?? [0, 0, 0, 0, 0, 0, 0, 0, 0]), heap, loaf]);
+  Object.assign(perf, { frames: 0, time: 0, low: 255, worst: 0, wd: null, loaf: null });
 }
 
 // 나무·건물이 내 캐릭터를 가리면 그 부분을 비쳐 보이게 (materials.js HOLE)

@@ -56,7 +56,8 @@ const Player = schema({
   fpsLow: 'uint8',
   hitch: 'uint8',
   gq: 'uint8',
-  pd: 'string', // 가장 긴 장면의 진단값 (숫자를 쉼표로): 계산·그리기·그리기 뒤·장면 밖 ms, 새 셰이더·텍스처·도형 수, 그리기 횟수, 들판
+  pl: 'string', // 가장 긴 '긴 장면': 길이|막은 시간|코드 두 개 (어디서 불렸나:함수@파일:위치:ms)
+  pd: 'string', // 가장 긴 장면의 진단값 (숫자를 쉼표로): 계산·그리기·그리기 뒤·장면 밖 ms, 새 셰이더·텍스처·도형 수, 그리기 횟수, 들판, 메모리 MB
   cuff: 'boolean', // 수갑 (친구를 너무 많이 때린 벌): 찬 동안은 움직이지 못한다
   s: 'uint16', // 이 자리를 보낸 때 (보낸 쪽 시계, 10ms 단위로 1~65535 를 돈다. 0 = 모름): 받는 쪽이 자리 사이 간격을 고르게 잡는 데 쓴다
 }, 'Player');
@@ -753,7 +754,8 @@ class VillageRoom extends Room {
       if (!p || !Array.isArray(m) || m.length < 4) return;
       const [fps, low, hitch, gq] = m.slice(0, 4).map((v) => Math.max(0, Math.min(255, Number(v) | 0)));
       Object.assign(p, { fps, fpsLow: low, hitch, gq });
-      p.pd = m.slice(4, 13).map((v) => Math.max(0, Math.min(99999, Number(v) | 0))).join(',');
+      p.pd = m.slice(4, 14).map((v) => Math.max(0, Math.min(99999, Number(v) | 0))).join(',');
+      p.pl = typeof m[14] === 'string' ? m[14].replace(/[^\w.:;|@?$-]/g, '').slice(0, 200) : '';
     });
 
     // 외형 바꾸기 (테스트 서버에서만)
