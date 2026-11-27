@@ -15,7 +15,7 @@ import { createLookEditor } from './look-editor.js';
 import { createMinimap } from './minimap.js';
 import { EQUIPMENT } from './villager/equipment.js';
 import { createInput } from './input.js';
-import { setCurveCenter, curveDrop, HOLE, VIEW, viewReach } from './materials.js';
+import { setCurveCenter, curveDrop, HOLE, VIEW, viewReach, OUTLINE_MIN } from './materials.js';
 import { FX } from './fx.js';
 import { createPlazaMonsters } from './monsters/plaza-monsters.js';
 import { createChulBoss } from './monsters/chul.js';
@@ -44,7 +44,7 @@ const store = {
 
 // ── 3D 기본 설정 ──
 const canvas = document.getElementById('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: true }); // stencil: 삽으로 판 구덩이 속을 땅 아래로 그리기
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW, powerPreference: 'high-performance', stencil: true }); // stencil: 삽으로 판 구덩이 속을 땅 아래로 그리기
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1 : 1.5)); // 태블릿 성능을 위해 최대 1.5배
 const scene = new THREE.Scene();
 // 하늘: 위는 맑은 하늘색, 지평선 쪽은 안개와 같은 파스텔색으로 번지는 그라데이션
@@ -2898,6 +2898,8 @@ function frame() {
     label.position.set(b.x, b.y - curveDrop(b.x, b.z), b.z);
   }
 
+  // 가벼운 모드(안티에일리어싱 끔): 나무·바위 윤곽선이 화면에서 1.2픽셀보다 얇아지지 않게 (먼 윤곽선이 끊겨 보이지 않게)
+  if (LOW) OUTLINE_MIN.value = (1.2 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / renderer.domElement.height;
   renderer.render(scene, camera);
   if (loading.isConnected) { // 첫 장면까지 그렸으면 로딩 화면을 걷는다
     loading.remove();

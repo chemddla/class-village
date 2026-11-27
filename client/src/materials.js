@@ -10,7 +10,11 @@ export const TIME = { value: 0 };
 // 캐릭터를 가리는 것 뚫어 보기: 화면에서 캐릭터 둘레(xy 픽셀, z 반지름 픽셀) 안에 있으면서 캐릭터보다 카메라에 가까운 것은
 // 점점이 비워 비쳐 보이게 한다. 나무는 한 재질을 여러 그루가 나눠 쓰는 InstancedMesh 라 재질 투명도 대신 셰이더에서 거른다
 export const HOLE = { center: new THREE.Vector3(0, 0, 0), depth: { value: 0 } };
+// 윤곽선 최소 두께: 카메라에서 1m 떨어질 때마다 이만큼(m). 안티에일리어싱 없이 해상도 1배(가벼운 모드)면 먼 윤곽선이
+// 1픽셀보다 얇아져 끊긴 점선처럼 보인다 → main.js 가 화면 약 1픽셀이 되게 매 장면 맞춘다 (0이면 평소 두께 그대로)
+export const OUTLINE_MIN = { value: 0 };
 const uniforms = {
+  uOutlineMin: OUTLINE_MIN,
   uHole: { value: HOLE.center },
   uHoleDepth: HOLE.depth,
   uCurve: { value: CURVE.strength },
@@ -118,7 +122,7 @@ if (uHole.z > 0.0 && vHoleY > 0.25 && vHoleZ < uHoleDepth - 0.7) {
         .replace('#include <fog_fragment>', 'gl_FragColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.85, 0.96), cloudShade(vCvWorld));\n#include <fog_fragment>');
     }
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uCurve;\nuniform vec2 uCurveCenter;\nuniform vec2 uCurveYaw;\nuniform float uTime;\nvarying vec2 vCvWorld;\nvarying float vHoleZ;\nvarying float vHoleY;')
+      .replace('#include <common>', '#include <common>\nuniform float uOutlineMin;\nuniform float uCurve;\nuniform vec2 uCurveCenter;\nuniform vec2 uCurveYaw;\nuniform float uTime;\nvarying vec2 vCvWorld;\nvarying float vHoleZ;\nvarying float vHoleY;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${pre}`)
       .replace(
         '#include <project_vertex>',
@@ -173,7 +177,17 @@ function outlineMaterial(t, sway = false) {
   const key = `${t}:${sway}`;
   if (!outlineMats.has(key)) {
     const m = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
-    const pre = `${sway ? SWAY_GLSL : ''}\nif (dot(normal, normal) > 1e-12) transformed += normalize(normal) * ${t.toFixed(4)};`; // 법선 0인 꼭짓점은 NaN 대신 제자리
+    // 법선 0인 꼭짓점은 NaN 대신 제자리 · 두께는 도형 안 단위라 월드 크기(olS)로 나눠 최소 두께(uOutlineMin × 카메라 거리)와 견준다
+    const pre = `${sway ? SWAY_GLSL : ''}
+if (dot(normal, normal) > 1e-12) {
+  mat4 olM = modelMatrix;
+#ifdef USE_INSTANCING
+  olM = olM * instanceMatrix;
+#endif
+  float olS = length(olM[0].xyz);
+  float olD = -(viewMatrix * olM * vec4(transformed, 1.0)).z;
+  transformed += normalize(normal) * max(${t.toFixed(4)}, uOutlineMin * olD / olS);
+}`;
     outlineMats.set(key, addCurve(m, pre, `curved-outline:${key}`));
   }
   return outlineMats.get(key);
