@@ -2011,9 +2011,44 @@ function setPeople() {
   ui.people.textContent = `접속 ${room ? room.state.players.size : 0}명`;
 }
 
+// 다른 학생 캐릭터 만들기는 무거워서 (느린 기기에서 0.3초 넘게, 처음 보는 꾸미기면 셰이더 준비까지 1초 가까이) 모두의 화면이 멈칫했다.
+// 그래서 한 장면에 한 단계씩만 한다: 몸 만들기 → 툰·외곽선 → 셰이더는 그리기를 막지 않고 미리 준비(compileAsync) → 다 되면 장면에 넣기.
+// 잠깐 나갔다 들어온 학생(새로고침·와이파이 끊김)은 1분 동안 만들어 둔 캐릭터를 그대로 다시 쓴다
+const pendingChars = new Map(); // 학생 id → { p, done, char, toned, ready }
+const spareChars = new Map(); // 이름|색|외형 → { char, at }
+const SPARE_MS = 60000;
+const charKey = (p) => `${p.name}|${p.color}|${p.look}`;
+function buildPending() {
+  const now = performance.now();
+  for (const [k, s] of spareChars) if (now - s.at > SPARE_MS) { s.char.dispose(); spareChars.delete(k); }
+  for (const [id, b] of pendingChars) {
+    if (!b.char) {
+      const spare = spareChars.get(charKey(b.p));
+      if (spare) { spareChars.delete(charKey(b.p)); b.char = spare.char; b.char.prev = null; b.ready = true; continue; }
+      b.char = new Character(b.p.name, b.p.color, parseLook(b.p.look), { deferToon: true });
+      return;
+    }
+    if (!b.toned) {
+      b.char.toon();
+      b.toned = true;
+      const ok = () => { b.ready = true; };
+      renderer.compileAsync(b.char.root, camera, scene).then(ok, ok);
+      return;
+    }
+    if (!b.ready) continue; // 셰이더 준비를 기다리는 동안 다음 학생 것을 만든다
+    pendingChars.delete(id);
+    b.done(b.char);
+    return;
+  }
+}
+
 function clearPlayers() {
   for (const o of others.values()) o.char.dispose();
   others.clear();
+  for (const b of pendingChars.values()) b.char?.dispose();
+  pendingChars.clear();
+  for (const s of spareChars.values()) s.char.dispose();
+  spareChars.clear();
   if (me) { me.dispose(); me = null; }
 }
 
@@ -2073,8 +2108,13 @@ function attach(r) {
         if (!wieldable(local.equip)) equipTool(0); // 직업을 바꿔 못 쓰게 된 무기는 내려놓는다
         if (prev !== undefined && v) toast(`✨ ${ro(JOBS[v].name)} ${prev ? '바꿨어요' : '전직했어요!'}`);
       });
-    } else {
-      const char = new Character(p.name, p.color, parseLook(p.look));
+    } else pendingChars.set(id, { p, done: (char) => addOther(id, p, char) }); // 만들기는 buildPending 이 장면마다 한 단계씩
+    setPeople();
+  });
+
+  // 다 만든 다른 학생 캐릭터를 장면에 넣고 그 학생 소식을 받기 시작한다
+  function addOther(id, p, char) {
+    {
       if (noLines) char.setOutline(false);
       char.setTool(p.t);
       char.setArrows(p.q);
@@ -2110,12 +2150,21 @@ function attach(r) {
       $(p).onChange(push);
       $(p).listen('look', (v, prev) => { if (prev !== undefined) char.setLook(parseLook(v)); });
     }
-    setPeople();
-  });
+  }
 
   $(r.state).players.onRemove((p, id) => {
+    const b = pendingChars.get(id);
+    if (b) { b.char?.dispose(); pendingChars.delete(id); }
     const o = others.get(id);
-    if (o) { o.char.dispose(); others.delete(id); }
+    if (o) { // 곧 다시 들어올 수 있으니 버리지 않고 잠깐 둔다 (같은 이름·색·외형이 이미 남아 있으면 그건 버린다)
+      o.char.unsay();
+      for (const k in o.char.trails) o.char.trails[k].dispose(); // 휘두르던 자국이 그 자리에 굳어 남지 않게
+      o.char.trails = {};
+      o.char.root.removeFromParent();
+      spareChars.get(charKey(p))?.char.dispose();
+      spareChars.set(charKey(p), { char: o.char, at: performance.now() });
+      others.delete(id);
+    }
     setPeople();
   });
 
@@ -2968,6 +3017,7 @@ function frame() {
       fieldMonsters.push(m);
     }
   }
+  buildPending();
   if (me) minimap.draw(me, [...others.values()].map((o) => o.char), cam.yaw);
 
   trackPerf(rawDt);

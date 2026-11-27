@@ -102,14 +102,15 @@ function shakeStep(x, z) {
 export const actTime = (a) => LOOP_TIME[ACTS[a]] ?? ACTIONS[ACTS[a]]?.duration ?? 0;
 
 export class Character {
-  constructor(name, colorIndex, look = {}) {
+  // deferToon: 툰·외곽선은 부르는 쪽이 다음 장면에 toon() 으로 (다른 학생 캐릭터를 여러 장면에 나눠 만들 때)
+  constructor(name, colorIndex, look = {}, { deferToon = false } = {}) {
     this.root = new THREE.Group();
     this.colorIndex = colorIndex;
     // 여러 명이 함께 보이므로 표정 텍스처는 1/4 해상도, 머리·몸 곡면도 가볍게 (hairSegs 는 segScale 이 한 번 더 줄인다)
     this.villager = createVillager(lookFor(colorIndex, look), { texScale: 0.25, hairSegs: 320, segScale: 0.5 });
     this.villager.root.scale.setScalar(SCALE);
     // 마을 그림체에 맞춘 툰 명암 + 쇼룸보다 35% 얇은 외곽선 (멀리서 내려다봐도 뭉개지지 않게)
-    this.toon();
+    if (!deferToon) this.toon();
     // 도구를 바꿔 쥐면 새로 생긴 도구에도 툰 명암·외곽선을 입힌다 (몸은 처음 한 번이면 되지만 도구는 쥘 때마다 새로 만들어진다)
     this.villager.onChange = () => this.toon();
     // body: 주민 모델을 한 겹 감싸 탄성(늘어남·눌림)·기울기·흔들림을 애니메이션과 따로 얹는다 (발바닥이 축)
