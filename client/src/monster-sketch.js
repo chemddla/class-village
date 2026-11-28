@@ -13,7 +13,7 @@ import { eraserChunk, eraserSleeve } from './monsters/banjjok.js';
 import { PINK, csm, bump, hBlink, catEars, catFace, catTail, makeHaak, HAAK_MOTIONS, HAAK_EYES } from './monsters/haaknyang.js';
 import { makePigeon, GUGU_MOTIONS, STAND_Y, foldWings, waddle, gBlink, gease, gseg, poseSmoother } from './monsters/gugu.js';
 import { makeChulBody, CHUL_MOTIONS } from './monsters/chul.js';
-import { makeJjaek, JJAEK_MOTIONS, jReset } from './monsters/jjaek.js';
+import { makeJjaek, JJAEK_MOTIONS, jReset, jStand } from './monsters/jjaek.js';
 import { makeMagpie, caw, makeKkakkak, KKAK_MOTIONS, kReset, kPhase, kStand, kPuff, createKkakkak, KKAK_STATES } from './monsters/kkakkak.js';
 
 const PI = Math.PI;
@@ -2915,6 +2915,18 @@ const jjaek = JJAEK_MOTIONS.map((m) => () => {
   const X = m.extra?.(P) ?? {};
   return { g: P.g, name: m.name, desc: m.desc, update: (t) => { jReset(P, t); m.update(P, t, X); } };
 });
+// ── 짹짹이 체형 시안 (monsters.html?set=jjaekLook): 몸 비율만 바꿔 가만히 선 옆모습으로 나란히 ──
+const jjaekLook = [
+  ['지금', '사진에 맞춘 체형 (머리 크게, 몸 조금 길게)', {}],
+  ['머리 작게', '머리를 덜 키움', { head: 1.2 }],
+  ['더 동글', '몸통 짧고 통통 (처음 시안)', { fat: 1.18, len: 0.55, head: 1.25 }],
+  ['더 길쭉', '몸통 더 길게', { fat: 1.0, len: 0.95 }],
+].map(([name, desc, look]) => () => {
+  const P = makeJjaek(look);
+  const M = JJAEK_MOTIONS.find((m) => m.name === '서 있기');
+  return { g: P.g, name, desc, update: (t) => { jReset(P, t); M.update(P, t, {}); } };
+});
+
 jjaek.push(() => { // 크기 비교: 구구 옆에 선 짹짹이
   const g = new THREE.Group();
   const J = makeJjaek();
@@ -5375,6 +5387,593 @@ const chul = CHUL_MOTIONS.map((m) => () => {
   return { g: P.g, name: m.name, desc: m.desc, update(t) { P.reset(); m.fn(P, m.loop ? t : t % m.period); P.drawFace(); } };
 });
 
+// ── 짹짹이 어울림 시안 (monsters.html?set=jjaekWith): 들판 입구의 하찮은 참새가 다른 몬스터들과 어울리는 합동 모션 ──
+// 날개콩 귀찮게 하기 · 하악냥 따돌리기 · 반쪽이 파먹기 · 깍깍이에게 쫓겨나기 · 끄레용이 갈색 칠해 주기 · 구구 타고 날기 · 똑딱이 꼭지 쿡쿡
+const jjaekWith = [];
+const jwLerp = THREE.MathUtils.lerp;
+const jwYaw = (from, to) => Math.atan2(to.x - from.x, to.z - from.z);
+// 짹짹이 땅에 서기 (자리·방향만, 발 딛기는 자세를 다 얹은 뒤 P.plant)
+const jwStand = (P, x, z, yaw) => { jStand(P); P.fly.position.x = x; P.fly.position.z = z; P.fly.rotation.y = yaw; };
+// 포르르 날기: 빠른 날갯짓, 발은 접음
+const jwFly = (P, t, pos, yaw, speed = 32, amp = 1) => {
+  P.flap(t, speed, amp, 0.15);
+  P.fly.position.copy(pos);
+  P.fly.rotation.y = yaw;
+  P.body.rotation.x = 0.1;
+  P.feet.forEach((f) => (f.rotation.x = 1.3));
+};
+// 짹! 부리 벌림 (rate 초마다 한 번)
+const jwChirp = (P, c, rate = 0.22) => { const k = bump(((c % rate) + rate) % rate, 0, rate * 0.8); P.jaw.rotation.x = k * 0.6; P.head.rotation.x -= k * 0.25; return k; };
+// 콕: k(0~1) 만큼 몸을 숙여 부리로 쪼기
+const jwPeck = (P, k) => { P.body.rotation.x += k * 0.75; P.head.rotation.x += k * 0.5; P.tail.rotation.x += k * 0.4; };
+// 콕콕 시각 목록에서 지금 쪼는 정도 (각 콕 0.18 초)
+const jwPecks = (c, list) => list.reduce((m, p) => Math.max(m, bump(c, p - 0.08, p + 0.1)), 0);
+// 짹짹이 크기 (선 자세): 높이·몸 반폭
+const JW = (() => {
+  const P = makeJjaek();
+  jReset(P, 0); jStand(P); P.plant(0);
+  P.g.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(P.g);
+  return { h: b.max.y, half: (b.max.x - b.min.x) / 2, front: b.max.z }; // front: 몸 가운데에서 부리 끝까지
+})();
+// 짹짹이 + 다른 몬스터 한 장면 틀: make(g) 가 상대를 만들어 돌려주고, fn(c, P, O, t, dt) 가 둘을 움직임
+const jwDuo = (name, desc, T, make, fn) => jjaekWith.push(() => {
+  const g = new THREE.Group();
+  const O = make(g);
+  const P = makeJjaek();
+  g.add(P.g);
+  let last = 0;
+  return {
+    g, name, desc,
+    update(t) {
+      const dt = Math.min(0.1, Math.max(0, t - last));
+      last = t;
+      jReset(P, t);
+      fn(t % T, P, O, t, dt, g);
+    },
+  };
+});
+
+// ① 날개콩: 머리 위를 포르르 빙빙 돌며 정수리를 콕, 눈앞에서 짹짹 약 올림 → 날개콩이 쪼려 하면 휙 피하고 또 빙빙 → 날아감
+jwDuo('날개콩 귀찮게 하기', '머리 위를 빙빙 돌며 정수리 콕, 눈앞에서 짹짹 → 날개콩이 쪼려 하면 휙 피하고 또 빙빙', 10, (g) => {
+  const N = createNalgaekong();
+  N.root.userData.smoothPose = true;
+  g.add(N.root);
+  N.play('idle');
+  N.update(0.016);
+  N.root.updateMatrixWorld(true);
+  const b = new THREE.Box3(); // 보이는 몸만 잼 (숨어 있는 효과 부품까지 재면 키가 엉뚱하게 커짐)
+  N.root.traverse((o) => { if (o.isMesh && o.visible && !o.userData.isOutline) { let v = true; o.traverseAncestors((a) => { if (!a.visible) v = false; }); if (v) b.expandByObject(o); } });
+  return { N, top: b.max.y, yaw: 0, last: 0 };
+}, (c, P, O, t, dt) => {
+  const { N } = O, pc = O.last;
+  O.last = c;
+  const at = (x) => (pc < x && c >= x) || (c < pc && x <= c);
+  // 날개콩
+  if (at(0.02)) N.play('idle');
+  if (at(1.4)) N.play('notice');
+  if (at(2.65) || at(3.75)) N.play('hit'); // 정수리를 콕 맞음
+  if (at(4.4)) N.play('angry');
+  if (at(5.3)) N.play('attack'); // 쪼려다 허탕
+  if (at(6.4)) N.play('flutter'); // 잡으려고 파닥파닥 (1cm 밖에 못 뜸)
+  if (at(7.8)) N.play('angry');
+  if (at(9.0)) N.play('idle');
+  N.update(dt);
+  // 짹짹이 자리
+  const R = 0.075, Y = O.top + 0.016, W = 2.3; // 빙빙 도는 반지름·높이·빠르기
+  const orbit = (a, y = Y) => new THREE.Vector3(Math.sin(a) * R, y + Math.sin(a * 2.5) * 0.006, Math.cos(a) * R);
+  const FROM = new THREE.Vector3(-0.45, 0.28, 0.2), AWAY = new THREE.Vector3(0.5, 0.34, -0.3);
+  const FRONT = new THREE.Vector3(0, O.top - 0.01, 0.075); // 날개콩 눈앞
+  let pos, yaw, speed = 32, peck = 0;
+  const a1 = W * (c - 1.2), a2 = W * 1.3 * (c - 6.0) + 2.2; // 첫 바퀴, 피한 뒤 더 빠른 바퀴
+  if (c < 1.2) { const k = gease(gseg(c, 0, 1.2)); pos = FROM.clone().lerp(orbit(0), k); yaw = jwYaw(FROM, orbit(0)); P.fly.scale.setScalar(gease(gseg(c, 0, 0.2))); }
+  else if (c < 4.2) { // 빙빙 + 정수리 콕 두 번
+    const dive = bump(c, 2.45, 2.85) + bump(c, 3.55, 3.95);
+    pos = orbit(a1, jwLerp(Y, O.top + 0.004, dive));
+    pos.x *= 1 - dive * 0.7; pos.z *= 1 - dive * 0.7; // 콕 할 땐 머리 가운데로
+    yaw = a1 + PI / 2;
+    peck = jwPecks(c, [2.65, 3.75]);
+  } else if (c < 5.4) { // 눈앞에서 둥실 짹짹
+    const k = gease(gseg(c, 4.2, 4.6));
+    pos = orbit(W * 3).lerp(FRONT, k);
+    yaw = jwLerp(W * 3 + PI / 2, PI, k);
+    speed = 26;
+  } else if (c < 6.0) { // 쪼려는 순간 휙 위로 피함
+    const k = gease(gseg(c, 5.35, 5.6));
+    pos = FRONT.clone().lerp(orbit(2.2, Y + 0.05), gease(gseg(c, 5.35, 6.0)));
+    pos.y += k * 0.02 * (1 - gseg(c, 5.6, 6.0));
+    yaw = PI + gease(gseg(c, 5.6, 6.0)) * (2.2 + PI / 2 - PI);
+    speed = 40;
+  } else if (c < 8.3) { pos = orbit(a2); yaw = a2 + PI / 2; }
+  else { const k = gease(gseg(c, 8.3, 9.6)); const s = orbit(W * 1.3 * 2.3 + 2.2); pos = s.lerp(AWAY, k); yaw = jwYaw(s, AWAY); P.fly.scale.setScalar(1 - gease(gseg(c, 9.4, 9.7))); }
+  jwFly(P, t, pos, yaw, speed);
+  P.g.visible = c < 9.7;
+  if (c >= 4.4 && c < 5.35) jwChirp(P, c, 0.2); // 짹짹 약 올림
+  if (c >= 6.6 && c < 8.3) jwChirp(P, c, 0.35);
+  P.body.rotation.x += peck * 0.9; P.head.rotation.x += peck * 0.6;
+  // 날개콩은 짹짹이 쪽을 따라 고개(몸)를 돌림
+  const want = Math.atan2(P.fly.position.x, P.fly.position.z);
+  let d = want - O.yaw;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  O.yaw += d * Math.min(1, dt * 5);
+  N.root.rotation.y = O.yaw;
+});
+
+// ② 하악냥: 발견! → 다다닥 쫓아오지만, 짹짹이는 잡히기 직전마다 포르르 저만치 → 하악냥은 지쳐 실망, 짹짹이는 돌아보며 짹짹
+{
+  const RUN = haakFn('달리기'), RUN_P = HAAK_MOTIONS.find((m) => m.name === '달리기').period;
+  const FOUND = haakFn('발견'), IDLE = haakFn('대기'), TIRED = haakFn('실망');
+  const R = 0.34, A0 = -1.0, WH = 1.9; // 원을 따라 쫓음: 반지름, 처음 자리(각), 하악냥 빠르기(각/초)
+  const DASH = [1.9, 3.3, 4.7, 6.1, 7.5], DA = 2.6; // 짹짹이가 포르르 내빼는 시각과 거리(각)
+  const ring = (a, y = 0) => new THREE.Vector3(Math.sin(a) * R, y, Math.cos(a) * R);
+  const tangent = (a) => Math.atan2(Math.cos(a), -Math.sin(a));
+  jwDuo('하악냥 따돌리기', '다다닥 쫓아오지만 잡히기 직전마다 포르르 저만치 → 하악냥은 지쳐 실망', 12, (g) => {
+    const H = makeHaak();
+    H.g.name = '하악냥';
+    H.g.userData.haak = H;
+    H.g.scale.setScalar(1.6);
+    g.add(H.g);
+    return H;
+  }, (c, P, H, t) => {
+    // 하악냥
+    H.reset();
+    const run = gseg(c, 1.8, 8.5) > 0 && c < 8.5;
+    const ah = A0 + WH * (Math.min(Math.max(c, 1.8), 8.5) - 1.8);
+    H.g.position.copy(ring(ah));
+    H.g.rotation.y = tangent(ah);
+    if (c < 0.6) IDLE(c, H, t);
+    else if (c < 1.8) { H.g.rotation.y = tangent(ah) + 0.6 * (1 - gseg(c, 1.4, 1.8)); FOUND(c - 0.6, H, t); }
+    else if (run) RUN((c - 1.8) % RUN_P, H, t);
+    else TIRED(c - 8.5, H, t);
+    H.ground();
+    H.whiskers(t);
+    // 짹짹이: 쉬는 동안엔 돌아보며 꽁지 까딱, 하악냥이 코앞이면 포르르 내뺌
+    const as = A0 + 0.5 + DASH.reduce((s, d) => s + DA * gease(gseg(c, d, d + 0.38)), 0);
+    const dash = DASH.reduce((m, d) => Math.max(m, bump(c, d - 0.02, d + 0.4)), 0);
+    const p = ring(as);
+    if (dash > 0.01) { // 낮게 포르르 (다리 접고 쌩)
+      p.y = STAND_Y + dash * 0.03;
+      jwFly(P, t, p, tangent(as), 40);
+      P.body.rotation.x = 0.25;
+    } else {
+      jwStand(P, p.x, p.z, tangent(as));
+      const back = gease(gseg(c % 1.4, 0.2, 0.5)); // 쉴 때마다 하악냥 쪽을 휙 돌아봄
+      P.head.rotation.y = (c > 1.0 ? 1.2 : 0) * back;
+      P.tail.rotation.x += Math.max(0, Math.sin(t * 9)) * 0.35;
+      if (c < 1.8) jwPeck(P, Math.max(0, Math.sin(c * PI * 3.2)) * (1 - gseg(c, 0.9, 1.2))); // 처음엔 모이 콕콕
+      if (c > 8.6) { P.fly.rotation.y = tangent(as) + PI * gease(gseg(c, 8.6, 9.0)); P.head.rotation.y = 0; jwChirp(P, c, 0.24); } // 돌아서서 짹짹 약 올림
+      P.plant(0);
+    }
+  });
+}
+
+// ③ 반쪽이: 지우개 맨살 쪽 귀퉁이를 콕콕 파먹음(가루 폴폴) → 반쪽이가 간질간질하다 알아채고 화들짝! → 허둥지둥 도망
+//    → 짹짹이는 몇 발짝 쫓다가 떨어진 지우개 가루를 콕콕 주워 먹음
+{
+  const PK = [1.35, 1.65, 1.95, 2.35, 2.65];
+  jwDuo('반쪽이 파먹기', '지우개 귀퉁이를 콕콕 파먹음 → 반쪽이 화들짝! 허둥지둥 도망 → 떨어진 가루 콕콕', 9, (g) => {
+    const B = makeBanjjok();
+    g.add(B.g);
+    // 지우개 가루: 콕 할 때마다 하나씩 톡 떨어져 바닥에 남았다가, 짹짹이가 하나씩 주워 먹음
+    const crumbs = PK.map((_, i) => {
+      const m = mesh(new RoundedBoxGeometry(0.006, 0.0045, 0.0055, 1, 0.0015), RUBBER('#f4f1ea'), g, '가루');
+      m.userData.land = new THREE.Vector3(0.05 + (i % 3) * 0.008 - 0.004, 0.00225, (i - 2) * 0.007);
+      return m;
+    });
+    return { B, crumbs };
+  }, (c, P, O, t) => {
+    const { B, crumbs } = O;
+    B.reset();
+    const END = B.W / 2; // 맨살 쪽 귀퉁이 x
+    // 반쪽이: 간질간질(눈 가늘게) → 알아챔(눈 동그랗게, 돌아봄) → 화들짝 폴짝 → 허둥지둥 도망 → 사라졌다 다시
+    const tickle = gseg(c, 1.3, 2.3) * (1 - gseg(c, 2.3, 2.5));
+    const look = gease(gseg(c, 2.5, 2.75));
+    const jump = bump(c, 2.95, 3.4), squash = bump(c, 2.8, 2.98);
+    const flee = gseg(c, 3.45, 6.2);
+    B.eye(1 + look * 0.4 + jump * 0.2, (1 - tickle * 0.55) * (1 + look * 0.4 + jump * 0.2));
+    B.body.rotation.z = Math.sin(t * 30) * 0.03 * tickle; // 간질간질 부르르
+    B.move.rotation.y = look * 0.5 * (1 - gease(gseg(c, 3.35, 3.6))) - gease(gseg(c, 3.35, 3.6)) * PI / 2; // 짹짹이 쪽 → 반대로 휙
+    B.body.scale.set(1 + squash * 0.12, 1 - squash * 0.2 + jump * 0.08, 1 + squash * 0.12);
+    B.move.position.y = jump * 0.045;
+    B.mouth.scale.setScalar(1 + (look + jump) * 0.4);
+    if (flee > 0) { // 허둥지둥: 콩콩 뛰며 기우뚱
+      const hop = Math.abs(Math.sin(t * 16));
+      B.move.position.x = -flee * 0.42;
+      B.move.position.y += hop * 0.01;
+      B.body.rotation.x = Math.sin(t * 16) * 0.12;
+      B.body.rotation.z = Math.sin(t * 8) * 0.1;
+    }
+    const gone = c > 6.2 && c < 8.6;
+    B.g.visible = !gone;
+    B.g.scale.setScalar(c >= 8.6 ? gease(gseg(c, 8.6, 8.9)) : 1 - gease(gseg(c, 5.9, 6.2)));
+    // 지우개 가루
+    crumbs.forEach((m, i) => {
+      const born = PK[i] + 0.05, eaten = 5.9 + i * 0.45;
+      const k = gseg(c, born, born + 0.35);
+      m.visible = c > born && c < eaten;
+      m.position.set(jwLerp(END, m.userData.land.x, k), jwLerp(0.03, m.userData.land.y, k * k) + Math.sin(k * PI) * 0.012, jwLerp(0, m.userData.land.z, k));
+      m.rotation.set(k * 5 + i, k * 3, 0);
+    });
+    // 짹짹이
+    const SPOT = new THREE.Vector3(END + JW.front + 0.001, 0, 0); // 부리 끝이 귀퉁이에 닿는 자리
+    if (c < 1.1) { // 콩콩 다가옴
+      const k = gseg(c, 0, 1.1), hop = Math.sin(((k * 4) % 1) * PI);
+      jwStand(P, jwLerp(0.22, SPOT.x, k), jwLerp(0.04, 0, k), -PI / 2);
+      P.feet.forEach((f) => (f.rotation.x = hop * 0.8));
+      P.plant(0);
+      P.fly.position.y += hop * 0.014;
+      P.fly.scale.setScalar(gease(gseg(c, 0, 0.2)));
+    } else if (c < 3.5) { // 콕콕 파먹기 → 반쪽이가 뛰자 움찔
+      jwStand(P, SPOT.x, 0, -PI / 2);
+      jwPeck(P, jwPecks(c, PK));
+      P.head.position.z += jwPecks(c, PK) * 0.004;
+      const flinch = bump(c, 2.95, 3.4);
+      P.fly.position.x += flinch * 0.012;
+      P.body.rotation.x -= flinch * 0.3;
+      P.plant(0);
+      P.fly.position.y += flinch * 0.01;
+    } else if (c < 5.6) { // 몇 발짝 쫓다가 멈춰서 갸웃, 짹
+      const k = gseg(c, 3.6, 4.6), hop = c < 4.6 ? Math.sin(((k * 4) % 1) * PI) : 0;
+      jwStand(P, jwLerp(SPOT.x, SPOT.x - 0.11, gease(k)), 0, -PI / 2);
+      P.feet.forEach((f) => (f.rotation.x = hop * 0.8));
+      P.head.rotation.z = bump(c, 4.7, 5.3) * 0.35;
+      if (c > 5.1) jwChirp(P, c, 0.25);
+      P.plant(0);
+      P.fly.position.y += hop * 0.012;
+    } else { // 돌아와서 떨어진 가루를 하나씩 콕콕 주워 먹음
+      const k = gease(gseg(c, 5.6, 5.95));
+      jwStand(P, jwLerp(SPOT.x - 0.11, SPOT.x + 0.02, k), 0.0, jwLerp(-PI / 2, PI / 2, k));
+      const eat = crumbs.reduce((m, _, i) => Math.max(m, bump(c, 5.75 + i * 0.45, 5.95 + i * 0.45)), 0);
+      jwPeck(P, eat);
+      P.tail.rotation.x += Math.max(0, Math.sin(t * 9)) * 0.3;
+      P.plant(0);
+      P.fly.scale.setScalar(1 - gease(gseg(c, 8.6, 8.95)));
+    }
+  });
+}
+
+// ④ 깍깍이: 깍깍이 구역에 콩콩 들어와 모이 콕콕 → 깍깍이가 홱 돌아보고 성질 → 날아와 쫓아냄 (짹짹이는 화들짝 포르르)
+//    → 꽁지 뒤까지 쫓아가 깍깍 → 돌아와 가슴 쭉 으스댐
+{
+  const T = 8;
+  const HOME = new THREE.Vector3(-0.05, STAND_Y, 0);
+  const GO = new THREE.Vector3(0.8, 0.35, -0.32); // 짹짹이가 도망가는 하늘
+  const LEAVE = 3.35, GP0 = new THREE.Vector3(0.12, 0, 0.02);
+  const away = new THREE.Vector3().subVectors(GO, GP0).normalize();
+  const flee = (c, out) => out.lerpVectors(GP0, GO, 1 - (1 - gseg(c, LEAVE + 0.08, 5.2)) ** 2);
+  const CHASE = flee(4.3, new THREE.Vector3()).addScaledVector(away, -0.14);
+  CHASE.y -= 0.02;
+  const kp = new THREE.Vector3(), sp = new THREE.Vector3();
+  jwDuo('깍깍이에게 쫓겨나기', '깍깍이 구역에서 모이 콕콕 → 깍깍이가 성질내며 날아와 쫓아냄 → 돌아와 으스댐', T, (g) => {
+    const K = makeKkakkak();
+    g.add(K.g);
+    return K;
+  }, (c, P, K, t) => {
+    // 짹짹이
+    P.g.visible = c < 5.2;
+    if (c < LEAVE) {
+      const walk = gseg(c, 0, 1.6);
+      const x = jwLerp(0.4, GP0.x, gease(walk)), hop = c < 1.6 ? Math.sin(((walk * 6) % 1) * PI) : 0;
+      jwStand(P, x, GP0.z, -PI / 2);
+      P.fly.scale.setScalar(gease(gseg(c, 0, 0.25)));
+      P.feet.forEach((f) => (f.rotation.x = hop * 0.8));
+      if (c > 1.7) jwPeck(P, Math.max(0, Math.sin((c - 1.7) * PI * 4)) * (1 - gease(gseg(c, 2.75, 2.9))));
+      const scared = gease(gseg(c, 2.85, 3.0));
+      P.head.rotation.y = -0.7 * scared; // 깍깍이 쪽을 돌아봄
+      P.body.rotation.x -= 0.2 * scared;
+      P.body.scale.multiplyScalar(1 - 0.08 * scared); // 움츠림
+      P.plant(0);
+      P.fly.position.y += hop * 0.012;
+    } else { // 화들짝 포르르 도망
+      flee(c, sp);
+      jwFly(P, t, sp, jwYaw(GP0, GO), 44);
+      P.fly.position.y += bump(c, LEAVE, LEAVE + 0.2) * 0.015;
+      P.fly.scale.setScalar(1 - gease(gseg(c, 4.9, 5.2)));
+      P.body.rotation.x = 0.25;
+    }
+    // 깍깍이 (구구 쫓아내기와 같은 흐름)
+    kReset(K, t);
+    const notice = gease(gseg(c, 2.3, 2.45));
+    const rage = gease(gseg(c, 2.55, 2.75)) * (1 - gease(gseg(c, 3.15, 3.3)));
+    if (c < 3.2 || c >= 6.4) {
+      const back = c >= 6.4;
+      const f = back ? gease(gseg(c, 6.4, 6.7)) : 1;
+      if (f < 1) K.flap(t, 16, 1.0 * (1 - f), 0.35 * (1 - f));
+      kStand(K, back ? f : 1 - rage * 0.6);
+      K.fly.position.x = HOME.x;
+      K.fly.rotation.y = back ? PI / 2 : jwLerp(1.0, PI / 2, notice);
+      K.tail.rotation.x = Math.max(0, Math.sin(t * 7)) * 0.3 * (1 - rage);
+      K.head.rotation.y = back ? 0 : (c < 1.2 ? 0.5 : -0.5) * (1 - notice);
+      K.wings.forEach(([w, s]) => (w.rotation.z += s * rage * (0.3 + Math.sin(t * 40) * 0.06)));
+      K.body.rotation.x += rage * 0.3;
+      K.head.rotation.x = -rage * 0.25;
+      K.tailFan = rage;
+      K.tail.rotation.x += rage * 0.5;
+      K.jaw.rotation.x = Math.abs(Math.sin(c * 15)) * rage * 0.55;
+      K.fly.position.x += Math.sin(t * 45) * 0.001 * rage;
+      if (back) {
+        K.body.rotation.x = jwLerp(-0.6, 0.05, f);
+        K.feet.forEach((fo) => (fo.rotation.x = -0.3 * (1 - f)));
+        const brag = gease(gseg(c, 6.7, 6.9)) * (1 - gease(gseg(c, 7.6, 7.9)));
+        const ha = Math.abs(Math.sin(c * 13)) * gease(gseg(c, 6.9, 7.0)) * (1 - gease(gseg(c, 7.3, 7.45)));
+        K.body.rotation.x -= brag * 0.3 + ha * 0.08;
+        K.head.rotation.x -= brag * 0.2;
+        K.jaw.rotation.x = ha * 0.55;
+        K.fly.rotation.y = jwLerp(PI / 2, 1.0, gease(gseg(c, 7.5, 8.0)));
+      }
+      K.plant(0);
+    } else if (c < 5.0) {
+      const open = gease(gseg(c, 3.2, 3.35));
+      const k = gease(gseg(c, 3.25, 4.3));
+      flee(Math.min(c, 4.3), kp).addScaledVector(away, -0.14);
+      kp.y -= 0.02;
+      K.fly.position.lerpVectors(HOME, kp, k);
+      K.fly.rotation.y = jwLerp(PI / 2, Math.atan2(away.x, away.z), gease(gseg(c, 3.25, 3.6)));
+      K.flap(kPhase(t, T, (x) => 26 - 10 * gseg(x, 4.2, 4.6)), 1, open, 0.25 * open);
+      K.foldWings(1 - open);
+      K.body.rotation.x = 0.3 * k * (1 - gseg(c, 4.3, 4.6));
+      K.jaw.rotation.x = Math.abs(Math.sin(c * 14)) * bump(c, 4.3, 5.0) * 0.55; // 멈춰서 깍깍
+      K.feet.forEach((f) => (f.rotation.x = jwLerp(0, 1.3, k)));
+      if (c < 3.4) K.plant(0);
+    } else {
+      const k = gease(gseg(c, 5.0, 6.1));
+      K.fly.position.lerpVectors(CHASE, HOME, k);
+      K.fly.position.y += Math.sin(k * PI) * 0.03;
+      K.fly.rotation.y = jwLerp(Math.atan2(away.x, away.z), -PI / 2 + 0.2, gease(gseg(c, 5.0, 5.3)));
+      K.fly.rotation.y = jwLerp(K.fly.rotation.y, PI / 2, gease(gseg(c, 5.9, 6.35)));
+      K.flap(t, 16, 1.0, 0.25 + 0.1 * gseg(c, 5.9, 6.4));
+      K.body.rotation.x = jwLerp(0.15, -0.6, gease(gseg(c, 5.9, 6.3)));
+      K.tailFan = gease(gseg(c, 5.9, 6.3));
+      K.feet.forEach((f) => (f.rotation.x = jwLerp(1.3, -0.3, gseg(c, 5.7, 6.2))));
+      if (c > 6.1) K.plant(0, gseg(c, 6.1, 6.4));
+    }
+    K.glare(rage > 0.3 ? 0.6 : 0.45);
+    K.angry(t, c > 2.5 && c < 5.0 ? 1 : 0);
+  });
+}
+
+// ⑤ 끄레용: 살금살금 다가와 기울여서 짹짹이 흰 배를 갈색으로 박박 칠해 줌 → 짹짹이는 처음엔 갸웃, 칠할수록 좋아서 몸 부풀리고
+//    다 칠하면 콩콩 뛰며 짹짹, 제 배를 내려다보며 뿌듯 / 끄레용도 뿌듯해서 볼 빨개짐
+{
+  const S0 = new THREE.Vector3(0.05, 0, 0); // 짹짹이 자리
+  const A = 1.32, L = 0.098; // 끄레용이 기울 각도(크게 눕혀야 작은 짹짹이 배에 닿음)와 끝까지 길이
+  const LEAN_AT = new THREE.Vector3(S0.x - JW.half * 0.8 - L * Math.sin(A), 0, 0);
+  const FROM = new THREE.Vector3(-0.26, 0, 0.05);
+  jwDuo('끄레용이 갈색 칠해 주기', '흰 배를 갈색으로 박박 칠해 줌 → 짹짹이는 좋아서 몸 부풀리고 콩콩 짹짹', 9.5, (g) => {
+    const J = makeJooljool();
+    g.add(J.g);
+    return { J, paint: null };
+  }, (c, P, O, t) => {
+    const { J } = O;
+    // 칠: 짹짹이 몸에 씌운 갈색 껍질을 칠한 만큼 위에서부터 한 줄씩 드러냄 (처음 한 번 만듦)
+    if (!O.paint) {
+      const tex = canvasTexture('jjaekPaint', 128, 128, (g2, w, h) => {
+        let s = 11;
+        const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+        g2.lineCap = 'round';
+        for (let i = 0; i < 110; i++) { // 비스듬히 박박 칠한 결
+          g2.strokeStyle = `rgba(${120 + r() * 30 | 0},${72 + r() * 20 | 0},${38 + r() * 14 | 0},${0.7 + r() * 0.3})`;
+          g2.lineWidth = 5 + r() * 7;
+          const x = r() * w * 1.4 - w * 0.2, y = r() * h;
+          g2.beginPath(); g2.moveTo(x, y); g2.lineTo(x + 30 + r() * 20, y - 12 - r() * 10); g2.stroke();
+        }
+        g2.globalCompositeOperation = 'destination-out';
+        for (let i = 0; i < 700; i++) { g2.fillStyle = `rgba(0,0,0,${0.15 + r() * 0.4})`; g2.fillRect(r() * w, r() * h, 1 + r(), 1); }
+      });
+      const ink = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 });
+      const COLS = 24, ROWS = 12;
+      // 짹짹이 몸 겉면에 딱 붙는 칠 껍질: 몸 가운데에서 바깥으로 쏜 빛이 겉면에 닿는 자리마다 점을 찍음 (목을 넓힌 몸이라 공 조각은 몸속에 묻힘)
+      // 끄레용 쪽 옆구리(-x)에서 앞가슴·배를 지나 반대쪽 앞까지, 가슴 아래에서 배 밑까지. 위 줄부터 차례로 드러나게 줄마다 묶음
+      const skin = P.g.getObjectByName('몸');
+      let top = P.g;
+      while (top.parent) top = top.parent;
+      top.updateMatrixWorld(true); // 장면 전체 자리·크기를 먼저 맞춤 (안 그러면 빛이 엉뚱한 데로 감)
+      skin.skeleton.update();
+      skin.computeBoundingSphere(); // 머리·목을 키운 뒤의 몸 크기로 (예전 크기면 빛이 몸을 빗나감)
+      const side0 = skin.material.side;
+      skin.material.side = THREE.DoubleSide;
+      const ray = new THREE.Raycaster(), cW = P.body.localToWorld(new THREE.Vector3(0, 0.004, 0)), dW = new THREE.Vector3(), lift = new THREE.Vector3();
+      const pos = [], uv = [], idx = [];
+      for (let i = 0; i <= ROWS; i++) for (let j = 0; j <= COLS; j++) {
+        const th = 1.25 + (i / ROWS) * 1.4, ph = -0.35 + (j / COLS) * 2.75;
+        dW.set(-Math.cos(ph) * Math.sin(th), Math.cos(th), Math.sin(ph) * Math.sin(th)).transformDirection(P.body.matrixWorld);
+        ray.set(cW, dW);
+        const hit = ray.intersectObject(skin, false)[0];
+        const p = hit ? hit.point.clone() : cW.clone().addScaledVector(dW, 0.02);
+        p.add(lift.copy(dW).multiplyScalar(0.0006 * P.body.getWorldScale(new THREE.Vector3()).x)); // 겉면에서 살짝 띄움
+        P.body.worldToLocal(p);
+        pos.push(p.x, p.y, p.z);
+        uv.push(j / COLS, 1 - i / ROWS);
+      }
+      skin.material.side = side0;
+      for (let i = 0; i < ROWS; i++) for (let j = 0; j < COLS; j++) {
+        const a = i * (COLS + 1) + j, b = a + COLS + 1;
+        idx.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      ink.side = THREE.DoubleSide;
+      const m = mesh(geo, ink, P.body, '색칠');
+      m.castShadow = false;
+      m.userData.noOutline = true;
+      O.paint = { m, rows: ROWS, perRow: COLS * 6 };
+    }
+    const prog = clamp01((c - 1.7) / 3.0);
+    O.paint.m.geometry.setDrawRange(0, Math.floor(prog * O.paint.rows) * O.paint.perRow);
+    // 짹짹이: 끄레용 쪽을 보고 서 있음 → 칠할수록 좋아서 깃 부풀림 → 다 칠하면 콩콩 짹짹, 배를 내려다봄
+    jwStand(P, S0.x, S0.z, 0.35);
+    const like = clamp01((c - 2.2) / 1.5) * (1 - gseg(c, 8.6, 9.2));
+    P.body.scale.multiplyScalar(1 + like * 0.08 + Math.sin(t * 12) * 0.01 * like);
+    P.head.rotation.z = bump(c, 1.0, 1.9) * 0.4; // 처음엔 갸웃
+    P.head.rotation.y = -0.5 * gseg(c, 1.6, 2.0) * (1 - gseg(c, 4.8, 5.1)); // 끄레용 쪽을 봄
+    P.tail.rotation.x += Math.max(0, Math.sin(t * 10)) * 0.3 * like;
+    let hop = 0;
+    if (c > 5.2 && c < 7.2) { hop = Math.abs(Math.sin((c - 5.2) * PI * 2.5)); P.feet.forEach((f) => (f.rotation.x = hop * 0.8)); jwChirp(P, c, 0.2); }
+    if (c > 7.3) { const look = bump(c, 7.3, 8.7); P.head.rotation.x += look * 0.7; P.body.rotation.x += look * 0.25; P.head.rotation.y = -0.4 * look; } // 제 배를 내려다보며 뿌듯
+    P.plant(0);
+    P.fly.position.y += hop * 0.016;
+    // 끄레용: 살금살금 → 기울여 끝으로 박박 → 다시 서서 뿌듯
+    J.reset();
+    if (c < 1.3) {
+      const k = c / 1.3, n = Math.min(2, Math.floor(k * 3)), f = k * 3 - n;
+      const a = FROM.clone().lerp(LEAN_AT, n / 3), b = FROM.clone().lerp(LEAN_AT, (n + 1) / 3);
+      hopTo(J, a, b, f, 0.01);
+      J.root.rotation.y = PI / 4;
+    } else {
+      joolAt(J, LEAN_AT);
+      let lean = 0;
+      if (c < 1.7) lean = ease((c - 1.3) / 0.4) * A;
+      else if (c < 4.7) { lean = A + Math.sin(t * 20) * 0.04; J.root.position.z = Math.sin(t * 6) * 0.01; }
+      else if (c < 5.1) lean = (1 - ease((c - 4.7) / 0.4)) * A;
+      J.tilt.rotation.z = -lean; // 짹짹이 쪽으로 눕힘
+      J.root.position.y = Math.abs(Math.sin(lean)) * 0.024;
+      if (c > 5.1) { J.root.rotation.y = -0.3; J.body.position.y = Math.abs(Math.sin(t * 10)) * 0.003; J.shy(0.8, false); } // 뿌듯
+    }
+    J.fit();
+    J.g.visible = c < 9.3;
+    P.g.visible = c < 9.3;
+  });
+}
+
+// ⑥ 구구: 콩콩 다가가 구구 등에 폴짝 올라탐 → 구구가 돌아보더니 짝! 날아오름 → 짹짹이를 등에 태우고 한 바퀴 (짹짹이는 신나서 짹짹)
+//    → 내려앉으면 폴짝 내려와 짹짹 고맙다
+{
+  const R = 0.24, HY = 0.2; // 한 바퀴 반지름·높이
+  const loop = (th) => new THREE.Vector3(Math.sin(th) * R, 0, -R * (1 - Math.cos(th))); // 처음 자리에서 +x 쪽으로 출발해 한 바퀴
+  const loopYaw = (th) => Math.atan2(Math.cos(th), -Math.sin(th)); // 원을 따라 앞으로
+  const SEAT = new THREE.Vector3(0, 0.03, -0.008); // 구구 몸(body) 기준 등 위 앉는 자리
+  const seatW = new THREE.Vector3(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), e = new THREE.Euler();
+  jwDuo('구구 타고 날기', '구구 등에 폴짝 올라타면 구구가 태우고 한 바퀴 날아 줌 → 짹짹이는 신나서 짹짹', 11, (g) => {
+    const G = makePigeon();
+    G.g.userData.pigeon = G;
+    g.add(G.g);
+    return G;
+  }, (c, P, G, t, dt, g) => {
+    // 구구: 섰다가 → 돌아봄 → 짝! 날아올라 한 바퀴 → 내려앉음
+    G.reset();
+    const up = gease(gseg(c, 3.0, 3.6)), down = gease(gseg(c, 7.8, 8.5));
+    const air = up * (1 - down);
+    const th = PI * 2 * gease(gseg(c, 3.1, 8.3));
+    const p = loop(th);
+    G.fly.position.set(p.x, jwLerp(STAND_Y, HY, air) + Math.sin(t * 20) * 0.003 * air, p.z);
+    G.fly.rotation.y = loopYaw(th);
+    if (air < 0.02 && (c < 3.0 || c > 8.3)) {
+      foldWings(G, 1);
+      G.body.rotation.x = -0.12;
+      const look = bump(c, 2.2, 3.0); // 등에 탄 짹짹이를 돌아봄
+      G.head.rotation.y = 1.4 * look;
+      if (c < 1.6) { const peck = Math.max(0, Math.sin(t * 8)); G.body.rotation.x += peck * 0.5; G.head.rotation.x = peck * 0.5; }
+      G.plant(0);
+    } else {
+      const brake = bump(c, 7.9, 8.5);
+      G.flap(t, 18 + brake * 8, 1.0, 0.22 + brake * 0.1);
+      G.body.rotation.x = 0.08 - brake * 0.5;
+      G.tail.scale.x = 1 + brake * 0.7;
+      G.feet.forEach((f) => (f.rotation.x = brake > 0.1 ? 1.3 - brake * 1.6 : 1.3));
+      G.body.rotation.z = -0.25 * Math.sin(gseg(c, 3.6, 7.8) * PI); // 원을 돌며 안쪽으로 기울임
+      if (c > 8.2) G.plant(0, gseg(c, 8.2, 8.5));
+    }
+    gBlink(G, t);
+    G.keepAbove(0);
+    // 등 위 자리 (구구 몸 기울기 그대로)
+    g.updateMatrixWorld(true);
+    G.body.localToWorld(seatW.copy(SEAT));
+    g.worldToLocal(seatW);
+    G.body.getWorldQuaternion(q);
+    g.getWorldQuaternion(q2);
+    q.premultiply(q2.invert());
+    // 짹짹이
+    const ON0 = 1.45, ON1 = 1.9, OFF0 = 8.9, OFF1 = 9.4;
+    const ground0 = new THREE.Vector3(-0.2, 0, 0.03), ground1 = new THREE.Vector3(0.0, 0, 0.1); // 내릴 땐 구구 옆으로 (머리 위로 넘지 않게)
+    if (c < ON0 || c > OFF1) { // 땅: 콩콩 다가옴 / 내려와 짹짹
+      const before = c < ON0;
+      const k = before ? gseg(c, 0, 1.3) : 0, hop = before && c < 1.3 ? Math.sin(((k * 4) % 1) * PI) : 0;
+      const at = before ? ground0.clone().lerp(new THREE.Vector3(-0.06, 0, 0.0), gease(k)) : ground1;
+      jwStand(P, at.x, at.z, before ? PI / 2 : -0.6); // 내려와선 구구 쪽을 보며 짹짹
+      P.feet.forEach((f) => (f.rotation.x = hop * 0.8));
+      if (!before) { jwChirp(P, c, 0.24); P.tail.rotation.x += Math.max(0, Math.sin(t * 9)) * 0.3; }
+      P.fly.scale.setScalar(before ? gease(gseg(c, 0, 0.25)) : 1 - gease(gseg(c, 10.6, 10.95)));
+      P.plant(0);
+      P.fly.position.y += hop * 0.012;
+    } else if (c < ON1 || c > OFF0) { // 폴짝 올라탐 / 폴짝 내려옴
+      const on = c < ON1;
+      const k = on ? gease(gseg(c, ON0, ON1)) : gease(gseg(c, OFF0, OFF1));
+      const a = on ? new THREE.Vector3(-0.06, STAND_Y, 0) : seatW.clone(), b = on ? seatW.clone() : ground1.clone().setY(STAND_Y);
+      const pos = a.lerp(b, k);
+      pos.y += Math.sin(k * PI) * 0.035;
+      jwFly(P, t, pos, on ? PI / 2 : 0.3, 34, 0.9);
+    } else { // 등 위: 발로 꼭 붙잡고, 날 땐 신나서 짹짹, 날개 살짝 펴 균형
+      e.setFromQuaternion(q, 'YXZ');
+      jStand(P);
+      P.fly.position.copy(seatW);
+      P.fly.rotation.set(e.x * 0.6, e.y, e.z * 0.6, 'YXZ');
+      const flying = air > 0.3;
+      if (flying) {
+        jwChirp(P, c, 0.3);
+        P.wings.forEach(([w]) => (w.visible = true));
+        P.shells.forEach((m) => (m.visible = false));
+        P.flap(t, 14, 0.35, 0.35); // 날개를 살짝 펴 파닥파닥 균형
+        P.head.rotation.x -= 0.15;
+        P.tail.rotation.x += Math.sin(t * 6) * 0.1;
+      } else P.head.rotation.y = -0.5 * bump(c, 2.2, 3.0); // 돌아본 구구와 눈 맞춤
+      P.plant(seatW.y);
+    }
+  });
+}
+
+// ⑦ 똑딱이: 포르르 날아와 똑딱이 머리 꼭지 위에 앉음 → 발밑의 꼭지를 쿡쿡 → 누를 때마다 똑! 딱! 심이 나왔다 들어갔다
+//    → 똑딱이는 당황해서 땀 삐질, 휘청휘청 → 몸을 흔들자 짹짹이는 포르르 날아갔다 다시 앉아 쿡 → 결국 날아감
+{
+  const PK = [1.5, 1.95, 2.4, 2.75, 3.05, 3.3, 5.9, 6.3]; // 꼭지를 누르는 순간
+  jwDuo('똑딱이 꼭지 쿡쿡', '머리 꼭지에 앉아 쿡쿡 → 누를 때마다 심이 똑! 딱! → 똑딱이 당황해서 땀 삐질', 8.5, (g) => {
+    const D = makeTtok();
+    g.add(D.g);
+    return D;
+  }, (c, P, D, t, dt, g) => {
+    D.reset();
+    // 똑딱이: 누를 때마다 꼭지가 눌리고 심이 번갈아 나왔다 들어감 → 당황: 땀, 울상, 휘청 → 흔들어 털어냄
+    const press = PK.reduce((m, p) => Math.max(m, tap(c, p)), 0);
+    const done = PK.filter((p) => c >= p), n = done.length; // 지금까지 누른 횟수 (홀수면 심이 나와 있음)
+    const sw = n ? clamp01((c - done[n - 1]) / 0.06) : 1; // 마지막 똑! 뒤로 0.06초 만에 툭
+    D.press(press);
+    D.nib(n === 0 ? 0 : n % 2 ? sw : 1 - sw);
+    const flustered = gseg(c, 2.3, 2.6) * (1 - gseg(c, 7.4, 7.8));
+    if (flustered > 0) { D.sad(true); D.drip(t); }
+    const shake = bump(c, 4.0, 4.9);
+    D.lean(Math.sin(t * 7) * 0.05 * flustered + shake * Math.sin(t * 30) * 0.12, Math.sin(t * 5) * 0.06 * flustered + shake * Math.sin(t * 26) * 0.18);
+    D.root.position.y = Math.max(D.root.position.y, press * 0.002 + bump(c, 1.5, 1.8) * 0.01); // 처음 똑! 에 화들짝
+    // 꼭지 위 자리
+    g.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(D.knob);
+    const top = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
+    g.worldToLocal(top);
+    const FROM = new THREE.Vector3(-0.4, 0.3, 0.2), AWAY = new THREE.Vector3(0.45, 0.35, -0.3);
+    const perchedA = c >= 1.2 && c < 4.05, perchedB = c >= 5.6 && c < 6.8;
+    if (perchedA || perchedB) { // 꼭지 위에 앉아 발밑을 쿡쿡
+      jStand(P);
+      P.fly.position.set(top.x, 0, top.z);
+      P.fly.rotation.y = 0.3;
+      const k = jwPecks(c, PK);
+      P.body.rotation.x += k * 1.0; // 발밑이라 깊이 숙임
+      P.head.rotation.x += k * 0.8;
+      P.tail.rotation.x += k * 0.5;
+      P.wings.forEach(([w]) => (w.visible = shake > 0.05));
+      if (shake > 0.05) { P.shells.forEach((m) => (m.visible = false)); P.flap(t, 30, 0.6 * shake, 0.3); } // 흔들리면 날개로 버팀
+      if (c > 3.5 && c < 4.0) jwChirp(P, c, 0.22);
+      P.plant(top.y);
+    } else {
+      let pos, yaw;
+      if (c < 1.2) { const k = gease(gseg(c, 0, 1.2)); pos = FROM.clone().lerp(top.clone().setY(top.y + STAND_Y + 0.004), k); yaw = jwYaw(FROM, top); P.fly.scale.setScalar(gease(gseg(c, 0, 0.2))); }
+      else if (c < 5.6) { const k = bump(c, 4.05, 5.6); pos = top.clone().setY(top.y + STAND_Y + 0.004 + k * 0.06); pos.x += k * 0.03; yaw = 0.3; jwChirp(P, c, 0.3); } // 포르르 떴다가 다시 앉음
+      else { const k = gease(gseg(c, 6.8, 8.2)); pos = top.clone().setY(top.y + STAND_Y + 0.004).lerp(AWAY, k); yaw = jwYaw(top, AWAY); P.fly.scale.setScalar(1 - gease(gseg(c, 8.0, 8.35))); }
+      jwFly(P, t, pos, yaw, 34);
+    }
+  });
+}
+
 // ── 배치 ──
 const SET =new URLSearchParams(location.search).get('set');
 const SETS = {
@@ -5405,18 +6004,21 @@ const SETS = {
   chul: { list: chul, title: '철필통대장 모션 시안', link: '?set=chul', cols: 4, spacing: 1.0, rowGap: 1.25, dist: 5.2 }, // 보스라 크게 세 줄
   guguHaak: { list: guguHaak.map(pigeonLine), title: '구구·하악냥 어울림 시안', link: '?set=guguHaak', spacing: 0.9 }, // 둘이 같이 뛰노는 자리가 넓어 띄워 놓음
   jjaek: { list: jjaek.map(pigeonLine), title: '짹짹이 시안', link: '?set=jjaek', cols: 5 },
+  jjaekWith: { list: jjaekWith.map(pigeonLine), title: '짹짹이 어울림 시안', link: '?set=jjaekWith', cols: 4, scale: 1.3, spacing: 1.15, rowGap: 1.25, dist: 5.2 }, // 상대가 달리고 날아다녀 작게·넓게 두 줄 (하악냥이 쫓는 원이 옆 장면에 안 들어가게) (하나씩 크게 보려면 &only=이름)
+  jjaekLook: { list: jjaekLook.map(pigeonLine), title: '짹짹이 체형 시안', link: '?set=jjaekLook', cols: 2, spacing: 0.5, rowGap: 0.6, side: true, dist: 2 }, // 옆모습 크게 두 줄
 };
 const cur = SETS[SET] ? SET : 'basic';
-// 시안 목록은 비슷한 종류끼리 한 줄씩 (새 세트를 만들면 여기 알맞은 줄에 넣기)
+// 시안 목록은 몬스터마다 한 줄씩 (새 세트를 만들면 그 몬스터 줄에 넣기). 처음 여러 마리를 그려 보던 아이디어 시안은 맨 아래 '후보' 줄에
 const GROUPS = [
-  ['쪼렙·들판', ['basic', 'field']],
-  ['학용품', ['stationery', 'ttok', 'ttokWith', 'school', 'eraser', 'crayon']],
+  ['구구', ['gugu', 'guguWith', 'guguHaak']],
+  ['똑딱이', ['ttok', 'ttokWith']],
+  ['끄레용', ['jooljool', 'jooljoolWith']],
   ['반쪽이', ['banjjok', 'banjjokEyes']],
-  ['고양이', ['cat', 'haak', 'haakEyes']],
-  ['비둘기', ['pigeon', 'gugu', 'guguWith', 'guguHaak']],
-  ['보스', ['pilbox', 'chul']],
-  ['까치', ['magpie', 'kkakkak', 'kkakkakLook', 'kkakkakWith', 'kkakkakGame']],
-  ['참새', ['jjaek']],
+  ['하악냥', ['haak', 'haakEyes']],
+  ['깍깍이', ['kkakkak', 'kkakkakLook', 'kkakkakWith', 'kkakkakGame']],
+  ['짹짹이', ['jjaek', 'jjaekLook', 'jjaekWith']],
+  ['철필통대장', ['chul']],
+  ['후보', ['basic', 'field', 'stationery', 'school', 'eraser', 'crayon', 'cat', 'pigeon', 'magpie', 'pilbox']],
 ];
 const setLink = (k) => (k === cur ? `<b>${SETS[k].title.replace(' 시안', '')}</b>` : `<a href="${SETS[k].link}">${SETS[k].title.replace(' 시안', '')}</a>`);
 document.getElementById('title').innerHTML = `${SETS[cur].title}<span>마우스로 돌려 보기 · 휠로 확대 · 맨 오른쪽은 크기 비교용 주민</span>${

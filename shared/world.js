@@ -161,6 +161,7 @@ export const MON_CRIT_MULT = 1.5;
 export const MONSTERS = {
   nalgae: { name: '날개콩', lv: 1, hp: 90, atk: 19, def: 0, eva: 0.08, crit: 0.05, xp: 20 }, // 작고 말랑한 콩: 파닥여서 조금 잘 피함
   gugu: { name: '구구', lv: 1, hp: 72, atk: 17, def: 0, eva: 0.12, crit: 0.05, xp: 18 }, // 비둘기: 약하지만 푸드덕 잘 피함
+  jjaek: { name: '짹짹이', lv: 1, hp: 50, atk: 14, def: 0, eva: 0.18, crit: 0.04, xp: 14 }, // 참새: 가장 하찮은 쪼렙, 작고 약하지만 콩콩 잘 피함
   mongdang: { name: '몽당연필', lv: 2, hp: 100, atk: 29, def: 2, eva: 0.03, crit: 0.12, xp: 25 }, // 뾰족한 심: 아프게 찌르고 치명타가 잦음
   ttok: { name: '똑딱이', lv: 2, hp: 90, atk: 26, def: 1, eva: 0.06, crit: 0.12, xp: 25 }, // 똑딱볼펜: 가늘어서 약하지만 볼펜심으로 콕 찌름
   kkreyong: { name: '끄레용', lv: 2, hp: 130, atk: 24, def: 6, eva: 0.02, crit: 0.05, xp: 28 }, // 크레파스: 종이옷 덕에 단단, 느릿느릿
@@ -495,6 +496,8 @@ export const FIELD_MONSTERS = [
   // 북쪽 끝 (Lv16~19): 서쪽 깍깍이 둥지 무리 · 동쪽 하악냥 (필드보스는 북서쪽 구석)
   [-33, -49, 2.4, ['kkakkak', 17], ['kkakkak', 16]], [-47, -38, 2.2, ['kkakkak', 16]], [-24, -61, 2.2, ['kkakkak', 19], ['kkakkak', 18]],
   [31, -49, 2.4, ['haak', 18], ['banjjok', 17]], [18, -62, 2.4, ['haak', 19], ['mongdang', 18]], [-9, -47, 2.2, ['banjjok', 17]],
+  // 입구 풀밭 짹짹이 (Lv1~2): 날개콩 사이사이 콩콩. 맨 끝에 붙여 기존 몬스터 번호(f0, f1 …)는 그대로
+  [1, 46, 1.8, ['jjaek', 1], ['jjaek', 1]], [-6, 39, 1.8, ['jjaek', 2], ['jjaek', 1]], [24, 52, 1.6, ['jjaek', 2]],
 ].map(([x, z, r, ...mobs]) => ({ x: FIELD.x + x, z: FIELD.z + z, r, mobs: mobs.map(([kind, lv]) => ({ kind, lv })) }));
 // 몬스터 한 마리씩: 종류 · 레벨 · 도는 가운데 x,z · 반지름 r
 export const FIELD_MOBS = FIELD_MONSTERS.flatMap((s) => s.mobs.map((m, k) => ({ ...m, x: s.x, z: s.z, r: k ? s.r / 2 : s.r })));

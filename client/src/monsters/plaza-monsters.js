@@ -13,6 +13,7 @@ import { createGugu } from './gugu.js';
 import { createKkakkak, KKAK_JAB } from './kkakkak.js';
 import { createKkreyong } from './kkreyong.js';
 import { createTtok, TTOK_TOP } from './ttok.js';
+import { createJjaek } from './jjaek.js';
 import { canvasTexture } from '../villager/textures.js';
 import { syncToon, batchRigid } from '../villager/toon.js';
 
@@ -41,6 +42,11 @@ const KINDS = {
   // 똑딱이(똑딱볼펜): 중립형. 촉으로 콩콩 다니며 똑딱, 가끔 바닥에 용수철 낙서·똑딱 연타·심 갈아 끼우기
   ttok: { create: createTtok, r: 0.016, special: 'scribble', temper: 'neutral', size: 1.15,
     plan: [['walk', 5], ['idle', 3], ['special', 3.6], ['walk', 4], ['click', 4], ['idle', 2.5], ['walk', 5], ['refill', 5], ['idle', 2]] },
+  // 짹짹이(참새): 중립형 쪼렙. 두 발 모아 콩콩 다니며 모이 콕콕, 가끔 포르르 떴다 내려앉고 구구처럼 나들이(나무·머리 위에 앉기)도 다님
+  // 몸은 구구 뼈대에 참새 체형 (시안에서 비둘기의 0.42배) · 구구와 같은 배율이면 구구의 절반이 안 되게 작다
+  jjaek: { create: createJjaek, r: 0.018, special: 'peck', temper: 'neutral', size: 0.75, shadow: [0.5, 0.7],
+    plan: [['walk', 3], ['special', 2], ['idle', 2], ['walk', 2.5], ['special', 2], ['fly', 2.4], ['idle', 1.5], ['walk', 3.5], ['special', 2], ['idle', 2]],
+    flies: { speed: 3.6, chance: 0.08, nearArc: 0.7 } },
 };
 
 const SCALE = 1.5 * 1.7 * 2; // 시안 크기 × 마을 주민 배율 × 2 → 주민 허리 아래쯤

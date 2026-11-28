@@ -775,7 +775,7 @@ const guguPerches = () => [...TREE_PERCHES, ...[me, ...[...others.values()].map(
 // 자리와 동작은 시계로 정해지므로 늦게 만들어도 모두의 화면에서 같다
 // 어느 자리에 무엇이 몇 레벨로 있는지는 shared/world.js FIELD_MONSTERS (포탈 가까이 낮은 레벨, 멀수록 높은 레벨, 같은 종류 무리)
 // 나는 종류(구구·깍깍이)는 나무 꼭대기·가만히 선 캐릭터 머리에 앉으러 다닌다
-const FLIES = new Set(['gugu', 'kkakkak']);
+const FLIES = new Set(['gugu', 'kkakkak', 'jjaek']);
 const fieldMonsters = [];
 const fieldJobs = FIELD_MOBS.map((m, i) => () => createPlazaMonsters(scene, { ...monsterOpts, id: `f${i}`, x: m.x, z: m.z, r: m.r, kind: m.kind, lv: m.lv, phase: i * 7.3, perches: FLIES.has(m.kind) ? guguPerches : null }));
 // 필드보스 철필통대장 (들판 왼쪽 맨 끝 구석 FIELD_BOSS): 와르르 쏟기로 불러낸 졸개는 들판 몬스터 목록에 넣어 맞고 움직이게, 보스가 치우면 뺀다
