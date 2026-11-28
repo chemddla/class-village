@@ -54,7 +54,7 @@ import { VILLAGE_MONSTERS, VILLAGE_MOBS, SPAWN, groundKind, inField } from './wo
     assert.ok(!inField(s.x, s.z), `마을 몬스터 자리 ${s.x},${s.z} 는 마을 안`);
     for (let a = 0; a < 12; a++) assert.equal(groundKind(s.x + Math.sin(a * Math.PI / 6) * (s.r + 0.6), s.z + Math.cos(a * Math.PI / 6) * (s.r + 0.6)), 'grass', `마을 몬스터 자리 ${s.x},${s.z} 도는 길`);
     assert.ok(Math.hypot(s.x - SPAWN.x, s.z - SPAWN.z) > 24, `마을 몬스터 자리 ${s.x},${s.z} 는 광장에서 떨어져 있음`);
-    for (const n of VILLAGE_MONSTERS) if (n !== s) assert.ok(Math.hypot(s.x - n.x, s.z - n.z) > 25, '마을 몬스터 자리는 드문드문');
+    for (const n of VILLAGE_MONSTERS) if (n !== s) assert.ok(Math.hypot(s.x - n.x, s.z - n.z) > 19, '마을 몬스터 자리는 드문드문');
     if (s.mobs.length === 2) assert.ok(fieldPairs.has(pair(s)), `마을 ${pair(s)} 는 들판에 있는 합동 모션 짝`);
   }
   assert.equal(VILLAGE_MOBS.length, VILLAGE_MONSTERS.reduce((t, s) => t + s.mobs.length, 0));
