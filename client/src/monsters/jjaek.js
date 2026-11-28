@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { canvasTexture } from '../villager/textures.js';
 import { bump } from './haaknyang.js';
 import { angerMark, angerPulse } from './anger.js';
-import { makePigeon, STAND_Y, gease, gseg, poseSmoother } from './gugu.js';
+import { makePigeon, STAND_Y, gease, gseg, poseSmoother, foldShellGeo } from './gugu.js';
 import { syncToon } from '../villager/toon.js';
 
 const PI = Math.PI;
@@ -148,63 +148,6 @@ const foldTex = () => canvasTexture('sparrowFold3', 256, 128, (g, w, h) => {
   edge(0, 0.55, C.back); // 위: 등 갈색
   edge(0.55, 1, '#d8c4a6'); // 아래: 옆구리 황갈색
 });
-// 접은 날개 껍질: 몸통 겉면을 따라 옆구리~등 가장자리를 덮고, 엉덩이를 지나면 꽁지 위로 가늘게 모인다
-// 몸 표면은 가운데 축에서 바깥으로 쏜 빛이 몸에 닿는 자리로 잰다 (체형이 바뀌어도 딱 붙게). 같은 체형은 한 번만 만든다
-const FOLD_GEO = new Map();
-const foldGeo = (skin, s, key) => {
-  const k = `${key}:${s}`;
-  if (FOLD_GEO.has(k)) return FOLD_GEO.get(k);
-  const NU = 22, NV = 10, Z0 = 0.016, Z1 = -0.036, ZT = -0.074, GAP = 0.0018;
-  const ray = new THREE.Raycaster(), o = new THREE.Vector3(), d = new THREE.Vector3();
-  skin.updateMatrixWorld(true);
-  const inv = skin.matrixWorld.clone().invert();
-  const side0 = skin.material.side;
-  skin.material.side = THREE.DoubleSide; // 몸 안에서 바깥으로 쏘므로 안쪽 면도 맞게
-  const ease = (x) => { x = THREE.MathUtils.clamp(x, 0, 1); return x * x * (3 - 2 * x); };
-  const pos = [], uv = [], idx = [];
-  let lastR = null; // 몸이 끝난 뒤(날개 끝)는 마지막 단면 반지름을 줄여 가며 씀
-  for (let i = 0; i <= NU; i++) {
-    const u = i / NU;
-    const body = u <= 0.72;
-    const z = body ? THREE.MathUtils.lerp(Z0, Z1, u / 0.72) : THREE.MathUtils.lerp(Z1, ZT, (u - 0.72) / 0.28);
-    const lo = THREE.MathUtils.lerp(0.45, -0.45, ease(u / 0.14)) + ease((u - 0.5) / 0.5) * 0.95; // 아래 가장자리: 앞은 둥글게, 끝으로 갈수록 올라가 뾰족
-    // 위 가장자리: 등 가운데선 조금 못 미쳐서. 앞(어깨)은 낮게 시작해 뒷목에서 튀어나오지 않게
-    const hi = THREE.MathUtils.lerp(0.55, 1.22, ease(u / 0.32)) - ease((u - 0.8) / 0.2) * 0.12;
-    const cy = 0.004;
-    const ring = [];
-    for (let j = 0; j <= NV; j++) {
-      const a = THREE.MathUtils.lerp(lo, hi, j / NV);
-      let r;
-      if (body) {
-        o.set(0, cy, z).applyMatrix4(skin.matrixWorld);
-        d.set(s * Math.cos(a), Math.sin(a), 0).transformDirection(skin.matrixWorld);
-        ray.set(o, d);
-        const hit = ray.intersectObject(skin, false)[0];
-        r = hit ? hit.point.clone().applyMatrix4(inv).sub(new THREE.Vector3(0, cy, z)).length() : 0.02;
-        ring.push(r);
-      } else r = lastR[j] * THREE.MathUtils.lerp(1, 0.5, (u - 0.72) / 0.28); // 날개 끝은 꽁지 위로 가늘게 모음 (옆으로 삐져나오지 않게)
-      // 몸에서 띄우는 거리: 가장자리는 몸에 거의 붙이고 안쪽으로 갈수록 띄움 (가장자리가 떠 있으면 그 단면이 외곽선과 겹쳐 짙은 줄로 보임)
-      const fv = j / NV, edge = Math.min(ease(fv / 0.3), ease((1 - fv) / 0.3), ease(u / 0.15));
-      r += GAP * (0.12 + 0.88 * edge);
-      pos.push(s * Math.cos(a) * r, cy + Math.sin(a) * r, z);
-      uv.push(u, j / NV);
-    }
-    if (body) lastR = ring;
-  }
-  skin.material.side = side0;
-  for (let i = 0; i < NU; i++) for (let j = 0; j < NV; j++) {
-    const a = i * (NV + 1) + j, b = a + NV + 1;
-    if (s > 0) idx.push(a, b, a + 1, a + 1, b, b + 1); else idx.push(a, a + 1, b, a + 1, b + 1, b); // 겉면이 바깥을 보게
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  FOLD_GEO.set(k, geo);
-  return geo;
-};
-
 // 둥근 두상: 비둘기 머리는 정수리가 고깔처럼 뾰족해서, 머리 뼈에 붙은 정점들을 머리 가운데 둘레의 타원체 쪽으로 끌어당긴다
 // (사진 속 참새처럼 넓고 둥근 돔. 머리에 붙은 정도(skinWeight)만큼만 움직여 목·몸과의 이음은 그대로)
 const HEAD_R = [0.0172, 0.0168, 0.0172]; // 타원체 반지름 (옆·위아래·앞뒤, 머리 크기 적용 전)
@@ -381,7 +324,7 @@ export const JJ_BODY = { fat: 1.05, len: 0.8, neckH: 0.72, wing: 0.85, size: 0.4
 export const JJ_FOLD = { x: 0.0015, y: 0.0063, z: 0.0033, lean: -0.32, pitch: 0, yaw: 0.2 };
 export function makeJjaek(look = {}) {
   const { size, fold, tailW = 0.8, tailL = 1.55, tailT = 0.6, head = [1.55, 1.38, 1.4], neckW = [1.5, 1.2, 1.35], ...shape } = { ...JJ_BODY, ...look };
-  const P = makePigeon({ grey: C.belly, wingC: '#8c5631', tipC: '#3a281b', neck: C.belly, neck2: C.belly, eye: 'dot',
+  const P = makePigeon({ foldShell: false, softFlap: false, grey: C.belly, wingC: '#8c5631', tipC: '#3a281b', neck: C.belly, neck2: C.belly, eye: 'dot',
     tailC: ['#8a6242', '#5e412b'], legC: '#b88a6c', ...shape });
   // 등선 맞추기(backLine)는 쓰지 않음: 둥근 두상(roundHead)과 굵은 목으로 등이 뒤통수까지 저절로 둥글게 이어지는데,
   // 등선을 주면 그 구간이 끝나는 뒷목에서 몸이 원래 모양으로 급히 돌아가 턱이 튀어나옴
@@ -429,7 +372,7 @@ export function makeJjaek(look = {}) {
   // 접은 날개 껍질 (선 자세에서 펴는 날개판 대신 보임)
   const skin = P.g.getObjectByName('몸');
   const FM = new THREE.MeshStandardMaterial({ roughness: 0.8, map: foldTex(), side: THREE.DoubleSide });
-  P.shells = [-1, 1].map((s) => mesh(foldGeo(skin, s, geoKey), FM, P.body, '접은날개'));
+  P.shells = [-1, 1].map((s) => mesh(foldShellGeo(skin, s, geoKey), FM, P.body, '접은날개'));
   P.shells.forEach((m) => {
     m.visible = false;
     m.userData.noOutline = true; // 몸에 붙은 껍질이라 가장자리에 외곽선을 그리면 어깨·뒷목에 홈이 팬 듯한 선이 생김 (바깥 윤곽은 몸이 그림)

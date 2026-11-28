@@ -24,7 +24,7 @@ const ball = (r, n = 32) => new THREE.SphereGeometry(r, n, Math.round(n * 0.75))
 // 사진 속 까치처럼: 머리·가슴·등·꽁지 밑은 검정, 배·옆구리·어깨는 흰색, 날개는 파랗게 빛나고 날개깃 끝은 검정,
 // 꽁지는 길고 청록에서 보랏빛으로, 부리·다리는 검정. 흰 무늬는 전부 몸·날개 그림에 칠해서 이음매 없이
 export function makeMagpie({ fat = 1, len = 1, neckH = 1, wing = 1.1, tail = 2.4, iris = '#4a3426', sheen = '#2f5fae' } = {}) {
-  const P = makePigeon({ grey: '#1c1e26', wingC: sheen, tipC: '#14161c', neck: '#1c1e26', neck2: '#1c1e26', fat, wing, eye: 'dot', len, neckH, backLine: [[-0.0353, 0.0185], [-0.0236, 0.0226], [-0.0127, 0.0258], [0, 0.0288], [0.0127, 0.0314], [0.021, 0.0334], [0.0255, 0.035]], napeFill: 0.15, shoulderIn: 0.003,
+  const P = makePigeon({ foldShell: false, softFlap: false, grey: '#1c1e26', wingC: sheen, tipC: '#14161c', neck: '#1c1e26', neck2: '#1c1e26', fat, wing, eye: 'dot', len, neckH, backLine: [[-0.0353, 0.0185], [-0.0236, 0.0226], [-0.0127, 0.0258], [0, 0.0288], [0.0127, 0.0314], [0.021, 0.0334], [0.0255, 0.035]], napeFill: 0.15, shoulderIn: 0.003,
     pied: '#f4f2ee', tailC: ['#1d5560', '#3b2c6e'], legC: '#1a1b20' });
   P.g.getObjectByName('코').visible = false; // 비둘기 부리 위 흰 혹은 없음
   const BEAK = mat('#17181c', 0.4);
@@ -115,6 +115,8 @@ export function makeMagpie({ fat = 1, len = 1, neckH = 1, wing = 1.1, tail = 2.4
       const f = mesh(featherGeo((0.034 - i * 0.0008) * W, 0.0095 * W), SEC, arm, '날개');
       f.position.set(s * (0.002 + i * 0.0053) * W, -0.0004 * i, 0.002 * W);
       f.userData.spread = i * 0.055; // 바깥 깃일수록 살짝 바깥으로 → 첫째날개깃 부채로 이어짐
+      f.userData.len = (0.034 - i * 0.0008) * W;
+      f.rotation.order = 'ZYX'; // 부채(y)로 편 뒤 팔 앞뒤 축(z)으로 내림: 손마디 따라 내려가기
       return f;
     });
     // 손: 손가락처럼 갈라진 첫째날개깃 6장. 가운데가 제일 길어 끝이 둥근 까치 날개
@@ -150,6 +152,16 @@ export function makeMagpie({ fat = 1, len = 1, neckH = 1, wing = 1.1, tail = 2.4
       const fold = P.wingFold > 0 ? P.wingFold : THREE.MathUtils.clamp((s * arm.rotation.y) / 1.45, 0, 1);
       // 접으면 둘째날개깃도 팔 방향(뒤)으로 눕혀 기와처럼 겹침 (아래로 늘어지지 않게)
       arm.userData.secs.forEach((f, i) => (f.rotation.y = -s * THREE.MathUtils.lerp(f.userData.spread, 1.38 + i * 0.03, fold)));
+      // 손목 너머까지 뻗은 바깥 둘째날개깃은 손마디가 아래로 꺾이면 같이 내려감
+      // (팔에만 붙어 있으면 내려간 손 덮깃·첫째날개깃 위로 아래 깃이 뚫고 올라와 보임)
+      // 깃 뿌리를 축으로 팔 앞뒤 축(z)으로 돌려, 깃 끝이 손목 너머로 나간 만큼만 손을 따라 내려가게 한다
+      const down = Math.min(0, s * hand.rotation.z) * (1 - fold); // 손이 아래로 꺾인 각도 (음수)
+      const wrist = Math.abs(hand.position.x);
+      arm.userData.secs.forEach((f) => {
+        const root = Math.abs(f.position.x), tip = root + Math.sin(Math.abs(f.rotation.y)) * f.userData.len;
+        const k = tip > wrist ? (tip - wrist) / (tip - root) : 0;
+        f.rotation.z = s * down * k;
+      });
       hand.userData.prims.forEach((f, i) => {
         const open = 0.95 + (f.userData.spread - 0.95) * P.open;
         f.rotation.y = -s * THREE.MathUtils.lerp(open, 1.5 + (i - 2.5) * 0.02, fold);

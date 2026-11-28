@@ -20,12 +20,118 @@ function mesh(geo, m, parent, name = '부품') {
 }
 const ball = (r, n = 32) => new THREE.SphereGeometry(r, n, Math.round(n * 0.75));
 
+// 접은 날개 껍질: 몸통 겉면을 따라 옆구리~등 가장자리를 덮고, 엉덩이를 지나면 꽁지 위로 가늘게 모인다
+// 몸 표면은 가운데 축에서 바깥으로 쏜 빛이 몸에 닿는 자리로 잰다 (체형이 바뀌어도 딱 붙게). 같은 체형은 한 번만 만든다
+// Z: [어깨 앞뒤 자리, 몸 끝(엉덩이), 날개 끝] — 몸 길이가 다르면 바꿔 줌
+const FOLD_GEO = new Map();
+// LO: 아래 가장자리 각도 [어깨 끝, 가장 낮은 곳, 끝으로 갈수록 올라가는 만큼] — 클수록 날개가 옆구리 아래까지 덮음
+// H0: 어깨 끝 위 가장자리 각도 (LO 어깨 끝과 가까울수록 날개 앞이 둥글게 모임)
+// front: 0 보다 크면 날개 앞을 이 길이(u)만큼 반원처럼 둥글게: 위·아래 가장자리가 어깨 끝 한 점(L0=H0)에서 둥글게 벌어짐 (앞이 잘린 듯 세로로 끊기지 않게)
+export const foldShellGeo = (skin, s, key, [Z0, Z1, ZT] = [0.016, -0.036, -0.074], [L0, L1, LR] = [0.45, -0.45, 0.95], H0 = 0.55, front = 0) => {
+  const k = `${key}:${s}:${Z0}:${Z1}:${ZT}:${L0}:${L1}:${LR}:${H0}:${front}`;
+  if (FOLD_GEO.has(k)) return FOLD_GEO.get(k);
+  const NU = front ? 40 : 22, NV = 10, GAP = 0.0018; // 둥근 앞은 촘촘히
+  const ray = new THREE.Raycaster(), o = new THREE.Vector3(), d = new THREE.Vector3();
+  skin.updateMatrixWorld(true);
+  const inv = skin.matrixWorld.clone().invert();
+  const side0 = skin.material.side;
+  skin.material.side = THREE.DoubleSide; // 몸 안에서 바깥으로 쏘므로 안쪽 면도 맞게
+  const ease = (x) => { x = THREE.MathUtils.clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+  const circ = (x) => { x = THREE.MathUtils.clamp(x, 0, 1); return Math.sqrt(1 - (1 - x) ** 2); }; // 반원 둘레: 앞 끝에서 바로 벌어짐
+  const pos = [], uv = [], idx = [];
+  let lastR = null; // 몸이 끝난 뒤(날개 끝)는 마지막 단면 반지름을 줄여 가며 씀
+  for (let i = 0; i <= NU; i++) {
+    const u = i / NU;
+    const body = u <= 0.72;
+    const z = body ? THREE.MathUtils.lerp(Z0, Z1, u / 0.72) : THREE.MathUtils.lerp(Z1, ZT, (u - 0.72) / 0.28);
+    const lo = THREE.MathUtils.lerp(L0, L1, front ? circ(u / front) : ease(u / 0.14)) + ease((u - 0.5) / 0.5) * LR; // 아래 가장자리: 앞은 둥글게, 끝으로 갈수록 올라가 뾰족
+    // 위 가장자리: 등 가운데선 조금 못 미쳐서. 앞(어깨)은 낮게 시작해 뒷목에서 튀어나오지 않게
+    const hi = THREE.MathUtils.lerp(H0, 1.22, front ? circ(u / (front * 1.4)) : ease(u / 0.32)) - ease((u - 0.8) / 0.2) * 0.12;
+    const cy = 0.004;
+    const ring = [];
+    for (let j = 0; j <= NV; j++) {
+      const a = THREE.MathUtils.lerp(lo, hi, j / NV);
+      let r;
+      if (body) {
+        o.set(0, cy, z).applyMatrix4(skin.matrixWorld);
+        d.set(s * Math.cos(a), Math.sin(a), 0).transformDirection(skin.matrixWorld);
+        ray.set(o, d);
+        const hit = ray.intersectObject(skin, false)[0];
+        r = hit ? hit.point.clone().applyMatrix4(inv).sub(new THREE.Vector3(0, cy, z)).length() : 0.02;
+        ring.push(r);
+      } else r = lastR[j] * THREE.MathUtils.lerp(1, 0.5, (u - 0.72) / 0.28); // 날개 끝은 꽁지 위로 가늘게 모음 (옆으로 삐져나오지 않게)
+      // 몸에서 띄우는 거리: 가장자리는 몸에 거의 붙이고 안쪽으로 갈수록 띄움 (가장자리가 떠 있으면 그 단면이 외곽선과 겹쳐 짙은 줄로 보임)
+      const fv = j / NV, edge = Math.min(ease(fv / 0.3), ease((1 - fv) / 0.3), ease(u / 0.15));
+      r += GAP * (0.12 + 0.88 * edge);
+      pos.push(s * Math.cos(a) * r, cy + Math.sin(a) * r, z);
+      uv.push(u, j / NV);
+    }
+    if (body) lastR = ring;
+  }
+  skin.material.side = side0;
+  for (let i = 0; i < NU; i++) for (let j = 0; j < NV; j++) {
+    const a = i * (NV + 1) + j, b = a + NV + 1;
+    if (s > 0) idx.push(a, b, a + 1, a + 1, b, b + 1); else idx.push(a, a + 1, b, a + 1, b + 1, b); // 겉면이 바깥을 보게
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  FOLD_GEO.set(k, geo);
+  return geo;
+};
+
+// 구구 접은 날개 그림 (짹짹이와 같은 방식): 가로는 어깨(0) → 날개 끝(1), 세로는 위가 날개 윗가장자리(등 쪽)
+// 진짜 비둘기 옆모습처럼: 몸 색에 가까운 회색 덮깃, 가운데쯤엔 위아래 가장자리까지 비스듬히 이어진 굵은 검은 줄 두 줄,
+// 그 밑과 뒤로는 짙은 회색 첫째날개깃이 꽁지 쪽으로 길게
+const pigeonFoldTex = (wingC, tipC, grey) => canvasTexture(`pigeonFold5:${wingC}:${tipC}:${grey}`, 256, 128, (g, w, h) => {
+  const light = `#${new THREE.Color(grey).lerp(new THREE.Color(wingC), 0.25).getHexString()}`; // 덮깃: 몸 색에 가깝게 (날개 색을 살짝만 섞음)
+  const Y = (v) => h * (1 - v); // v: 아래 0 → 위 1
+  g.fillStyle = light;
+  g.fillRect(0, 0, w, h);
+  // 첫째날개깃: 아래쪽 뒤편과 날개 끝 전체를 짙은 회색으로 (덮깃 밑에서 비스듬히 시작)
+  g.fillStyle = tipC;
+  g.beginPath();
+  g.moveTo(w * 0.56, Y(0)); g.quadraticCurveTo(w * 0.68, Y(0.22), w * 0.8, Y(0.62)); g.lineTo(w * 0.86, Y(1)); g.lineTo(w, Y(1)); g.lineTo(w, Y(0));
+  g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(25,22,30,0.35)'; // 날개깃 결: 뒤로 길게
+  g.lineWidth = 2;
+  for (let i = 0; i < 6; i++) { g.beginPath(); g.moveTo(w * (0.64 + i * 0.04), Y(0.05 + i * 0.12)); g.lineTo(w, Y(0.02 + i * 0.16)); g.stroke(); }
+  // 검은 줄 두 줄: 날개 윗가장자리에서 아랫가장자리까지 끊기지 않게 쭉. 날개가 뒤로 흐르는 방향을 따라 아래로 갈수록 뒤로 기울고,
+  // 가운데가 앞으로 살짝 휨. 뒤쪽 가장자리는 깃 끝처럼 살짝 물결 (자를 대고 그은 듯한 일자가 아니게)
+  g.fillStyle = '#3c3a44';
+  g.filter = 'blur(0.6px)';
+  for (const [x, top, bot, wd] of [[0.32, 1.02, -0.02, 0.048], [0.43, 1.02, -0.02, 0.044]]) { // 가장자리 밖까지 그어 끊김 없이
+    const N = 16, pts = [];
+    const at = (i) => { // 줄 가운데선: 위(top)에서 아래(bot)로, 아래로 갈수록 뒤(+x)로, 가운데가 앞(-x)으로 살짝 휨. 마지막 값은 굵기
+      const q = i / N, v = top + (bot - top) * q;
+      return [w * (x - 0.02 * Math.sin(q * PI) + 0.07 * q), Y(v), 0.85 + 0.15 * Math.sin(q * PI)]; // 굵기는 거의 고르게 (가장자리까지 이어지니)
+    };
+    for (let i = 0; i <= N; i++) { const [cx, cy, k] = at(i); pts.push([cx - w * wd * 0.45 * k, cy]); } // 앞 가장자리 (매끈)
+    for (let i = N; i >= 0; i--) { // 뒤 가장자리: 깃 끝처럼 살짝 물결
+      const [cx, cy, k] = at(i);
+      pts.push([cx + w * wd * 0.55 * k * (1 + 0.18 * Math.sin(i * 1.9)), cy]);
+    }
+    g.beginPath();
+    pts.forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py)));
+    g.closePath();
+    g.fill();
+  }
+  g.filter = 'none';
+  // 얇은 윤곽선: 위·아래 가장자리를 따라 가늘게 (둥근 앞쪽은 위·아래 가장자리가 만나는 곳이라 저절로 둥글게 이어짐)
+  // 몸 외곽선과 같은 짙은 갈색이되 가늘고 살짝 비치게: 날개 모양만 보이고 무늬처럼 도드라지지 않게
+  g.fillStyle = 'rgba(58,40,30,0.75)';
+  g.fillRect(0, 0, w, 2.5);
+  g.fillRect(0, h - 2.5, w, 2.5);
+});
+
 // 기본 비둘기: fly(공중 높이) > body > head·neck·wings·tail·feet. 앞이 +z
 // 진짜 비둘기처럼: 작은 머리, 통통한 가슴, 초록·보라로 반짝이는 목, 검은 줄 두 개 있는 회색 날개,
 // 끝이 짙은 뾰족한 날개깃, 끝에 검은 띠가 있는 부채꼴 꼬리, 주황 눈, 부리 위 하얀 혹, 짧은 빨간 발
 // 날개는 팔(안쪽)·손(바깥쪽) 두 마디라 파도치듯 접혔다 펴진다
 export const tmpV = new THREE.Vector3();
-export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d6470', neck = '#5f9a7e', neck2 = '#8e7ab0', fat = 1, wing = 1, eye = 'orange', pied = null, tailC = null, legC = '#e0605f', len = 1, neckH = 1, backLine = null, napeFill = 0, shoulderIn = 0 } = {}) {
+export function makePigeon({ grey = '#a9b0bd', wingC = '#a5acb9', tipC = '#5d6470', neck = '#5f9a7e', neck2 = '#8e7ab0', fat = 1, wing = 1, eye = 'orange', pied = null, tailC = null, legC = '#e0605f', len = 1, neckH = 1, backLine = null, napeFill = 0, shoulderIn = 0, foldShell = true, softFlap = true } = {}) {
   // neckH: 목·머리 높이 배율 (1 보다 작으면 목이 짧아 머리가 어깨에 낮게 얹힘)
   // len: 몸통(가슴~꽁지) 앞뒤 길이 배율. 뼈 크기로 줄이면 목덜미가 꺾이니 모양 자체를 줄인다 (머리·목은 그대로)
   // pied: 까치처럼 흰 무늬 색 (배·어깨·날개깃 안쪽), 비둘기 날개 검은 줄은 없앰 / tailC: [뿌리, 끝] 꽁지 빛깔
@@ -333,6 +439,7 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
   const rest = parts.map((o) => [o.position.clone(), o.rotation.clone(), o.scale.clone()]);
   const P = {
     g, fly, body, head, neck: neckG, wings, tail, feet, eyes, beak, probes, // probes: 다른 모양 날개·꽁지를 붙일 때 땅 검사 점을 더 넣음
+    dims: { fat, len, wing }, // 접은 날개를 몸 옆구리에 맞춰 붙일 때 씀
     reset() { parts.forEach((o, i) => { o.position.copy(rest[i][0]); o.rotation.copy(rest[i][1]); o.scale.copy(rest[i][2]); }); },
     // 날갯짓: 아래로 세게 치고(빠르게) 위로 들 때 손마디가 늦게 따라와 접힌다
     flap(t, speed = 14, amp = 0.9, base = 0.2) {
@@ -340,6 +447,16 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
       const a = Math.sin(p) * amp + base;
       const h = Math.sin(p - 0.9) * amp * 0.55 - 0.05;
       wings.forEach(([w, s, hd]) => { w.rotation.z = s * a; hd.rotation.z = s * h; });
+      if (softFlap) { // 진짜 새처럼: 날개 끝이 8자를 그리며 휘청 (판을 위아래로만 돌리면 딱딱해 보임)
+        const up = Math.cos(p); // + 올리는 중, - 내려치는 중
+        wings.forEach(([w, s, hd]) => {
+          w.rotation.y = s * amp * (0.1 + 0.14 * up); // 올릴 땐 뒤로 젖히고, 내려칠 땐 앞으로 쭉 뻗음
+          hd.rotation.y = s * amp * 0.45 * Math.max(0, Math.cos(p - 0.5)) ** 1.5; // 올릴 땐 손목을 뒤로 접어 바람을 덜 받음
+          w.rotation.x = -0.18 * amp * Math.max(0, -up); // 내려칠 땐 앞 가장자리를 숙여 바람을 누름
+          hd.rotation.x = -0.22 * amp * Math.max(0, -Math.cos(p - 0.6)); // 손끝은 한 박자 늦게 비틀림
+        });
+        tail.rotation.x += Math.sin(p - 0.6) * 0.07 * amp; // 꽁지는 날갯짓 반대로 까딱
+      }
       return a;
     },
     // 날개를 V 자로 들고 쭉 편 채 미끄러지기
@@ -379,6 +496,20 @@ export function makePigeon({ grey = '#a9b0bd', wingC = '#9aa2b0', tipC = '#5d647
       fly.position.y += (h - (lo - 0.001)) * k; // 0.001: 발가락 두께 절반
     },
   };
+  // 접은 날개 껍질 (짹짹이처럼): 몸 겉면을 따라 휘어 옆구리에 딱 붙는 날개. 반 넘게 접으면 날개판 대신 보임 (foldWings)
+  // 짹짹이·깍깍이는 몸 모양을 바꾼 뒤 제 것을 따로 만드니 foldShell: false
+  if (foldShell) {
+    const FM = new THREE.MeshStandardMaterial({ roughness: 0.8, map: pigeonFoldTex(wingC, tipC, grey), side: THREE.DoubleSide });
+    const key = JSON.stringify(['pigeon', fat, len, neckH, backLine, napeFill]);
+    P.foldShells = [-1, 1].map((s) => {
+      const m = mesh(foldShellGeo(skin, s, key, [0.042 * len, -0.045 * len, -0.1 * len], [0.25, -0.7, 1.2], 0.25, 0.2), FM, body, '접은날개');
+      m.visible = false;
+      m.userData.noOutline = true; // 몸에 붙은 껍질이라 가장자리 외곽선은 그리지 않음 (바깥 윤곽은 몸이 그림)
+      return m;
+    });
+    const reset = P.reset;
+    P.reset = () => { reset(); P.foldShells.forEach((m) => (m.visible = false)); wings.forEach(([w]) => (w.visible = true)); };
+  }
   g.userData.pigeon = P; // 시안 화면에서 동작 뒤 땅 위로 올릴 때 씀
   return P;
 }
@@ -443,12 +574,28 @@ gmotion('이동', '몸 쭉 펴고 쌩쌩, 가끔 스르륵', 2, (c, P, t) => {
 
 // ── 땅에서 걷기 도우미 ──
 export const STAND_Y = 0.039; // 두 발로 땅에 섰을 때 fly 높이
-// 날개 접기 (k: 0 편 날개 → 1 몸 옆에 착 붙여 뒤로 접음)
-export const foldWings = (P, k) => P.wings.forEach(([w, s, h]) => {
-  w.rotation.set(0, THREE.MathUtils.lerp(w.rotation.y, s * 1.45, k), THREE.MathUtils.lerp(w.rotation.z, -s * 0.2, k));
-  w.position.x += s * 0.006 * k; // 몸에 파묻히지 않게 살짝 바깥·위로
-  w.position.y += 0.004 * k;
-  h.rotation.set(0, THREE.MathUtils.lerp(h.rotation.y, s * 0.15, k), THREE.MathUtils.lerp(h.rotation.z, 0, k));
+// 날개 접기 (k: 0 편 날개 → 1 몸 옆에 착 붙여 뒤로 접음): 깍깍이·짹짹이처럼 날개판을 세워 옆구리에 착 붙인다
+// 날개 끝은 뒤로 꽁지 위까지, 앞 가장자리는 위(등 쪽)로. 손마디는 팔과 일자로 펴서 같이 붙임
+const FOLD_Q = {}, ID_Q = new THREE.Quaternion(), foldAt = new THREE.Vector3();
+[-1, 1].forEach((s) => (FOLD_Q[s] = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+  new THREE.Vector3(0, 0, -s), new THREE.Vector3(-s, 0, 0), new THREE.Vector3(0, 1, 0)))));
+export const GUGU_FOLD = { x: -0.001, y: 0, z: 0.016, lean: 0.15, yaw: 0.22 };
+export const foldWings = (P, k) => {
+  if (P.foldShells) { // 반 넘게 접히면 날개판은 숨기고 몸에 붙은 접은 날개 껍질을 보임
+    const shut = k > 0.5;
+    P.foldShells.forEach((m) => (m.visible = shut));
+    P.wings.forEach(([w]) => (w.visible = !shut));
+  }
+  foldPlates(P, k);
+};
+const foldPlates = (P, k) => P.wings.forEach(([w, s, h]) => {
+  const { fat = 1, len = 1, wing = 1 } = P.dims || {}, F = GUGU_FOLD;
+  w.quaternion.slerp(FOLD_Q[s], k);
+  // 몸통 가장 넓은 곳 + 깃 두께만큼 바깥 (몸을 뚫지 않게), 높이는 날개 윗선이 등선보다 살짝 낮게
+  w.position.lerp(foldAt.set(s * (0.034 * fat + F.x), 0.031 * fat * 0.72 - 0.0165 * wing + F.y, F.z * len), k);
+  w.rotateX(F.lean * k); // 음수: 윗가장자리를 몸 쪽으로 기울여 둥근 옆구리에 붙임 (이 축은 양쪽 날개 모두 + 가 바깥이라 s 를 곱하지 않음)
+  w.rotateZ(s * F.yaw * k); // 날개 끝은 안쪽으로 모아 꽁지 위에 얹음 (뒤에서 볼 때 V 자로 벌어지지 않게)
+  h.quaternion.slerp(ID_Q, k);
 });
 // 뒤뚱뒤뚱 걸음: ph 는 걸음 위상(한 걸음에 PI). 발을 번갈아 앞뒤로, 든 발은 살짝 들고, 몸은 좌우로 기우뚱
 // 비둘기답게 고개는 걸음마다 휙 앞으로 내밀고 몸이 따라올 때까지 멈춰 있다
