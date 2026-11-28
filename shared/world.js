@@ -498,6 +498,17 @@ export const FIELD_MONSTERS = [
 ].map(([x, z, r, ...mobs]) => ({ x: FIELD.x + x, z: FIELD.z + z, r, mobs: mobs.map(([kind, lv]) => ({ kind, lv })) }));
 // 몬스터 한 마리씩: 종류 · 레벨 · 도는 가운데 x,z · 반지름 r
 export const FIELD_MOBS = FIELD_MONSTERS.flatMap((s) => s.mobs.map((m, k) => ({ ...m, x: s.x, z: s.z, r: k ? s.r / 2 : s.r })));
+// ── 마을 몬스터 ── 들판보다 훨씬 드문드문: 마을 곳곳 풀밭에 한 마리씩 16마리 (서로 27m 넘게, 광장에서 24m 넘게 떨어진 자리)
+// 광장에서 멀수록 조금 높은 레벨 (Lv1~5). 자리마다 가운데 x,z 를 반지름 r 로 빙 돈다 (도는 길이 풀밭인지는 world.check.js 가 본다)
+// [x, z, 종류, 레벨]
+export const VILLAGE_MOBS = [
+  // 광장 둘레 (80m 안): Lv1~2
+  [31, 6, 'nalgae', 1], [-22, 38, 'gugu', 1], [47, -34, 'nalgae', 2], [-15, -62, 'ttok', 2],
+  [45, 60, 'mongdang', 2], [-2, 79, 'nalgae', 2], [73, 28, 'gugu', 2],
+  // 마을 바깥쪽 (100m 너머): Lv3~5
+  [-103, 20, 'kkreyong', 3], [105, 24, 'ttok', 3], [56, -88, 'mongdang', 3], [-36, -99, 'banjjok', 3], [22, 111, 'kkreyong', 3],
+  [-105, -36, 'kkakkak', 4], [-59, 104, 'banjjok', 4], [-91, 86, 'haak', 4], [107, -79, 'kkakkak', 5],
+].map(([x, z, kind, lv]) => ({ x, z, r: 2.2, kind, lv }));
 
 // 포탈: 이 자리를 지나가면 to 번 포탈 앞(그 포탈이 바라보는 쪽 ARRIVE m)으로 순간이동
 // rot: 포탈이 바라보는 쪽 (나오는 사람이 걸어가는 쪽). 문 양쪽 기둥은 부딪힌다

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Client, getStateCallbacks } from 'colyseus.js';
 import {
   ANIM, COLORS, TOOLS, LIFE_SPOTS, WORLD, LIFE_COLLIDERS, PLAYER_RADIUS, WALK_SPEED, RUN_SPEED, resolveMove, isBlocked, inSwing, inThrust, inDive, toCm, fromCm, angleToByte, byteToAngle,
-  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MOBS, FIELD_BOSS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, fruitOf, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, waterNear, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, defCut, dmgRoll, MON_CRIT_MULT, WEAPON_STAT, WEAPON_MULT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
+  ARROW, BOLT, PORTALS, PORTAL, inField, FIELD_MOBS, FIELD_BOSS, VILLAGE_MOBS, BUGS, BUG_BY_ID, NET_CATCH, solidAt, WOODS, WOOD_BY_ID, DIG_HOLE, DIG_AHEAD, groundKind, ROCKS_GONE, STONES, STONE_BY_ID, TOOL_DURABILITY, FRUITS, FRUIT_NAMES, fruitOf, BAG_MAX, GRAB_REACH, FISH, FISH_BY_ID, RARITY, waterAt, waterNear, BOB_AHEAD, NOTICE, NIBBLE_MS, levelOf, statsOf, abilitiesOf, defCut, dmgRoll, MON_CRIT_MULT, WEAPON_STAT, WEAPON_MULT, STAT_NAMES, JOBS, JOB_LEVEL, canWield,
   SKILLS, SKILL_TYPES, inStrike, FOSSILS, FOSSIL_BY_ID, FLOWER_ITEMS, FLOWER_BY_ID, PICK_FLOWER_REACH, SEEDS, SEED_BY_ID, PLANT, plantItem as plantKey, plantKind,
 } from '../../shared/world.js';
 import { buildVillage, fishModel, bugModel, treePerch } from './village.js';
@@ -799,32 +799,20 @@ fieldJobs.push(() => (boss = createChulBoss(scene, { id: 'b0', // 모두의 화�
     m.root.removeFromParent();
   },
 })));
-// 마을 손님: VISIT.every 초마다 들판 몬스터 한 종류(필드보스 빼고, 그 종류의 가장 낮은 레벨)가 광장 분수 둘레에 VISIT.stay 초 동안 놀러 온다
-// 시계(Date.now)로 정하므로 모두의 화면에서 같은 때 같은 몬스터. 들판 몬스터처럼 첫 화면 뒤에 한 마리씩 만든다
-const VISIT = { every: 240, stay: 90 };
-const visitKinds = [...new Set(FIELD_MOBS.map((m) => m.kind))];
-const visitors = [];
-let visitor = null; // 지금 광장에 와 있는 손님
-visitKinds.forEach((kind, i) => fieldJobs.push(() => {
-  const lv = Math.min(...FIELD_MOBS.filter((m) => m.kind === kind).map((m) => m.lv));
-  const m = createPlazaMonsters(scene, { ...monsterOpts, id: `v${i}`, kind, lv, phase: i * 7.3, perches: FLIES.has(kind) ? guguPerches : null });
-  m.root.visible = false;
-  visitors[i] = m;
+// 마을 몬스터: 마을 곳곳 풀밭에 드문드문 한 마리씩 (shared/world.js VILLAGE_MOBS). 들판 몬스터처럼 첫 화면 뒤에 한 마리씩 만든다
+const villageMonsters = [];
+VILLAGE_MOBS.forEach((m, i) => fieldJobs.push(() => {
+  const v = createPlazaMonsters(scene, { ...monsterOpts, id: `w${i}`, x: m.x, z: m.z, r: m.r, kind: m.kind, lv: m.lv, phase: i * 7.3 + 3, perches: FLIES.has(m.kind) ? guguPerches : null });
+  v.root.visible = !onField;
+  villageMonsters.push(v);
 }));
-function updateVisitor() {
-  const t = Date.now() / 1000;
-  const v = t % VISIT.every < VISIT.stay ? visitors[Math.floor(t / VISIT.every) % visitKinds.length] ?? null : null;
-  if (v === visitor) return;
-  if (visitor) visitor.root.visible = false;
-  visitor = v;
-}
 // ── 몬스터 함께 보기: 서버가 몬스터마다 가장 가까운 학생 한 명에게 맡긴다 (monOwn). 맡은 화면이 할 일을 정해 상태를 보내고(monSync),
 // 다른 화면은 받은 대로 따라 그린다 → 모든 학생 화면에서 같은 몬스터가 같은 학생을 쫓고 같은 때 공격한다
 // 이 화면은 1초마다 둘레 몬스터와 거리를 알려 맡을 몬스터를 정하게 한다 (monNear)
 const MON_CLAIM = 30; // 이만큼(m) 안의 몬스터만 알림 (서버 MON_CLAIM 과 같게)
 const ownedMons = new Set(); // 서버가 이 화면에 맡긴 몬스터 id
 let monNearAt = 0;
-const monById = (id) => plazaMonsters.find((m) => m.id === id) ?? fieldMonsters.find((m) => m.id === id) ?? visitors.find((m) => m.id === id);
+const monById = (id) => plazaMonsters.find((m) => m.id === id) ?? fieldMonsters.find((m) => m.id === id) ?? villageMonsters.find((m) => m.id === id);
 // 몬스터가 상대할 수 있는 학생: 나와 같은 맵에 있는 학생들 (다른 학생은 화면에 그리는 자리로)
 const monCtx = { sid: null, people: [] };
 function monPeople() {
@@ -864,14 +852,14 @@ function syncMonsters(now) {
 }
 let onField = false; // 지금 들판에 있는지 (내 자리로 정함)
 // 지금 있는 맵의 날개콩만 (다른 맵 몬스터는 숨기고 움직이지 않는다)
-const hereMonsters = () => (onField ? fieldMonsters : visitor ? [...plazaMonsters, visitor] : plazaMonsters);
+const hereMonsters = () => (onField ? fieldMonsters : plazaMonsters.length ? [...plazaMonsters, ...villageMonsters] : villageMonsters);
 function showMap(f) {
   onField = f;
   village.group.visible = !f;
   village.fieldPart.visible = f;
   field.group.visible = f;
   for (const m of plazaMonsters) m.root.visible = !f;
-  for (const m of visitors) m.root.visible = false; // 마을에 와 있는 손님은 장면마다 다시 보이게 한다
+  for (const m of villageMonsters) m.root.visible = !f;
   for (const m of fieldMonsters) m.root.visible = f;
   boss?.setShown(f); // 싸움터 둘레도
 }
@@ -3025,7 +3013,6 @@ function frame() {
   const monFar = VIEW.reach + 3;
   let mi = 0;
   const ctx = monPeople();
-  updateVisitor();
   for (const m of hereMonsters()) {
     m.lag = (m.lag ?? 0) + dt;
     viewSphere.center.copy(m.root.position);
@@ -3067,7 +3054,7 @@ function frame() {
     performance.measure('first-frame', { start: now }); // 점검용: 첫 장면(셰이더 컴파일·도형 올리기)에 걸린 시간
   } else if (fieldJobs.length) {
     const m = fieldJobs.shift()();
-    if (m) { // 마을 손님 만들기는 아무것도 돌려주지 않는다
+    if (m) { // 마을 몬스터 만들기는 아무것도 돌려주지 않는다
       m.root.visible = onField;
       fieldMonsters.push(m);
     }

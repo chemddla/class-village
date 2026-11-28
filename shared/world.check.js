@@ -45,6 +45,16 @@ ROCKS_GONE.delete(r0);
 console.log('지형지물', Object.entries(FIELD_MAP.props.reduce((t, o) => ({ ...t, [o.kind]: (t[o.kind] ?? 0) + 1 }), {})), '꽃', FIELD_MAP.flowers.length, '사과나무', FIELD_MAP.fruitTrees.length);
 console.log('world.check (들판): ok');
 
+// 마을 몬스터: 도는 길(과 조금 바깥)이 모두 풀밭이고, 광장에서 떨어져 있고, 서로 드문드문
+import { VILLAGE_MOBS, SPAWN, groundKind, inField } from './world.js';
+for (const m of VILLAGE_MOBS) {
+  assert.ok(!inField(m.x, m.z), `마을 ${m.kind} 는 마을 안`);
+  for (let a = 0; a < 12; a++) assert.equal(groundKind(m.x + Math.sin(a * Math.PI / 6) * (m.r + 0.6), m.z + Math.cos(a * Math.PI / 6) * (m.r + 0.6)), 'grass', `마을 ${m.kind} 도는 길`);
+  assert.ok(Math.hypot(m.x - SPAWN.x, m.z - SPAWN.z) > 24, `마을 ${m.kind} 는 광장에서 떨어져 있음`);
+  for (const n of VILLAGE_MOBS) if (n !== m) assert.ok(Math.hypot(m.x - n.x, m.z - n.z) > 25, '마을 몬스터는 드문드문');
+}
+console.log('world.check (마을 몬스터): ok');
+
 // 레벨: 경계에서 정확히 오르고, 남은 경험치가 다음 레벨 몫으로 넘어간다
 import { levelOf, afterDeath, statsOf, abilitiesOf, defenseOf, defCut, DEF_HALF, MONSTERS, dmgRoll, DMG_SPREAD, shareXp } from './world.js';
 assert.deepEqual(levelOf(0), { lv: 1, xp: 0, need: 20 });
