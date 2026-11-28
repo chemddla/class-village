@@ -45,13 +45,19 @@ ROCKS_GONE.delete(r0);
 console.log('지형지물', Object.entries(FIELD_MAP.props.reduce((t, o) => ({ ...t, [o.kind]: (t[o.kind] ?? 0) + 1 }), {})), '꽃', FIELD_MAP.flowers.length, '사과나무', FIELD_MAP.fruitTrees.length);
 console.log('world.check (들판): ok');
 
-// 마을 몬스터: 도는 길(과 조금 바깥)이 모두 풀밭이고, 광장에서 떨어져 있고, 서로 드문드문
-import { VILLAGE_MOBS, SPAWN, groundKind, inField } from './world.js';
-for (const m of VILLAGE_MOBS) {
-  assert.ok(!inField(m.x, m.z), `마을 ${m.kind} 는 마을 안`);
-  for (let a = 0; a < 12; a++) assert.equal(groundKind(m.x + Math.sin(a * Math.PI / 6) * (m.r + 0.6), m.z + Math.cos(a * Math.PI / 6) * (m.r + 0.6)), 'grass', `마을 ${m.kind} 도는 길`);
-  assert.ok(Math.hypot(m.x - SPAWN.x, m.z - SPAWN.z) > 24, `마을 ${m.kind} 는 광장에서 떨어져 있음`);
-  for (const n of VILLAGE_MOBS) if (n !== m) assert.ok(Math.hypot(m.x - n.x, m.z - n.z) > 25, '마을 몬스터는 드문드문');
+// 마을 몬스터: 도는 길(과 조금 바깥)이 모두 풀밭이고, 광장에서 떨어져 있고, 자리끼리 드문드문 · 둘이 사는 자리는 들판에도 있는 짝
+import { VILLAGE_MONSTERS, VILLAGE_MOBS, SPAWN, groundKind, inField } from './world.js';
+{
+  const pair = (s) => s.mobs.map((m) => m.kind).sort().join('+');
+  const fieldPairs = new Set(FIELD_MONSTERS.filter((s) => s.mobs.length === 2).map(pair));
+  for (const s of VILLAGE_MONSTERS) {
+    assert.ok(!inField(s.x, s.z), `마을 몬스터 자리 ${s.x},${s.z} 는 마을 안`);
+    for (let a = 0; a < 12; a++) assert.equal(groundKind(s.x + Math.sin(a * Math.PI / 6) * (s.r + 0.6), s.z + Math.cos(a * Math.PI / 6) * (s.r + 0.6)), 'grass', `마을 몬스터 자리 ${s.x},${s.z} 도는 길`);
+    assert.ok(Math.hypot(s.x - SPAWN.x, s.z - SPAWN.z) > 24, `마을 몬스터 자리 ${s.x},${s.z} 는 광장에서 떨어져 있음`);
+    for (const n of VILLAGE_MONSTERS) if (n !== s) assert.ok(Math.hypot(s.x - n.x, s.z - n.z) > 25, '마을 몬스터 자리는 드문드문');
+    if (s.mobs.length === 2) assert.ok(fieldPairs.has(pair(s)), `마을 ${pair(s)} 는 들판에 있는 합동 모션 짝`);
+  }
+  assert.equal(VILLAGE_MOBS.length, VILLAGE_MONSTERS.reduce((t, s) => t + s.mobs.length, 0));
 }
 console.log('world.check (마을 몬스터): ok');
 
